@@ -119,6 +119,12 @@ A degenerate-UV quad that samples the centre of a solid block element fills flat
 
 ### D. Painted plates (file-backed, same program)
 
+> **M2 update:** the plate path now has an artist workflow and stricter runtime. It is covered end to end by the
+> [**painted-layers**](../painted-layers/SKILL.md) skill: sidecars, `npm run art`, the base and generated manifests,
+> 4-texel chunk borders, split-hull `core`/`soft` rects, one shared streamer with a swept budget, and hot reload. The steps
+> below still describe how plates share the kit's program and meshes; for anything about baking or streaming, the
+> painted-layers skill wins where they differ.
+
 14. Bake: split the RGBA image into 1024² chunks (skip empty ones), write each as a palette PNG, a WebP and a mipmapped KTX2
     (ETC1S) with sharp and ktx2-encoder, add per-chunk polygons, then write and validate the manifest. The `hull` takes the min top
     and max bottom of each 16-texel strip. The `opaqueHull` takes the strip runs of α ≥ 254, inset by 5, and all its strips must share one row so the polygon can't fold.
@@ -268,3 +274,5 @@ Full listings for reuse: [atlas and shader](references/atlas-and-shader.md), [sp
 - [**sdf-silhouettes**](../sdf-silhouettes/SKILL.md): how the elements are drawn into the distance buffer (organic clumps, fractal edges, readable at far and near scale). This skill starts where that one's distance field ends.
 - [**layered-atmosphere**](../layered-atmosphere/SKILL.md): the per-layer value ramp (`tint`, `fog`, `desaturate`, height mist) that this shader's uniforms implement, and the fog gaps between planes.
 - [**glow-bloom-grade**](../glow-bloom-grade/SKILL.md): where the B channel ends up. Glow twins render into the glow buffer and feed the owned bloom chain and the grade.
+- [**painted-layers**](../painted-layers/SKILL.md): the artist workflow for plates (templates → paint → `npm run art` → hot reload → budgets → ship), which supersedes §D's bake and streaming details.
+- [**painterly-strokes**](../painterly-strokes/SKILL.md) (M2): brush strokes baked into the R and G channels in local stroke coordinates, at no runtime cost.
