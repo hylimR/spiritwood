@@ -15,6 +15,8 @@ export const TILE = 48;
 export const VIEW_H = 1080;
 export const MIN_ASPECT = 4 / 3;
 export const MAX_ASPECT = 21 / 9;
+/** The sim camera never zooms out past this; static layer geometry is built for it. */
+export const MIN_CAMERA_ZOOM = 1;
 /** Falling this far below the level bottom kills the player. */
 export const KILL_MARGIN = 240;
 /** Hazard tiles hurt only when the player overlaps them by more than this inset. */

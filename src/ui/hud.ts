@@ -33,6 +33,10 @@ export class Hud {
     todo('PIPE', 'Hud.showComplete');
   }
 
+  hideComplete(): void {
+    todo('PIPE', 'Hud.hideComplete');
+  }
+
   showBench(result: BenchResult): void {
     void result;
     todo('PIPE', 'Hud.showBench');

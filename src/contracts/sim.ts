@@ -52,6 +52,8 @@ export type EnemyMode = 'patrol' | 'stunned';
 
 export interface EnemyView {
   readonly id: number;
+  /** Length of the current mode in ticks (stunTicks while stunned, 0 on patrol). */
+  readonly modeDuration: number;
   readonly x: number;
   readonly y: number;
   readonly prevX: number;
@@ -72,6 +74,8 @@ export interface OrbView {
   readonly prevX: number;
   readonly prevY: number;
   readonly value: number;
+  /** Collect radius (world units). */
+  readonly radius: number;
   readonly collected: boolean;
   /** Tick when collected, -1 if not. */
   readonly collectedTick: number;
@@ -83,8 +87,9 @@ export interface CheckpointView {
   readonly y: number;
   readonly w: number;
   readonly h: number;
+  /** This is the current respawn checkpoint (ever-activated = activatedTick ≥ 0). */
   readonly active: boolean;
-  /** Tick of activation, -1 if never. */
+  /** Tick of the latest activation, -1 if never. */
   readonly activatedTick: number;
 }
 
@@ -135,6 +140,10 @@ export interface CameraView {
  * | EnemyReformed | enemy feet | | | enemy id |
  * | GoalReached | feet | elapsed seconds | | |
  * | DropThrough | feet | | | |  (once, when the drop starts)
+ * | Reset | new player feet | | | |  (GameWorld.reset, emitted after clearing the queue)
+ * | Teleported | new player feet | | | |  (GameWorld.teleport)
+ *
+ * Views reset per-run render state (springs, scarf, trails, bursts) on Respawned, Reset and Teleported.
  */
 export const SimEventType = {
   Jump: 1,
@@ -153,6 +162,8 @@ export const SimEventType = {
   EnemyReformed: 14,
   GoalReached: 15,
   DropThrough: 16,
+  Reset: 17,
+  Teleported: 18,
 } as const;
 export type SimEventType = (typeof SimEventType)[keyof typeof SimEventType];
 
@@ -181,7 +192,13 @@ export interface SimEventQueueView {
   get(index: number): SimEvent;
 }
 
-/** Everything the renderer / HUD may read from the simulation. */
+/**
+ * Everything the renderer / HUD may read from the simulation.
+ * `orbs`, `checkpoints` and `enemies` are allocated once in LevelData order
+ * (sim.orbs[i].id === level.orbs[i].id); the arrays and their element objects are never replaced,
+ * reordered or resized — not even by reset(). `goal` keeps its identity. Implementations may use their
+ * own mutable classes for the elements.
+ */
 export interface SimView {
   readonly tick: number;
   readonly level: LevelData;

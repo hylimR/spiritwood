@@ -1,4 +1,4 @@
-import type { Renderer, Texture } from 'pixi.js';
+import type { Texture, WebGLRenderer } from 'pixi.js';
 import type { TextureSourceDef } from '../contracts/assets.ts';
 import type { TextureBudget } from '../contracts/render.ts';
 import { todo } from '../core/todo.ts';
@@ -19,24 +19,28 @@ export function chooseTextureUrl(src: TextureSourceDef, support: TextureFormatSu
 }
 
 /** Probe compressed-format and WebP support once (cached). */
-export async function detectTextureSupport(renderer: Renderer): Promise<TextureFormatSupport> {
+export async function detectTextureSupport(renderer: WebGLRenderer): Promise<TextureFormatSupport> {
   void renderer;
   return todo('WORLD', 'detectTextureSupport');
 }
 
 /**
- * Load a file-backed texture (KTX2 via pixi.js/ktx2 with the self-hosted transcoder in
- * public/transcoders/ktx/, else WebP/PNG) and register its bytes in `budget` under `key`.
+ * Load a file-backed texture and register its bytes in `budget` under `key`. KTX2 goes through
+ * `import 'pixi.js/ktx2'` with the transcoder served/emitted by the vite.config.ts plugin at
+ * `transcoders/ktx/` (never copy it into public/). Call `setKTXTranscoderPath` once with ABSOLUTE urls
+ * (`new URL('transcoders/ktx/libktx.js', document.baseURI).href`, same for .wasm): Pixi's worker
+ * resolves relative paths against location.origin. On a KTX2 failure, fall back to WebP/PNG for that
+ * chunk and disable KTX2 for the session. Returns the resolved URL (needed to unload).
  */
 export async function loadTextureSource(
   src: TextureSourceDef, baseUrl: string, support: TextureFormatSupport, budget: TextureBudget, key: string,
-): Promise<Texture> {
+): Promise<{ texture: Texture; url: string }> {
   void src; void baseUrl; void support; void budget; void key;
   return todo('WORLD', 'loadTextureSource');
 }
 
-/** Release a texture loaded by loadTextureSource and remove it from the budget. */
-export function unloadTextureSource(texture: Texture, budget: TextureBudget, key: string): void {
-  void texture; void budget; void key;
+/** Release via `Assets.unload(url)` (clears Pixi's loader cache too) and remove from the budget. */
+export async function unloadTextureSource(url: string, budget: TextureBudget, key: string): Promise<void> {
+  void url; void budget; void key;
   todo('WORLD', 'unloadTextureSource');
 }

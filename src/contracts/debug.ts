@@ -1,3 +1,8 @@
+/**
+ * Mutated in place by the pipeline each frame: it zeroes fillScreens/particles before views update,
+ * counts drawCalls by wrapping the GL draw functions, sets sizes, renderScale,
+ * textureMB = ctx.textures.totalBytes / 2^20 and gpuMs. Views add fillScreens and particles.
+ */
 export interface RenderStats {
   drawCalls: number;
   /** Estimated scene fill in full-screen equivalents (sum of on-screen mesh bounds / screen area). */

@@ -38,6 +38,12 @@ export class SettingsMenu {
     todo('PIPE', 'SettingsMenu.navigate');
   }
 
+  /** Replace the menu's copy of the settings (changes made elsewhere, e.g. the F3 toggle). */
+  setSettings(settings: UserSettings): void {
+    void settings;
+    todo('PIPE', 'SettingsMenu.setSettings');
+  }
+
   setGpuLabel(label: string): void {
     void label;
     todo('PIPE', 'SettingsMenu.setGpuLabel');

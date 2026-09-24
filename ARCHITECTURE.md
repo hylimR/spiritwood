@@ -101,6 +101,10 @@ With the camera clamped to the level, a layer covers layer-space x in
 `src/render/util/camera.ts` implements this (`applyParallax`, `layerExtent`), and nothing else may
 re-derive it.
 
+Static layer geometry covers the **union** of `layerExtent(W, H, VIEW_H·MIN_ASPECT, VIEW_H, fx, fy,
+MIN_CAMERA_ZOOM)` and the same call at `VIEW_H·MAX_ASPECT`. Instance placement never depends on the
+current window aspect, so the forest never reshuffles on resize.
+
 ### 2.4 Depth ordering (overdraw control)
 
 The scene render target has a **depth buffer**. Parallax layers use it in three kinds of pass:
@@ -172,9 +176,9 @@ rAF ─▶ FixedStepLoop.frame(now)
         ├─ repeat n∈[0..5] times:
         │     input.nextTick(frame) ─▶ world.step(frame)       (60 Hz, deterministic)
         └─ render(alpha)
-              ├─ drain world.events ─▶ pipeline.dispatch(e) ─▶ views.onSimEvent(e)   (particles, hero squash, shake)
-              ├─ build FrameInfo (interpolated camera, time, quality)
-              ├─ pipeline.render(frame)
+              ├─ pipeline.render(world, alpha, now, dt, lateFrames)
+              │     ├─ render clock += min(dt, MAX_RENDER_DT); fill FrameInfo (interpolated camera + shake)
+              │     ├─ for each queued sim event: shake + views.onSimEvent(e, frame)   (particles, hero squash)
               │     ├─ views.update(frame)            (transforms, animation, particles; no allocation)
               │     ├─ PASS 1  scene  ─▶ sceneRT  (w·s × h·s, RGBA8 + depth)
               │     │     opaque → sky → background → shafts → terrain → entities → hero
@@ -185,6 +189,7 @@ rAF ─▶ FixedStepLoop.frame(now)
               │     │                    (4-tap Kawase), then upsample-add back to glowRT size
               │     └─ PASS 4  composite ─▶ canvas: scene + bloom → per-area grade → death fade
               │                                     → vignette → dither
+              ├─ audio.onSimEvent(e) for each event; world.events.clear()
               └─ hud/debug overlay (DOM, throttled to 4 Hz)
 ```
 
@@ -220,14 +225,24 @@ the configs are **frozen**: changing them needs the main session.
 
 | Owner | Files | Summary |
 |---|---|---|
-| **main** (frozen contracts) | `ARCHITECTURE.md`, `README.md`, `CLAUDE.md`, `package.json`, `tsconfig.json`, `vite.config.ts` (incl. the KTX2 transcoder plugin), `index.html`, `src/config.ts`, `src/contracts/**`, `src/core/{math,rng,color,todo}.ts`, `src/render/gen/{noise,sdf}.ts`, `src/render/util/**`, `src/render/shaders/common.ts`, `tools/preview/png.ts`, `tests/shared/**` | Types, constants, pure shared helpers |
+| **main** (frozen contracts) | `ARCHITECTURE.md`, `README.md`, `CLAUDE.md`, `package.json`, `tsconfig*.json`, `vite.config.ts` (incl. the KTX2 transcoder plugin), `index.html`, `src/config.ts`, `src/contracts/**`, `src/core/{math,rng,color,tiles,todo}.ts`, `src/level/ascii.ts` (`levelFromAscii`), `src/render/gen/{noise,sdf}.ts`, `src/render/util/**`, `src/render/shaders/**`, `tools/preview/png.ts`, `tests/shared/**` (incl. `fixtures.ts`: `levelFromAscii`, `createFakeSimView`) | Types, constants, pure shared helpers, test fixtures |
 | **main** (integration) | `src/main.ts`, `src/game/**`, `src/audio/**` | Boot, orchestrator, glue |
 | **SIM** agent | `src/core/{loop,events}.ts`, `src/input/**`, `src/level/**`, `src/sim/**`, `tools/level/**`, `public/levels/**`, `tests/{core,input,level,sim}/**` | Loop, input, LDtk loading, collision, player controller, camera, world rules, enemy, level content |
 | **WORLD** agent | `src/render/gen/**` (except noise/sdf), `src/render/layers/**`, `src/render/terrain/**`, `src/render/fx/**`, `src/render/world.ts`, `src/assets/**`, `public/layers/**`, `tools/plates/**`, `tools/preview/world/**`, `tests/world/**` | Procedural kit and atlases, hull trimming, parallax stack, sky, fog, terrain meshing, decor, thorns, particles, light shafts, layer manifest, chunk streaming, KTX2/WebP |
 | **PIPE** agent | `src/render/pipeline.ts`, `src/render/pipeViews.ts`, `src/render/post/**`, `src/render/hero/**`, `src/render/entities/**`, `src/settings/**`, `src/debug/**`, `src/ui/**`, `src/content/**`, `tools/preview/pipe/**`, `tests/pipe/**` | Renderer, RTs and passes, bloom, composite and grading, hero rig and view, orb/checkpoint/enemy/goal views, quality presets, dynamic resolution, debug overlay, bench mode, HUD and menu |
 
-Dependency rule: `sim/`, `level/`, `input/` and `core/` never import `pixi.js` or `render/**`.
-`render/**` reads sim state only through `SimView` (the contracts), never through concrete sim classes.
+Dependency rules:
+
+- `sim/`, `level/`, `input/` and `core/` never import `pixi.js` or `render/**`. `render/**` reads sim
+  state only through `SimView` (the contracts), never through concrete sim classes.
+- Tile lookups everywhere use `tileAt` (`src/core/tiles.ts`).
+- Shaders live beside their owner (e.g. `src/render/layers/kit.glsl.ts`); `src/render/shaders/` is
+  main-only.
+- The F4 debug draw (tiles, hitboxes) is PIPE's. It is drawn in an overlay after the composite, outside
+  `SCENE_SLOTS`, so grading, bloom and the death fade don't affect it. Other views use `onDebugDraw`
+  only for their own bounds.
+- WORLD's shared atlases (kit, particles) are created in `createWorldViews()`, passed to the views that
+  use them, registered once in `ctx.textures`, and destroyed once by a resource-owner view added first.
 
 ---
 
@@ -550,6 +565,8 @@ With the full High budget there are 10 kit layers plus sky and fog:
   supports a compressed format. Otherwise WebP, then PNG. The libktx transcoder is self-hosted at
   `transcoders/ktx/`: the Vite plugin serves it in dev and emits it at build. Every texture registers
   its bytes with `TextureBudget` (shown in the debug overlay).
+- **Publishing:** `levels/forest.ldtk` must be served as `application/json`, and hosts must allow
+  blob workers + WASM for KTX2. Otherwise the loader falls back to WebP/PNG.
 - **Bake tool** (`tools/plates/bake-plates.ts`, Node + sharp + ktx2-encoder): renders a plate to PNG,
   then writes WebP + KTX2 (ETC1S, mipmapped) chunks and tight hull polygons alongside a manifest. M1
   ships one demo plate layer in `public/layers/forest.plates.manifest.json` (open with

@@ -23,6 +23,7 @@ export class Gloomcrawler implements EnemyView {
   readonly height: number;
   mode: EnemyMode = 'patrol';
   modeTicks = 0;
+  modeDuration = 0;
 
   constructor(def: EnemyDef, grid: CollisionGrid, tuning: WorldTuning = DEFAULT_WORLD_TUNING) {
     void grid;

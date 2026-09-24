@@ -23,7 +23,7 @@ export class CollisionGrid {
     return new CollisionGrid(level.widthTiles, level.heightTiles, level.tileSize, level.tiles);
   }
 
-  /** Tiles only, using ASCII_TILES from ./ascii.ts (other glyphs → Empty). */
+  /** Tiles only, via levelFromAscii from ./ascii.ts (entity glyphs → Empty). */
   static fromAscii(rows: readonly string[], tileSize: number): CollisionGrid {
     void rows;
     void tileSize;

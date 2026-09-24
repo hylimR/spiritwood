@@ -1,4 +1,4 @@
-import type { Container, Renderer } from 'pixi.js';
+import type { Container, WebGLRenderer } from 'pixi.js';
 import type { LayerManifest } from './assets.ts';
 import type { RenderStats } from './debug.ts';
 import type { LevelData } from './level.ts';
@@ -48,7 +48,10 @@ export interface CameraFrame {
 }
 
 export interface FrameInfo {
-  /** Render clock, seconds since start. */
+  /**
+   * Render clock: Σ min(dt, MAX_RENDER_DT) accumulated by the pipeline (no jumps after hitches or tab
+   * switches). Upload `time % 3600` to shaders to keep float precision.
+   */
   time: number;
   /** Render dt, seconds, clamped to MAX_RENDER_DT. */
   dt: number;
@@ -83,27 +86,41 @@ export type SceneSlots = Readonly<Record<SceneSlot, Container>>;
 export type GlowSlots = Readonly<Record<GlowSlot, Container>>;
 
 export interface RenderContext {
-  readonly renderer: Renderer;
+  /** Always a WebGL2 renderer (the pipeline refuses to start otherwise). */
+  readonly renderer: WebGLRenderer;
   readonly scene: SceneSlots;
   readonly glow: GlowSlots;
   readonly level: LevelData;
   readonly manifest: LayerManifest;
   /** Base URL the manifest was loaded from (for resolving chunk/atlas paths). */
   readonly manifestUrl: string;
+  /** One object for the whole session: the pipeline updates it in place, so ctx.quality === frame.quality. */
   readonly quality: QualitySettings;
   readonly textures: TextureBudget;
-  /** Views add their estimated on-screen fill here each update (fillScreens is reset per frame). */
+  /**
+   * The pipeline zeroes `fillScreens` and `particles` before views update; views add their estimated
+   * on-screen fill and live particle counts. The pipeline fills everything else.
+   */
   readonly stats: RenderStats;
 }
 
 /**
  * A render view owns display objects inside the slots it was given and updates them per frame.
+ * In `init`, before any `await`, create one child Container per slot you draw into and add it to
+ * ctx.scene[slot] / ctx.glow[slot]; all later content (streamed chunks, lazily created objects) goes
+ * inside those containers so draw order never depends on timing.
  * `update` runs every render frame and must not allocate.
  */
 export interface RenderView {
   readonly name: string;
   init(ctx: RenderContext): Promise<void> | void;
+  /** Called after init and after every resize / render-scale change. */
+  onResize?(viewW: number, viewH: number, pxPerUnit: number): void;
   update(frame: FrameInfo): void;
+  /**
+   * Called inside RenderPipeline.render after this frame's FrameInfo is filled and before update(),
+   * once per queued sim event. Views never read frame.sim.events themselves.
+   */
   onSimEvent?(e: SimEvent, frame: FrameInfo): void;
   onQualityChanged?(q: QualitySettings): void;
   /** F4 collision/hitbox debug draw toggled. */

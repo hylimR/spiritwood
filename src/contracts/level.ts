@@ -25,13 +25,17 @@ export interface CheckpointDef extends Rect {
   id: number;
 }
 
+/**
+ * LDtk `Enemy` (pivot 0.5,1; resizable width = patrol rect): patrolMinX = rect.x + enemyWidth/2,
+ * patrolMaxX = rect.x + rect.w − enemyWidth/2, x = pivot x clamped into that range, y = rect bottom,
+ * speed = Float field `speed` (default WorldTuning.enemyDefaultSpeed).
+ */
 export interface EnemyDef {
   id: number;
   kind: 'gloomcrawler';
   /** Spawn feet position. */
   x: number;
   y: number;
-  /** Patrol range for the feet x (the LDtk entity's width). */
   patrolMinX: number;
   patrolMaxX: number;
   speed: number;
@@ -39,11 +43,16 @@ export interface EnemyDef {
 
 export interface GoalDef extends Rect {}
 
+/**
+ * x, y, w = top aperture; h = vertical length. The bottom edge is centred at x + w/2 + h·tan(angle) and
+ * is w·spread wide. LDtk fields: `angleDeg` (Float, loader converts), `spread` (Float, default 1.6),
+ * `intensity` (Float 0..1, default 0.6).
+ */
 export interface LightShaftDef extends Rect {
   id: number;
   /** Radians from vertical; positive leans the bottom to the right. */
   angle: number;
-  /** 0..1 */
+  spread: number;
   intensity: number;
 }
 
@@ -62,7 +71,12 @@ export interface DecorHintDef {
   y: number;
 }
 
-/** Runtime level: pure data, produced by src/level/loader.ts from LDtk JSON. */
+/**
+ * Runtime level: pure data, produced by src/level/loader.ts from LDtk JSON (or levelFromAscii).
+ * Entity ids are the 0-based index among instances of that identifier, in layer order.
+ * `seed` = LDtk level Int field `seed`, else hashString(level identifier).
+ * The LDtk project uses identifierStyle "Free"; enum values match case-insensitively.
+ */
 export interface LevelData {
   id: string;
   widthTiles: number;

@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vitest/config';
 
 /** Self-host PixiJS's KTX2 (libktx) transcoder at transcoders/ktx/ for dev and build. */
 function ktxTranscoder(): Plugin {
-  const dir = resolve(__dirname, 'node_modules/pixi.js/transcoders/ktx');
+  const dir = fileURLToPath(new URL('./node_modules/pixi.js/transcoders/ktx', import.meta.url));
   const files = ['libktx.js', 'libktx.wasm'];
   return {
     name: 'spiritwood-ktx-transcoder',

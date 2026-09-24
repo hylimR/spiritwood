@@ -6,11 +6,12 @@ An Ori-*inspired* (not derived) 2D browser platformer: TypeScript 7 + Vite 8 + P
 ## Commands
 
 ```bash
-npm run typecheck                             # tsc --noEmit (strict); must stay green
+npm run typecheck                             # tsc on tsconfig.json (src, browser) + tsconfig.node.json (tests, tools)
 npm test                                      # vitest run --maxWorkers=2
 npx vitest run tests/sim --maxWorkers=2       # one area
 npm run build                                 # vite build → dist/
-node tools/level/build-level.ts               # regenerate public/levels/forest.ldtk from the ASCII map
+npm run level                                 # regenerate public/levels/forest.ldtk from the ASCII map
+npm run plates                                # bake the demo painted plates (sharp + ktx2-encoder)
 ```
 
 ## Machine safety (hard rules)
@@ -28,6 +29,10 @@ node tools/level/build-level.ts               # regenerate public/levels/forest.
   are frozen. If you need a contract change, stop and report it. Do not work around it.
 - Never push. Implementation agents work in isolated git worktrees and make local commits there. The
   main session merges and pushes.
+- A fresh worktree has no `node_modules`. Before typechecking or testing, run
+  `ln -s /home/user/spiritwood/node_modules node_modules` in the worktree root.
+- Render-side tests use `tests/shared/fixtures.ts` (`levelFromAscii`, `createFakeSimView`), never SIM's
+  implementation.
 - To look at generated textures without a browser, write PNGs with `tools/preview/png.ts` and open
   them with the Read tool.
 
@@ -39,6 +44,8 @@ node tools/level/build-level.ts               # regenerate public/levels/forest.
 - Strict TypeScript, no `any`. Minimal comments: only for non-obvious logic.
 - `sim/`, `level/`, `input/` and `core/` never import `pixi.js` or `render/**`. Render code reads
   the sim only through `SimView` and the other contract types.
+- Browser code (`src/`) has no Node types. Tools and tests do (`tsconfig.node.json`). In tools, use
+  `new URL('.', import.meta.url)`, not `__dirname`.
 - **Hot paths** (sim `step`, view `update`, particles, pipeline `render`) allocate nothing per frame.
   Use preallocated objects and typed arrays, index loops, and no closures, spreads, `for…of`,
   `map/filter/forEach` or string building.

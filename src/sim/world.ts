@@ -19,9 +19,11 @@ export interface WorldOptions {
 }
 
 /**
- * The whole deterministic simulation (ARCHITECTURE.md §5.3). `step` = one 60 Hz tick:
- * player → enemies → hazards/stomps → orbs → checkpoints → goal → death/respawn timers → camera.
- * Events accumulate in `events` until the orchestrator drains and clears them.
+ * The whole deterministic simulation (ARCHITECTURE.md §5.3). `step` = one 60 Hz tick.
+ * The constructor places the player at playerStart and snaps the camera (the title screen shows an
+ * unstepped world). Events accumulate in `events` until the orchestrator clears them after rendering.
+ * `orbs` / `checkpoints` may be typed with SIM's own mutable classes (e.g. `OrbState implements
+ * OrbView`); identity/order guarantees per the SimView doc.
  */
 export class GameWorld implements SimView {
   readonly level: LevelData;
@@ -65,13 +67,13 @@ export class GameWorld implements SimView {
     todo('SIM', 'GameWorld.respawn');
   }
 
-  /** Debug: move the player's feet to (x, y), zero velocity, snap the camera. */
+  /** Debug: move the player's feet to (x, y), zero velocity, set warpTick, snap the camera, emit Teleported. */
   teleport(x: number, y: number): void {
     void x; void y;
     todo('SIM', 'GameWorld.teleport');
   }
 
-  /** Restart the level from scratch (orbs, checkpoints, timer). */
+  /** Restart from scratch (orbs, checkpoints, enemies, timer): clears the event queue, then emits Reset. */
   reset(): void {
     todo('SIM', 'GameWorld.reset');
   }

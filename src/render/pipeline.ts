@@ -1,14 +1,17 @@
-import type { Renderer } from 'pixi.js';
+import type { WebGLRenderer } from 'pixi.js';
 import type { LayerManifest } from '../contracts/assets.ts';
 import type { RenderStats } from '../contracts/debug.ts';
 import type { LevelData } from '../contracts/level.ts';
 import type { GpuInfo, QualitySettings, UserSettings } from '../contracts/quality.ts';
 import type { RenderContext, RenderView } from '../contracts/render.ts';
-import type { SimEvent, SimView } from '../contracts/sim.ts';
+import type { SimView } from '../contracts/sim.ts';
 import { todo } from '../core/todo.ts';
 
 export interface PipelineOptions {
-  /** Canvas to render into; the pipeline sizes its backbuffer, CSS size is the caller's. */
+  /**
+   * Canvas to render into. The pipeline owns its backbuffer AND its CSS size (the letterboxed rect);
+   * the caller only inserts it into a centring container.
+   */
   canvas: HTMLCanvasElement;
   level: LevelData;
   manifest: LayerManifest;
@@ -19,7 +22,8 @@ export interface PipelineOptions {
 /**
  * Owns the Pixi WebGL2 renderer, the scene/glow slot containers, render targets and the pass sequence
  * (ARCHITECTURE.md §3): scene RT (+depth) → glow RT → bloom → composite (grade, fade, vignette, dither)
- * to the canvas. Also owns quality resolution, dynamic resolution, screen shake, GPU timing, stats.
+ * to the canvas. Also owns quality resolution, dynamic resolution, screen shake, GPU timing, stats,
+ * the render clock, and dispatching sim events to views. Refuses to start without WebGL2.
  */
 export class RenderPipeline {
   static async create(options: PipelineOptions): Promise<RenderPipeline> {
@@ -27,7 +31,7 @@ export class RenderPipeline {
     return todo('PIPE', 'RenderPipeline.create');
   }
 
-  get renderer(): Renderer {
+  get renderer(): WebGLRenderer {
     return todo('PIPE', 'RenderPipeline.renderer');
   }
 
@@ -62,7 +66,11 @@ export class RenderPipeline {
     todo('PIPE', 'RenderPipeline.addView');
   }
 
-  /** Resize to the canvas CSS size. Aspect beyond MIN/MAX_ASPECT is letter/pillar-boxed. */
+  /**
+   * Fit the canvas into the available CSS size: aspect clamped to [MIN_ASPECT, MAX_ASPECT] (letter/
+   * pillar-box), sets canvas.style width/height, backbuffer = CSS × min(dpr, pixelRatioCap), then calls
+   * views' onResize.
+   */
   resize(cssWidth: number, cssHeight: number, devicePixelRatio: number): void {
     void cssWidth; void cssHeight; void devicePixelRatio;
     todo('PIPE', 'RenderPipeline.resize');
@@ -81,20 +89,14 @@ export class RenderPipeline {
   }
 
   /**
-   * Forward a sim event to every view's onSimEvent (called while draining the queue). The pipeline
-   * also adds its own screen shake here (hard Land, Died, EnemyStomped).
+   * One frame: (a) advance the render clock by min(dt, MAX_RENDER_DT) and fill FrameInfo (camera with
+   * shake, quality, sim); (b) for each queued sim event: add shake (Land with fall height ≥ 240, Died,
+   * EnemyStomped) and call every view's onSimEvent; (c) views update; (d) passes. Does not clear the
+   * queue (the orchestrator does, after audio/HUD). `nowSec` = wall time (dynres cooldown, GPU timing),
+   * `dt` = unclamped frame dt, `lateFrames` from the loop.
    */
-  dispatch(e: SimEvent): void {
-    void e;
-    todo('PIPE', 'RenderPipeline.dispatch');
-  }
-
-  /**
-   * Update all views and draw the frame. `time` = render clock (s), `dt` = frame dt (s, unclamped),
-   * `alpha` = sim interpolation factor, `lateFrames` from the loop (feeds dynamic resolution).
-   */
-  render(sim: SimView, alpha: number, time: number, dt: number, lateFrames: number): void {
-    void sim; void alpha; void time; void dt; void lateFrames;
+  render(sim: SimView, alpha: number, nowSec: number, dt: number, lateFrames: number): void {
+    void sim; void alpha; void nowSec; void dt; void lateFrames;
     todo('PIPE', 'RenderPipeline.render');
   }
 
