@@ -47,4 +47,5 @@ joined with `-`: `#bench`, `#plates`, `#debug`, `#high`/`#medium`/`#low`, `#unca
 
 `npm run build` writes a static site to `dist/` with relative paths. Serve `levels/*.ldtk` as
 `application/json`. On hosts with a strict Content-Security-Policy (no `unsafe-eval`), the game detects
-the restriction and loads PixiJS's eval-free fallback automatically.
+the restriction, loads PixiJS's eval-free fallback and skips KTX2 (its transcoder needs eval), so
+painted plates load as WebP.

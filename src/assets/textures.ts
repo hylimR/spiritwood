@@ -1,10 +1,11 @@
 import { Assets, detectWebp, setKTXTranscoderPath, type Texture, type WebGLRenderer } from 'pixi.js';
 import 'pixi.js/ktx2';
 import type { TextureSourceDef } from '../contracts/assets.ts';
+import { evalAllowed } from '../core/csp.ts';
 import type { TextureBudget } from '../contracts/render.ts';
 
 export interface TextureFormatSupport {
-  /** GPU can sample a Basis/KTX2 transcode target (BC7/BC3/ETC2/ASTC). */
+  /** GPU can sample a Basis/KTX2 transcode target (BC7/BC3/ETC2/ASTC) and the CSP lets the transcoder run. */
   ktx2: boolean;
   webp: boolean;
 }
@@ -18,14 +19,21 @@ export function chooseTextureUrl(src: TextureSourceDef, support: TextureFormatSu
   return path ? new URL(path, baseUrl).href : null;
 }
 
+/**
+ * KTX2 needs a transcode target the GPU samples (BC7 bptc, BC3 s3tc, ETC2, ASTC 4×4) and eval: Pixi's
+ * libktx transcoder is Emscripten code that calls `new Function`, so under a no-eval CSP its worker
+ * fails during init (and Pixi's worker handler then throws on the URL-less error). Pure.
+ */
+export function ktx2Usable(ext: Readonly<Partial<Record<'bptc' | 's3tc' | 'etc' | 'astc', unknown>>>, canEval: boolean): boolean {
+  return canEval && !!(ext.bptc || ext.s3tc || ext.etc || ext.astc);
+}
+
 let supportPromise: Promise<TextureFormatSupport> | null = null;
 
 /** Probe compressed-format and WebP support once (cached). */
 export async function detectTextureSupport(renderer: WebGLRenderer): Promise<TextureFormatSupport> {
   supportPromise ??= (async () => {
-    const ext = renderer.context.extensions;
-    // Targets Pixi's KTX2 transcoder can produce: BC7 (bptc), BC3 (s3tc), ETC2 (etc), ASTC 4×4.
-    const ktx2 = !!(ext.bptc || ext.s3tc || ext.etc || ext.astc);
+    const ktx2 = ktx2Usable(renderer.context.extensions, evalAllowed());
     let webp = false;
     try {
       webp = await detectWebp.test();

@@ -581,11 +581,14 @@ With the full High budget there are 10 kit layers plus sky and fog:
   plus a margin (in layer space via `layerExtent`/parallax). It loads by priority (nearest first, at most
   2 in flight) and evicts least-recently-visible chunks past `textureBudgetMB[level]`.
 - **Texture resolution** (`src/assets/textures.ts`): KTX2 (Basis via `pixi.js/ktx2`) when the GPU
-  supports a compressed format. Otherwise WebP, then PNG. The libktx transcoder is self-hosted at
+  supports a compressed format and the CSP allows eval (the Emscripten transcoder calls `new Function`;
+  `src/core/csp.ts` probes once). Otherwise WebP, then PNG. The libktx transcoder is self-hosted at
   `transcoders/ktx/`: the Vite plugin serves it in dev and emits it at build. Every texture registers
   its bytes with `TextureBudget` (shown in the debug overlay).
-- **Publishing:** `levels/forest.ldtk` must be served as `application/json`, and hosts must allow
-  blob workers + WASM for KTX2. Otherwise the loader falls back to WebP/PNG.
+- **Publishing:** `levels/forest.ldtk` must be served as `application/json`. KTX2 also needs blob
+  workers, WASM and eval. Under a no-eval CSP it is skipped up front. When workers or WASM are blocked,
+  a load still pending after `KTX2_TIMEOUT_MS` counts as failed. Either way the loader falls back to
+  WebP/PNG.
 - **Bake tool** (`tools/plates/bake-plates.ts`, Node + sharp + ktx2-encoder): renders a plate to PNG,
   then writes WebP + KTX2 (ETC1S, mipmapped) chunks and tight hull polygons alongside a manifest. M1
   ships one demo plate layer in `public/layers/forest.plates.manifest.json` (open with

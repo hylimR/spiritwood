@@ -1,13 +1,24 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { Assets, Texture, BufferImageSource } from 'pixi.js';
 import {
-  chooseTextureUrl, KTX2_TIMEOUT_MS, loadTextureSource, textureBytes, type TextureFormatSupport,
+  chooseTextureUrl, ktx2Usable, KTX2_TIMEOUT_MS, loadTextureSource, textureBytes, type TextureFormatSupport,
 } from '../../src/assets/textures.ts';
 import { SimpleTextureBudget } from '../../src/render/util/texture.ts';
 import type { TextureSourceDef } from '../../src/contracts/assets.ts';
 
 const BASE = 'https://example.com/game/layers/forest.manifest.json';
 const ALL: TextureSourceDef = { ktx2: 'plates/c.ktx2', webp: 'plates/c.webp', png: 'plates/c.png' };
+
+describe('ktx2Usable', () => {
+  test('needs a transcode target the GPU samples', () => {
+    expect(ktx2Usable({}, true)).toBe(false);
+    for (const ext of ['bptc', 's3tc', 'etc', 'astc'] as const) expect(ktx2Usable({ [ext]: {} }, true)).toBe(true);
+  });
+
+  test('is off when the CSP forbids eval (the Emscripten transcoder cannot start)', () => {
+    expect(ktx2Usable({ bptc: {}, s3tc: {}, etc: {}, astc: {} }, false)).toBe(false);
+  });
+});
 
 describe('chooseTextureUrl', () => {
   const support = (ktx2: boolean, webp: boolean): TextureFormatSupport => ({ ktx2, webp });

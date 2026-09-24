@@ -1,3 +1,4 @@
+import { evalAllowed } from './core/csp.ts';
 import { Game } from './game/game.ts';
 
 declare global {
@@ -35,11 +36,7 @@ function effectiveSearch(): string {
 
 /** PixiJS generates uniform/particle sync code with `new Function`; strict CSP hosts forbid it. */
 async function ensureCspCompatible(): Promise<void> {
-  try {
-    new Function('');
-  } catch {
-    await import('pixi.js/unsafe-eval');
-  }
+  if (!evalAllowed()) await import('pixi.js/unsafe-eval');
 }
 
 async function main(): Promise<void> {
