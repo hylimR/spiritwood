@@ -49,3 +49,8 @@ joined with `-`: `#bench`, `#plates`, `#debug`, `#high`/`#medium`/`#low`, `#unca
 `application/json`. On hosts with a strict Content-Security-Policy (no `unsafe-eval`), the game detects
 the restriction, loads PixiJS's eval-free fallback and skips KTX2 (its transcoder needs eval), so
 painted plates load as WebP.
+
+To publish as a Claude artifact, run `npm run build && npm run artifact -- <outDir>`. That writes the
+page as an HTML fragment (`<outDir>/index.html`) and the supporting-files map (`<outDir>/files.json`).
+Artifacts neither serve `.ktx2` nor allow the eval its transcoder needs, so the package leaves out
+KTX2 files and the transcoder and strips `ktx2` sources from the layer manifests.

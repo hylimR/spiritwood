@@ -11,7 +11,8 @@
     "test": "vitest run --maxWorkers=2",
     "test:watch": "vitest --maxWorkers=2",
     "level": "node tools/level/build-level.ts",
-    "plates": "node tools/plates/bake-plates.ts"
+    "plates": "node tools/plates/bake-plates.ts",
+    "artifact": "node tools/artifact/package-artifact.ts"
   },
   "dependencies": {
     "pixi-filters": "^6.1.5",

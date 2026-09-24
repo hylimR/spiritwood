@@ -227,7 +227,7 @@ the configs are **frozen**: changing them needs the main session.
 
 | Owner | Files | Summary |
 |---|---|---|
-| **main** (frozen contracts) | `ARCHITECTURE.md`, `README.md`, `CLAUDE.md`, `package.json`, `tsconfig*.json`, `vite.config.ts` (incl. the KTX2 transcoder plugin), `index.html`, `src/config.ts`, `src/contracts/**`, `src/core/{math,rng,color,tiles,todo}.ts`, `src/level/ascii.ts` (`levelFromAscii`), `src/render/gen/{noise,sdf}.ts`, `src/render/util/**`, `src/render/shaders/**`, `tools/preview/png.ts`, `tests/shared/**` (incl. `fixtures.ts`: `levelFromAscii`, `createFakeSimView`) | Types, constants, pure shared helpers, test fixtures |
+| **main** (frozen contracts) | `ARCHITECTURE.md`, `README.md`, `CLAUDE.md`, `package.json`, `tsconfig*.json`, `vite.config.ts` (incl. the KTX2 transcoder plugin), `index.html`, `src/config.ts`, `src/contracts/**`, `src/core/{math,rng,color,tiles,todo,csp}.ts`, `src/level/ascii.ts` (`levelFromAscii`), `src/render/gen/{noise,sdf}.ts`, `src/render/util/**`, `src/render/shaders/**`, `tools/preview/png.ts`, `tools/artifact/**`, `tests/shared/**` (incl. `fixtures.ts`: `levelFromAscii`, `createFakeSimView`) | Types, constants, pure shared helpers, test fixtures |
 | **main** (integration) | `src/main.ts`, `src/game/**`, `src/audio/**` | Boot, orchestrator, glue |
 | **SIM** agent | `src/core/{loop,events}.ts`, `src/input/**`, `src/level/**`, `src/sim/**`, `tools/level/**`, `public/levels/**`, `tests/{core,input,level,sim}/**` | Loop, input, LDtk loading, collision, player controller, camera, world rules, enemy, level content |
 | **WORLD** agent | `src/render/gen/**` (except noise/sdf), `src/render/layers/**`, `src/render/terrain/**`, `src/render/fx/**`, `src/render/world.ts`, `src/assets/**`, `public/layers/**`, `tools/plates/**`, `tools/preview/world/**`, `tests/world/**` | Procedural kit and atlases, hull trimming, parallax stack, sky, fog, terrain meshing, decor, thorns, particles, light shafts, layer manifest, chunk streaming, KTX2/WebP |
@@ -588,7 +588,7 @@ With the full High budget there are 10 kit layers plus sky and fog:
 - **Publishing:** `levels/forest.ldtk` must be served as `application/json`. KTX2 also needs blob
   workers, WASM and eval. Under a no-eval CSP it is skipped up front. When workers or WASM are blocked,
   a load still pending after `KTX2_TIMEOUT_MS` counts as failed. Either way the loader falls back to
-  WebP/PNG.
+  WebP/PNG. `npm run artifact` packages `dist/` for Claude artifacts without KTX2 (see README).
 - **Bake tool** (`tools/plates/bake-plates.ts`, Node + sharp + ktx2-encoder): renders a plate to PNG,
   then writes WebP + KTX2 (ETC1S, mipmapped) chunks and tight hull polygons alongside a manifest. M1
   ships one demo plate layer in `public/layers/forest.plates.manifest.json` (open with
