@@ -1,9 +1,12 @@
-import { Texture, type TextureSourceOptions } from 'pixi.js';
+import { BufferImageSource, Texture, type TextureSourceOptions } from 'pixi.js';
 import type { TextureBudget } from '../../contracts/render.ts';
 
 /**
  * Build a Pixi texture from straight-alpha RGBA8 pixels (as produced by CPU generators).
  * Pixels are premultiplied in place before upload, matching Pixi's premultiplied pipeline.
+ * Bypasses Texture.from's global cache (keyed by the pixel array, so reused scratch buffers would
+ * return a stale texture). Atlases drawn minified should pass `autoGenerateMipmaps: true`, pack with
+ * gutters ≥ 2^mipLevels texels, and register `estimateTextureBytes(w, h, 4, true)`.
  */
 export function textureFromRgba(
   pixels: Uint8Array | Uint8ClampedArray,
@@ -14,7 +17,7 @@ export function textureFromRgba(
   const { premultiply = true, label, ...sourceOpts } = opts;
   const data = pixels instanceof Uint8Array ? pixels : new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength);
   if (premultiply) premultiplyRgba(data);
-  const texture = Texture.from({
+  const source = new BufferImageSource({
     resource: data,
     width,
     height,
@@ -23,9 +26,9 @@ export function textureFromRgba(
     scaleMode: 'linear',
     autoGenerateMipmaps: false,
     ...sourceOpts,
+    ...(label ? { label } : {}),
   });
-  if (label) texture.label = label;
-  return texture;
+  return new Texture({ source, ...(label ? { label } : {}) });
 }
 
 export function premultiplyRgba(data: Uint8Array): void {

@@ -2,8 +2,8 @@ import type { LevelData, TileKind } from '../contracts/level.ts';
 import { todo } from '../core/todo.ts';
 
 /**
- * Tile queries over LevelData.tiles. Out of bounds: left/right/top are Solid, below the bottom is
- * Empty (ARCHITECTURE.md §2.1). World rect queries use half-open ranges.
+ * Tile queries over LevelData.tiles. Out of bounds: tx outside [0, width) → Solid for every ty; else
+ * ty < 0 → Solid, ty ≥ height → Empty (ARCHITECTURE.md §2.1). World rect queries use half-open ranges.
  */
 export class CollisionGrid {
   readonly width: number;
@@ -23,7 +23,7 @@ export class CollisionGrid {
     return new CollisionGrid(level.widthTiles, level.heightTiles, level.tileSize, level.tiles);
   }
 
-  /** Build from rows of characters: '#' Solid, '=' OneWay, '^' Thorns, anything else Empty. */
+  /** Tiles only, using ASCII_TILES from ./ascii.ts (other glyphs → Empty). */
   static fromAscii(rows: readonly string[], tileSize: number): CollisionGrid {
     void rows;
     void tileSize;

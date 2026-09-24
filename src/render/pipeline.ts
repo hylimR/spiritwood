@@ -91,10 +91,10 @@ export class RenderPipeline {
 
   /**
    * Update all views and draw the frame. `time` = render clock (s), `dt` = frame dt (s, unclamped),
-   * `alpha` = sim interpolation factor.
+   * `alpha` = sim interpolation factor, `lateFrames` from the loop (feeds dynamic resolution).
    */
-  render(sim: SimView, alpha: number, time: number, dt: number): void {
-    void sim; void alpha; void time; void dt;
+  render(sim: SimView, alpha: number, time: number, dt: number, lateFrames: number): void {
+    void sim; void alpha; void time; void dt; void lateFrames;
     todo('PIPE', 'RenderPipeline.render');
   }
 

@@ -21,7 +21,7 @@ characters or layouts.
 |---|---|
 | Language / build | TypeScript 7 (`tsc --noEmit` is the type oracle), Vite 8, static output (`base: './'`) |
 | Renderer | PixiJS v8, **WebGL2 only** in M1 (`preference: 'webgl'`); custom GLSL ES 3.0 shaders. WebGPU is deferred: every custom shader would need a WGSL twin. |
-| Filters | pixi-filters where a stock filter fits (e.g. Kawase blur for bloom); everything else custom |
+| Filters | pixi-filters is installed, but M1 uses none on its hot paths. Pixi `Filter`s render into pooled targets without depth, which breaks the depth-ordered scene. KawaseBlurFilter cannot downsample and pads its input, so bloom is an owned dual-filter chain. pixi-filters stays available for occasional full-screen composite effects (M2). |
 | Character animation | In-house bones + SDF-drawn sprite parts + keyframed and procedural motion (no Spine licence) |
 | Movement | Custom kinematic controller on a fixed 60 Hz step with interpolated rendering. No physics engine. |
 | Levels | LDtk 1.5.3 project JSON (`public/levels/forest.ldtk`), generated from an ASCII map by `tools/level/build-level.ts`, and editable later in LDtk |
@@ -60,20 +60,29 @@ union types replace enums.
 - The simulation runs at a fixed **60 Hz** (`SIM_DT = 1/60`) with an accumulator
   (`src/core/loop.ts`), at most `MAX_STEPS_PER_FRAME` = 5 steps per frame. Excess time is dropped
   (no spiral of death).
-- **Vsync snapping:** a frame delta within 0.25 ms of an integer multiple of `SIM_DT` is snapped to it, so a
-  60 Hz display does not jitter between 0 and 2 steps.
+- **Vsync snapping:** a frame delta within 1 ms of an integer multiple k ≥ 1 of `SIM_DT` is snapped to
+  it, so a 60 Hz display does not jitter between 0 and 2 steps. This also covers browsers that coarsen
+  timestamps to 1 ms. `render` receives the raw (unsnapped) delta.
 - **Interpolation:** everything that moves keeps `prevX/prevY` (set at the start of each step) and
   `x/y`. The renderer draws `lerp(prev, cur, alpha)` with `alpha = accumulator / SIM_DT`. When a
   discontinuity happens (respawn, teleport) the sim sets `prev = cur`.
-- **FPS cap:** with the 60 fps cap on, the loop renders on the first rAF at or after the next 60 Hz
-  deadline, minus half a rAF interval. Deadlines advance by a fixed 1/60 s, so 120/144 Hz displays
-  average 60 fps.
+- **FPS cap:** keep an EMA of the rAF interval (`rafEst`, starting at 16.67 ms; samples are clamped to
+  4–50 ms). A frame is rendered when `now ≥ deadline − rafEst/2`. Then `deadline += 1000/cap`, and if the
+  deadline is already ≤ now it resyncs to `now + 1000/cap`. This averages exactly the cap on
+  120/144/165 Hz displays and resyncs after hitches.
+- **Accumulator in ticks:** `accTicks += dt'·hz`. Loop `while (accTicks ≥ 1 − 1e-6 && n < max)`.
+  After the clamp, whole ticks are dropped (counted in `droppedSeconds`). `alpha = clamp01(accTicks)`.
+  `setPaused(true)` runs no steps and sets alpha = 1, so the frozen scene does not wobble.
+  `resetClock()` re-initialises on the next frame.
+- **Late frames:** `lateFrames` is the number of render deadlines missed before this frame. It is the
+  frame-pacing signal for dynamic resolution and the bench.
 - **Determinism:** the sim uses no wall-clock time, no `Math.random` (use `Rng` from `src/core/rng.ts`)
   and no DOM. Durations are counted in **ticks** (integers). Speeds are u/s and accelerations u/s²,
   multiplied by `SIM_DT`.
-- **Input latching:** the input manager is sampled once per render frame. *Pressed* edges are latched
-  and delivered to exactly one sim tick: the first tick that runs. If a frame runs zero ticks, the edge
-  carries over to the next frame. *Held* state goes to every tick.
+- **Input latching:** the input manager is sampled once per render frame. Presses are counted per
+  action (capped at 2). At most one press is delivered per tick; the rest carry over to later ticks and
+  frames, and so do presses in a frame that runs zero ticks. A tick that delivers a press also reports
+  the action as held. *Held* state goes to every tick.
 - Render-only animation (shaders, particles, rig secondary motion) uses the render clock `frame.time`
   and `frame.dt`, clamped to at most 1/20 s.
 
@@ -105,8 +114,34 @@ The scene render target has a **depth buffer**. Parallax layers use it in three 
 3. **Transparent passes** (slots `background`, `shafts`): soft edges and translucent parts, **far → near**,
    depth test on, **depth write off**, normal or additive blending.
 
-Depth of a layer: `depthForParallax(f) = 0.05 + 0.9·(1 − clamp(f, 0, 1))` (terrain = 0.05, the farthest
-layer ≈ 0.95), sky = `DEPTH_SKY` = 0.99. Shaders write `gl_Position.z = depth·2 − 1`.
+Depth of a layer: `depthForParallax(f) = 0.05 + 0.9·(1 − clamp(f, 0, 1))` (terrain = `DEPTH_TERRAIN`
+0.05, the farthest layer ≈ 0.95), shafts `DEPTH_SHAFTS` 0.055, sky `DEPTH_SKY` 0.99. Shaders write
+`gl_Position.z = depth·2 − 1`.
+
+- **Instances within a layer** get `depthForInstance(f, k) = depthForParallax(f) − k·DEPTH_INSTANCE_EPS`,
+  where k is the painter order (0 = backmost, at most `MAX_INSTANCES_PER_LAYER`), carried in a per-vertex
+  `aDepth` attribute. Overlapping instances then resolve front-over-back.
+- **Index order:** core meshes are indexed front → back (for early-Z); band meshes back → front.
+- **Parallax constraints:** depth-tested layers need `fx ≤ MAX_LAYER_PARALLAX` (0.95) and a gap of at
+  least `MIN_LAYER_PARALLAX_GAP` (0.02) between consecutive layers. The manifest validator enforces both.
+
+**Pixi recipe** (verified against pixi.js 8.21):
+
+- The scene target is `new RenderTarget({ colorTextures: [sceneTexture], depth: true })`. A plain
+  `RenderTexture` target has **no depth buffer**, and the depth test then silently passes everything.
+- `renderer.render({ …, clear: CLEAR.ALL })` clears depth to 1.0. Pixi never calls `gl.depthFunc`, so
+  the depth test is the WebGL default **LESS**.
+- Use the States from `src/render/util/states.ts`:
+  - `createOpaqueState()`: blend off, depth test on, depth write on.
+  - `createSkyState()`: blend off, depth test on, depth write off.
+  - `createTransparentState()`: blend on, depth test on, depth write off.
+- For additive meshes set `mesh.blendMode = 'add'`. Never assign `state.blendMode`: MeshPipe overwrites
+  it every frame, and the setter re-enables blending.
+- Opaque and sky fragment shaders never `discard` or write `gl_FragDepth`, because that disables
+  early-Z.
+- No `filters`, `mask` or `cacheAsTexture` anywhere under a scene or glow slot. Filters render into
+  pooled textures that have no depth.
+- The scene colour source has `antialias: false`.
 
 Everything from slot `terrain` onwards (decor, entities, hero, particles, fog, foreground) uses Pixi's
 default state (no depth test) and simply draws on top in slot order.
@@ -122,7 +157,10 @@ over the terrain drawn in the pre-pass. They may only be used from slot `terrain
 - Palette colours are `0xRRGGBB` numbers in `config.ts`. Use `src/core/color.ts` to convert them to
   linear floats for uniforms (sRGB-ish in M1: no linear-light pipeline, grading is artistic).
 - **Dither at the source:** any shader that outputs a smooth dark gradient (sky, fog, layer fog tint,
-  composite) adds ±0.5/255 triangular dither (`GLSL_DITHER` in `src/render/shaders/common.ts`).
+  composite) adds ±1/255 TPDF dither from two uniform hashes (`GLSL_DITHER` in
+  `src/render/shaders/common.ts`).
+- **Precision:** fragment shaders start with `GLSL_FRAGMENT_HEADER` (highp). Pixi otherwise injects
+  `mediump`, and uniforms shared with the vertex stage then fail to link.
 
 ---
 
@@ -141,8 +179,10 @@ rAF ─▶ FixedStepLoop.frame(now)
               │     ├─ PASS 1  scene  ─▶ sceneRT  (w·s × h·s, RGBA8 + depth)
               │     │     opaque → sky → background → shafts → terrain → entities → hero
               │     │     → front → particles → fog → foreground
-              │     ├─ PASS 2  glow   ─▶ glowRT   (sceneRT/2, RGBA8, additive emissive twins)
-              │     ├─ PASS 3  bloom  ─▶ Kawase blur chain on glowRT (half → quarter)
+              │     ├─ PASS 2  glow   ─▶ glowRT   (sceneRT × bloomScale, RGBA16F, additive twins,
+              │     │                               then the foreground drawn over them to block bloom)
+              │     ├─ PASS 3  bloom  ─▶ owned dual-filter chain: bloomPasses × ½ downsamples
+              │     │                    (4-tap Kawase), then upsample-add back to glowRT size
               │     └─ PASS 4  composite ─▶ canvas: scene + bloom → per-area grade → death fade
               │                                     → vignette → dither
               └─ hud/debug overlay (DOM, throttled to 4 Hz)
@@ -158,8 +198,18 @@ rAF ─▶ FixedStepLoop.frame(now)
   fireflies, shaft dust). The glow RT has no depth buffer, so **parallax-layer content is never
   twinned**: it would bloom through the terrain. Background flora bakes its halo into the scene
   instead.
-- **Dynamic resolution:** the scene and glow RTs are `canvasPx × renderScale`. `renderScale` changes in
-  0.05 steps, at most once per second. The composite upsamples bilinearly.
+- **Dynamic resolution:** the scene and glow targets are allocated once at the maximum size (canvas ×
+  initial scale, capped by `maxRenderPixels`). Each frame renders into a sub-rect sized `canvasPx ×
+  renderScale` via a preallocated render-options `frame`, and the composite samples
+  `uv · (w/W, h/H)`. A scale change never reallocates. `renderScale` moves in 0.05 steps, at most once
+  per second.
+- **Render groups:** every slot container is `isRenderGroup: true`, so toggling a chunk's `visible`
+  rebuilds only that slot's instructions. Views toggle `visible` only when a chunk enters or leaves the
+  view, never for animation.
+- **Glow format:** `rgba16float` when `EXT_color_buffer_float` is available (Pixi enables it on
+  WebGL2); otherwise `rgba8unorm` with dither in the last up-pass. The chain is built from owned
+  full-screen-quad meshes, not Pixi `Filter`s. KawaseBlurFilter never downsamples and pads its input, so
+  it does not fit the budget.
 
 ---
 
@@ -183,59 +233,179 @@ Dependency rule: `sim/`, `level/`, `input/` and `core/` never import `pixi.js` o
 
 ## 5. Subsystem specs
 
-### 5.1 Player controller (`src/sim/player.ts`, tuning in `src/sim/tuning.ts`)
+### 5.1 Player controller (`src/sim/player.ts`, tuning in `src/sim/tuning.ts`) — normative
 
-A kinematic AABB of 28 × 58 u, resolved against the tile grid with swept, axis-separated moves:
-X first, then Y. The sweep scans every tile column or row the leading edge crosses, so there is no
-tunnelling at any speed.
+A kinematic AABB of 28 × 58 u, resolved against the tile grid with swept, axis-separated moves: X
+first, then Y. The sweep scans every tile column or row the leading edge crosses, so there is no
+tunnelling at any speed. A blocked sweep ends exactly on the tile boundary. Thorns never block.
 
-| Feature | Rule |
+**Per-tick order** in `step`:
+
+1. prev ← cur.
+2. Decrement every countdown timer (floor 0).
+3. Latch input. A press sets `jumpBuffer = jumpBufferTicks`, so a press on tick p is live on ticks
+   p … p + jumpBufferTicks − 1.
+4. Resolve the buffered jump. Use contact state from the end of the previous tick and take the first
+   legal option in this priority:
+   1. **Drop-through:** grounded only on OneWay tiles, and `moveY ≥ downThreshold`. Sets
+      `dropThrough = dropThroughTicks`, y += 1, emits DropThrough.
+   2. **Ground jump:** grounded or `coyote > 0`. While grounded, coyote = coyoteTicks, so the jump is
+      legal on airborne ticks 1…coyoteTicks. A jump zeroes coyote.
+   3. **Wall jump:** wall contact on side d within `wallJumpProbe`, or `wallCoyote > 0` (using the last
+      d).
+   4. **Air jump:** `airJumpsLeft > 0` and vy ≥ −airJumpVelocity. The jump sets vy = −airJumpVelocity.
+      An earlier press stays buffered until vy has decayed, so a double jump never lowers the arc.
+
+   Firing consumes the buffer. A jump fired while dashing ends the dash (DashEnd b = 1) and keeps vx. A
+   press 1–8 ticks before landing with the air jump available fires the air jump.
+5. **Dash start:** a press starts a dash when the cooldown is 0 and the player is grounded or has
+   `airDashesLeft > 0`.
+   - `dashDir = |moveX| ≥ dirThreshold ? sign(moveX) : (wallSlide ? −wallDir : facing)`.
+   - vx = dashDir·dashSpeed, vy = 0, gravity 0.
+   - The player moves exactly dashSpeed·dt on each of `dashTicks` ticks, starting on the press tick.
+   - Cooldown counts from the start tick.
+   - Blocked by a wall after ledge assist: the dash ends with vx = 0 (DashEnd b = 2).
+   - Natural end: vx = dashDir·dashEndSpeed (b = 0).
+   - Same-tick jump + dash: the dash starts, the jump stays buffered and cancels it next tick (a
+     dash-jump). The dash gives no invulnerability.
+6. **Horizontal velocity** (not dashing):
+   - target = moveX·maxRunSpeed.
+   - Rates: accel, turnAccel when sign(moveX) ≠ sign(vx), decel with no input. Ground rates on the
+     ground, air rates in the air.
+   - For `wallJumpLockTicks` after a wall jump, all horizontal rates are multiplied by
+     k/wallJumpLockTicks on tick k.
+   - **Over-speed:** when |vx| > |moveX|·maxRunSpeed and (sign(moveX) = sign(vx) or moveX = 0), vx
+     decays toward the target at the decel rate, preserving momentum.
+7. **Gravity:** a = g × mult, where mult is chosen from vy at the start of the tick, first match wins:
+
+   | Condition | mult |
+   |---|---|
+   | dashing | 0, and vy = 0 |
+   | vy < 0 && !jumpHeld && jumpCuttable | jumpCutGravityMult |
+   | \|vy\| < apexThreshold && jumpHeld && inJumpArc | apexGravityMult |
+   | vy > 0 | fallGravityMult |
+   | otherwise | 1 |
+
+   `inJumpArc` and `jumpCuttable` are set by ground, air and wall jumps and by stomp bounces, and
+   cleared on landing and by drop-through. Jump release is ignored for the first wallJumpLockTicks
+   after a wall jump.
+8. **Integrate (trapezoid, exact for constant acceleration):**
+   - vyEnd = min(vy + a·dt, cap), where cap = fastFallSpeed while moveY ≥ downThreshold, else
+     maxFallSpeed. dy = (vy + vyEnd)·dt/2.
+   - dx = (vx + vxEnd)·dt/2.
+   - Impulses (jumps, bounce, dash) overwrite velocity before integration.
+9. **Move:** sweepX (with ledge assist), then sweepY (with corner correction, one-ways landable iff
+   `dropThrough == 0`).
+10. **Contacts:**
+    - Update grounded, wall contact, mode and timers.
+    - Landing restores airJumps and airDashes and emits Land (a = impact speed, b = fall height).
+    - Entering wallSlide (and wall jumping) also restores them. Bare wall contact never does.
+    - Update facing, runDistance and airTicks.
+
+**Rules:**
+
+- **Wall slide:** airborne, vy > 0, contact(d), and (moveX·d ≥ dirThreshold or wallStick > 0). Holding
+  into the wall sets wallStick = wallStickTicks. While wallStick > 0, input away from the wall is
+  ignored (the player stays flush). vy = min(vy, wallSlideMaxSpeed). Every slide tick sets
+  wallCoyote = wallCoyoteTicks.
+- **Wall jump:** vx = −d·wallJumpVx, vy = −wallJumpVelocity, facing = −d.
+- **Facing:**
+  - sign(moveX) when |moveX| ≥ dirThreshold, outside the wall-jump lock.
+  - dashDir while dashing.
+  - −wallDir while wall-sliding.
+  - The launch direction on a wall jump.
+- **modeTicks** is 0 on the tick a mode is entered.
+- **Corner correction:** when an upward Y sweep hits Solid and the player is not dashing, try n =
+  1…cornerCorrection, side s = sign(vx) first (the side with the smaller overlap when vx = 0). If the
+  body offset by (s·n, remaining dy) is free, x += s·n, redo the Y move, and keep vy. Otherwise the head
+  bonks (vy = 0).
+- **Ledge assist:** only when sweepX is blocked in the air (vy ≥ 0) or while dashing, never on the
+  ground. Try k = 1…ledgeAssist: if the body offset by (sign(dx), −k) is free, y −= k,
+  vy = min(vy, 0), and finish the X move.
+- **Input:** a tick delivering a press also counts as held (sub-frame taps are consistent). Keyboard ±1
+  always passes `dirThreshold`/`downThreshold`.
+- **Squash & stretch** is render-only, driven by events.
+
+**Test contract** (read values from the tuning; the numbers below are for DEFAULT_TUNING):
+
+| Move | Expected |
 |---|---|
-| Run | Accelerate toward `moveX·maxRunSpeed` with `groundAccel`. Use `turnAccel` when reversing and `groundDecel` with no input. In the air, use `airAccel`, `airTurnAccel` and `airDecel`. |
-| Jump | `gravity` and `jumpVelocity` are derived from `jumpHeight` and `jumpTimeToApex`. |
-| Variable height | While rising with jump **not held**, gravity × `jumpCutGravityMult`. |
-| Apex hang | While `abs(vy) < apexThreshold` and jump is held, gravity × `apexGravityMult`. |
-| Fall | Gravity × `fallGravityMult`, capped at `maxFallSpeed`, or `fastFallSpeed` while holding down. |
-| Coyote time | Can ground-jump for `coyoteTicks` after walking off a ledge. Consumed by a jump. |
-| Jump buffer | A press is remembered for `jumpBufferTicks`, and fires on the first tick a jump becomes legal. |
-| Wall slide | Airborne, falling, touching a wall and holding toward it: `vy ≤ wallSlideMaxSpeed`. The wall stays "stuck" for `wallStickTicks` after input stops pointing at it. |
-| Wall jump | Legal while wall-sliding or within `wallCoyoteTicks` of leaving a wall. Sets `vx = −wallDir·wallJumpVx`, `vy = −wallJumpVelocity`. For `wallJumpLockTicks`, horizontal control ramps back from 0 to 1, so you can climb one wall by re-pressing into it. |
-| Double jump | `airJumps` = 1. Restored on landing or when touching a wall. |
-| Dash | Horizontal, in the input direction (else facing), `dashSpeed` for `dashTicks`, with gravity off. `airDashes` = 1, restored on ground or wall. `dashCooldownTicks` applies. At the end, `vx = sign·dashEndSpeed`. A jump press during the dash cancels it and keeps horizontal momentum. |
-| Corner correction | A rising head hitting a ceiling corner within `cornerCorrection` u is nudged sideways. |
-| Ledge assist | A dash or run hitting a wall top within `ledgeAssist` u pops up onto the ledge. |
-| One-way platforms | Solid only from above (feet at or above the top on the previous tick and moving down). Down + jump drops through for 12 ticks. |
-| Hazards | Overlapping thorn tiles, inset by `HAZARD_INSET`, kills the player. |
-| Squash & stretch | Render-only. The controller emits events (`Jump`, `Land(impactSpeed)`, `Dash`, …) and the hero view springs its scale from them. |
+| Full held jump | apex ∈ [jumpHeight, jumpHeight + apexHangExtra + 1] (≈ 172.9 u), at tick 24 ± 1 |
+| Tap jump | apex ≈ 70.9 ± 2 u |
+| Air jump from rest | ≈ 121.1 ± 2 u |
+| Wall jump | ≈ 141.8 ± 2 u |
+| Dash | exactly dashSpeed·dashTicks·dt (± 0.01) |
+| Single-wall climb | ≥ 130 u gained per cycle |
 
-### 5.2 Camera (`src/sim/camera.ts`)
+### 5.2 Camera (`src/sim/camera.ts`) — normative
 
-Simulated on the fixed step with prev/cur interpolation.
+Simulated on the fixed step with prev/cur interpolation. The framing point is the feet + `targetOffsetY`.
 
-- **Dead zone:** a centred rect (`deadZoneW × deadZoneH`). The camera target moves only when the player
-  leaves it.
-- **Look-ahead:** `lookAheadX` in the velocity or facing direction. Engages above
-  `lookAheadMinSpeed` and is smoothed with its own `smoothDamp`. It releases slowly on stop, so the view
-  does not ping-pong on turn-around.
-- **Vertical:** follows landings (platform snapping) rather than every jump arc. Looks down by up to
-  `lookDownMax` when falling faster than `lookDownFallSpeed`.
-- **Smoothing:** critically damped `smoothDamp` per axis (`smoothTimeX` and `smoothTimeY`).
-- **Bounds:** clamped to the level rect. `snapTo()` teleports and marks `snapped` (no interpolation that
-  frame).
+- **X:** an edge-follow dead zone. focusX moves only while |x − focusX| > deadZoneW/2.
+- **Y:** a ground reference `groundRef`.
+  - mode ∈ {ground, wallSlide} → groundRef = y.
+  - Otherwise, when y > groundRef → groundRef = y.
+  - Otherwise, when y < groundRef − airRiseMargin → groundRef = y + airRiseMargin.
 
-### 5.3 World rules (`src/sim/world.ts`)
+  A single jump never moves the camera; a double jump or a climb does. focusY moves to groundRef only
+  while |groundRef − focusY| > deadZoneH/2.
+- **Look-ahead:** the direction flips to sign(vx) only after |vx| > lookAheadMinSpeed has held for
+  lookAheadCommitTicks. It decays to 0 after lookAheadHoldTicks of slow speed, smoothed with
+  lookAheadSmoothTime.
+- **Look-down:** only when vy ≥ lookDownFallSpeed AND the feet are lookDownMinDrop below the last
+  grounded y.
+- **Smoothing and bounds:** `smoothDamp` per axis. Clamp the *target* (not the output) to the level.
+  Centre on the level in an axis where it is smaller than the view.
+- **snapTo:** value = target, velocity = 0, prev = cur, snapTick = tick. `setOverride` follows an
+  explicit point (bench).
 
-- **Orbs:** within `orbMagnetRadius` they accelerate toward the player. Contact collects them
-  (`OrbCollected` event). Collected orbs stay collected after death.
-- **Checkpoints:** overlap activates one and sets the respawn point (`CheckpointActivated`).
-- **Death:** caused by thorns, an enemy or the kill plane. `Died` event → `dyingTicks` (hero hidden, fade
-  to 1) → respawn at the last checkpoint (`Respawned`, camera snap) → fade back to 0 over `fadeInTicks`.
-  Input is ignored while dying.
-- **Enemy "Gloomcrawler":** patrols `[patrolMinX, patrolMaxX]` on its platform and turns at range ends,
-  walls and edges. Touching it kills the player, *unless* the player is falling and their feet are
-  above its top. Then it is stomped: the player bounces (`bounceVelocity`), the enemy is stunned for
-  `stunTicks`, then it re-forms.
-- **Goal "Moonwell shrine":** overlap sets `completed` (`GoalReached`).
+### 5.3 World rules (`src/sim/world.ts`) — normative
+
+**Step order:**
+
+1. prev ← cur for everything.
+2. Player.
+3. Enemies.
+4. If alive, in order: thorns (the hazard AABB inset by `HAZARD_INSET`), then enemies, then the kill
+   plane (feet y > pxHeight + KILL_MARGIN).
+5. Orbs.
+6. Checkpoints.
+7. Goal.
+8. Death and respawn timers.
+9. Camera.
+
+**Enemies:**
+
+- **Stomp** iff the boxes overlap, player vy > 0, and player.prevY ≤ enemy.prevY − enemy.height +
+  stompTolerance. The player bounces with vy = −stompBounceVelocity (cuttable: about 143 u held, 50 u
+  released).
+- Any other overlap with a patrolling enemy kills (DeathCause.Enemy).
+- A stunned enemy is harmless and non-solid. It re-forms after stunTicks at its current position,
+  deferred while it overlaps the player.
+
+**Death timeline** (death tick D):
+
+- `kill` sets deadTicks = 0 and emits Died (x, y = body centre).
+- fade(D + k) = min(1, k/fadeOutTicks). The hero is visible for `deathHideTicks`, then hidden.
+- At D + dyingTicks, respawn at the active checkpoint's bottom-centre (x + w/2, y + h), else at
+  playerStart. Reset enemies to spawn in patrol mode, return uncollected orbs to their spawns
+  un-magnetised, snap the camera, set warpTick, and emit Respawned.
+- The player is visible and controllable from the respawn tick. fade(R + k) = max(0, 1 − k/fadeInTicks).
+  There is no invulnerability.
+- `respawn()` (debug R) queues a Debug death for the next step and is a no-op while dead. Nothing
+  kills a dead player.
+
+**Checkpoints:** the latest one touched becomes active. CheckpointActivated fires only on a change.
+
+**Orbs:**
+
+- Distance is measured to the player centre (x, y − height/2).
+- Within orbMagnetRadius an orb becomes magnetised permanently:
+  v = approach(v, dir·orbMaxSpeed, orbMagnetAccel·dt).
+- Collected at distance ≤ orbCollectRadius. Collected orbs stay collected after death.
+
+**Timer:** `elapsed` counts ticks from the first tick with non-neutral input until GoalReached, which
+fires once. Input continues after completion.
 
 ### 5.4 Level content (`tools/level/`, `public/levels/forest.ldtk`)
 
@@ -244,8 +414,33 @@ The level is one LDtk level, "Forest_Night", `200 × 50` tiles (9600 × 2400 u, 
 
 - **IntGrid layer `Collision`:** 1 Solid, 2 OneWay, 3 Thorns.
 - **Entities:** `PlayerStart`, `Orb`, `Checkpoint`, `Enemy` (its width is the patrol span), `Goal`,
-  `LightShaft` (resizable; fields `angle`, `intensity`), `GradeZone` (resizable; fields
+  `LightShaft` (resizable; fields `angle` in degrees, `intensity`), `GradeZone` (resizable; fields
   `grade: AreaGrade`, `blend`), `Lantern`, `Flora`.
+- **ASCII:** `src/level/ascii.ts` (`levelFromAscii`, `ASCII_TILES`) is the one ASCII legend, shared by
+  tests, `CollisionGrid.fromAscii` and `tools/level`.
+
+**Reach** (DEFAULT_TUNING, trapezoid, jump held, running at 440 u/s):
+
+| Move | Reach |
+|---|---|
+| Full jump rise | 172.9 u (3.6 tiles) |
+| Jump + double-jump peak | 293.7 u (6.1 tiles) |
+| Flat run-jump | 345 u of feet travel |
+| Jump + double jump | 535 u (11.1 tiles) |
+| Jump + double jump + dash at the second apex | 739 u (15.4 tiles) |
+| Dash | 196.7 u |
+
+Coyote time (≈ 51 u) and the collider width widen the crossable gaps.
+
+**Design rules:**
+
+- Single-jump ledges ≤ 3 tiles; jump + double-jump ledges ≤ 5 tiles.
+- Gaps crossable without the double jump ≤ 6 tiles.
+- Double-jump gaps 9–10 tiles; dash + double-jump gaps 13–14 tiles.
+- Wall-jump shafts 3–5 tiles wide.
+- `tests/sim/reach.test.ts` asserts each gate: the intended move succeeds and the next-weaker move
+  fails.
+- `tests/sim/playthrough.test.ts` replays scripted inputs through every area of `forest.ldtk`.
 
 Five areas, left to right, each with a colour grade:
 
@@ -292,7 +487,7 @@ With the full High budget there are 10 kit layers plus sky and fog:
 - **Hero** (PIPE): an in-house rig (see 5.6) drawn from an SDF-baked part atlas with a baked soft rim.
   An additive spirit-light halo sits behind it (it lights the nearby world), and there is a glow twin
   for bloom.
-- **Post** (PIPE): bloom from glowRT (Kawase, half then quarter resolution), then the composite.
+- **Post** (PIPE): bloom from glowRT through the owned dual-filter chain (§3), then the composite.
   The composite applies exposure, contrast, saturation, lift/gamma/gain and temperature from the
   **per-area grade**. The grade is blended by the camera's position in `GradeZone`s (`blend` u
   cross-fade). Then come the death fade (to `fogDeep`), vignette and dither.
@@ -325,10 +520,17 @@ With the full High budget there are 10 kit layers plus sky and fog:
 - **Auto:** reads `WEBGL_debug_renderer_info` (when exposed). Integrated GPUs (Intel UHD/Iris, AMD
   APUs, unknown) get **High features with pixel-ratio cap 1 and dynamic resolution on**. Discrete GPUs
   get High. Software renderers (SwiftShader, llvmpipe) get Low.
-- **Dynamic resolution** (`src/settings/dynres.ts`, pure): uses GPU time from
-  `EXT_disjoint_timer_query_webgl2` when available, else frame-time misses. Two or more frames in the
-  last 30 over 17.5 ms steps the scale down 0.05. Three seconds with no misses (and GPU time under 13 ms,
-  when known) steps it up 0.05. At most one change per second, clamped to [min, initial].
+- **Dynamic resolution** (`src/settings/dynres.ts`, pure):
+  - A **miss** is a frame where the loop reports `lateFrames > 0` (a missed render deadline) *and* the
+    GPU time is unknown or above `dropGpuMs` (14). Frame-interval thresholds are wrong under an fps cap:
+    at 144 Hz the cap's steady cadence alternates 13.9 and 20.8 ms. A CPU hitch with a fast GPU is not a
+    miss either, since lower resolution cannot fix it.
+  - Two or more misses in the last 30 frames step the scale down 0.05.
+  - Three seconds with no misses (and GPU time under 13 ms, when known) step it up 0.05.
+  - At most one change per second, clamped to [min, initial].
+  - **GPU time:** one `TIME_ELAPSED_EXT` query wraps all of a frame's passes, using a ring of 4
+    queries polled without blocking. Results are discarded on `GPU_DISJOINT_EXT`, and the value is −1
+    when the extension is missing (Firefox, Safari, some drivers).
 - **Persisted** in `localStorage` (guarded with try/catch): preset, pixel-ratio cap override, fps cap
   (60 or uncapped), dynamic resolution and the debug overlay.
 - **Keys:** `Esc` or Start = menu, `F3` = debug overlay, `F4` = collision/hitbox debug draw,
@@ -369,15 +571,17 @@ High features with pixel-ratio cap 1 and dynamic resolution.
 | Draw calls | ≤ 120 (target ≈ 70) |
 | Scene fill at internal res (full-screen equivalents) | ≤ 6.0: opaque pre-pass ≈ 1.2, sky ≤ 0.5 (after depth reject), transparent layer bands ≤ 1.5, shafts ≤ 0.3, terrain edges and decor ≤ 0.4, entities and hero ≤ 0.2, particles ≤ 0.3, fog bands ≤ 0.6 (each ≤ ⅓ screen tall), foreground ≤ 0.5 |
 | Post fill (full-screen equivalents at 1080p) | glow twins ≤ 0.1 (half res), bloom chain ≤ 0.4, composite 1.0 |
-| Texture memory per area | High ≤ 96 MB, Medium ≤ 64 MB, Low ≤ 48 MB. This covers atlases and streamed plates, **excluding** render targets (≈ 13 MB at 1080p) |
-| Allocation | **Zero allocations per frame in hot paths**: sim step, view `update`, particles, pipeline render. Preallocate, pool, and use index loops; no closures, spreads, `for…of`, `map/filter` or string building per frame. The debug overlay formats text at ≤ 4 Hz. |
-| Batching | Kit layers: 1 draw per chunk per pass. Particles: 1 draw per `ParticleContainer`. Hero: 1 draw (one atlas) plus halo. |
+| Texture memory per area | High ≤ 96 MB, Medium ≤ 64 MB, Low ≤ 48 MB. This covers atlases and streamed plates, **excluding** render targets (≈ 40 MB at 1080p: scene RGBA8 8.3 + D24S8 8.3, glow chain ≈ 4–6, canvas backbuffer 8.3; the pipeline creates the WebGL2 context itself with `depth: false, stencil: false` to avoid another 8.3) |
+| Allocation | **Zero allocations per frame in our hot paths**: sim step, view `update`, particles, pipeline render. Preallocate, pool, and use index loops; no closures, spreads, `for…of`, `map/filter` or string building per frame. The debug overlay formats text at ≤ 4 Hz. Pixi's own small per-`renderer.render()` allocations are accepted, so keep `renderer.render()` calls ≤ ~10 per frame. Reusing one render-options object freezes the root transform (Pixi writes `options.transform`), so roots stay at identity and scale lives on a child container. `clearColor` is a preallocated `number[4]`. |
+| Batching | Kit layers: 1 draw per chunk per pass, meshes built with `BufferUsage.STATIC` and Uint16 indices (≤ 65535 vertices per chunk mesh). Particles: 1 draw per `ParticleContainer`, from fixed-capacity pools filled before the first render; dead particles are hidden with scale 0 and never added or removed per frame. Hero: 1 draw (one atlas) plus halo. Custom-shader entities are merged per kind. |
+| Draw calls (estimate at High) | kit ≈ 10 layers × ≤ 2 chunks × 2 = ≤ 40 (typically ≈ 28); sky 1; fog 2; foreground ≈ 4; terrain ≈ 3 per visible chunk ≈ 12; decor ≈ 6; shafts ≤ 3; entities ≈ 5; hero 3; particles ≈ 6; glow twins ≈ 10; bloom 2·passes; composite 1. Total ≈ 90–110 |
 | Transparent full-screen layers | Must be cheap shaders: at most one texture fetch or a small analytic noise, and no dependent loops. |
+| Frame pacing (acceptance) | `lateFramePct` < 1% over the bench. Frame-time percentiles are reported, but they include fps-cap cadence jitter. |
 
-**Verification.** The debug overlay (F3) shows fps (average and 1% low), frame, sim and render CPU ms,
+**Verification.** The debug overlay (F3) shows fps (average and 1% low), late-frame %, frame, sim and render CPU ms,
 GPU ms (timer query), draw calls, estimated fill (sum of on-screen mesh bounds ÷ screen area), render
 scale and RT size, particles and texture MB. `?bench` runs a 30 s scripted camera flythrough through
-all five areas at the chosen preset and prints average fps, 1% low and frame-time p50/p95/p99. It is the
+all five areas at the chosen preset and prints average fps, 1% low and frame-time p50/p95/p99 and the late-frame %. It is the
 acceptance test to run on the Iris Xe laptop.
 
 ---

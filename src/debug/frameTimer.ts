@@ -6,16 +6,18 @@ import { todo } from '../core/todo.ts';
  * fps, average frame ms, 1%-low (mean of the worst 1% frame times, at least 1 sample), sim/render ms.
  */
 export class FrameTimer {
-  readonly stats: FrameStats = { fps: 0, frameMsAvg: 0, frameMs1pLow: 0, simStepsLastFrame: 0, simMs: 0, renderCpuMs: 0 };
+  readonly stats: FrameStats = {
+    fps: 0, frameMsAvg: 0, frameMs1pLow: 0, simStepsLastFrame: 0, simMs: 0, renderCpuMs: 0, lateFramePct: 0,
+  };
 
   constructor(windowFrames = 240) {
     void windowFrames;
     todo('PIPE', 'FrameTimer');
   }
 
-  /** Record a rendered frame's wall-clock delta (ms). */
-  frame(frameMs: number, simSteps: number, simMs: number, renderCpuMs: number): void {
-    void frameMs; void simSteps; void simMs; void renderCpuMs;
+  /** Record a rendered frame's wall-clock delta (ms) and the loop's lateFrames for it. */
+  frame(frameMs: number, lateFrames: number, simSteps: number, simMs: number, renderCpuMs: number): void {
+    void frameMs; void lateFrames; void simSteps; void simMs; void renderCpuMs;
     todo('PIPE', 'FrameTimer.frame');
   }
 

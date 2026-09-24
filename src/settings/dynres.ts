@@ -4,8 +4,11 @@ export interface DynResOptions {
   initial: number;
   min: number;
   step: number;
-  /** Frame time (ms) above which a frame counts as a miss. */
-  missMs: number;
+  /**
+   * A frame is a miss when the loop reports lateFrames > 0 AND (GPU time unknown OR GPU time > this).
+   * CPU hitches with a fast GPU are not misses (lowering resolution cannot fix them).
+   */
+  dropGpuMs: number;
   /** Misses within the window that trigger a step down. */
   missesToDrop: number;
   windowFrames: number;
@@ -18,7 +21,7 @@ export interface DynResOptions {
 }
 
 export const DEFAULT_DYNRES: Readonly<DynResOptions> = Object.freeze({
-  initial: 1, min: 0.7, step: 0.05, missMs: 17.5, missesToDrop: 2, windowFrames: 30,
+  initial: 1, min: 0.7, step: 0.05, dropGpuMs: 14, missesToDrop: 2, windowFrames: 30,
   raiseAfterSec: 3, raiseGpuMs: 13, cooldownSec: 1,
 });
 
@@ -33,9 +36,9 @@ export class DynamicResolution {
     return todo('PIPE', 'DynamicResolution.scale');
   }
 
-  /** Feed one frame. `gpuMs` < 0 when unknown. Returns the (possibly changed) scale. */
-  update(frameMs: number, gpuMs: number, nowSec: number): number {
-    void frameMs; void gpuMs; void nowSec;
+  /** Feed one rendered frame. `gpuMs` < 0 when unknown. Returns the (possibly changed) scale. */
+  update(lateFrames: number, gpuMs: number, nowSec: number): number {
+    void lateFrames; void gpuMs; void nowSec;
     return todo('PIPE', 'DynamicResolution.update');
   }
 

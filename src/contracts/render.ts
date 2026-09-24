@@ -73,6 +73,12 @@ export interface TextureBudget {
   readonly budgetBytes: number;
 }
 
+/**
+ * Every slot container is a render group (`isRenderGroup: true`) so visibility changes rebuild only that
+ * slot. `opaque` and `background` have `sortableChildren = true`: views set `zIndex =
+ * Math.round(depth * 1e6)` in `opaque` (near first) and `-Math.round(depth * 1e6)` in `background` (far
+ * first), so draw order is right regardless of view init order.
+ */
 export type SceneSlots = Readonly<Record<SceneSlot, Container>>;
 export type GlowSlots = Readonly<Record<GlowSlot, Container>>;
 

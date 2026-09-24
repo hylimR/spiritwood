@@ -27,10 +27,15 @@ export class PlayerController implements PlayerView {
   airJumpsLeft = 0;
   airDashesLeft = 0;
   dashProgress = 0;
+  dashDir: -1 | 0 | 1 = 0;
   modeTicks = 0;
+  airTicks = 0;
+  runDistance = 0;
   inputX = 0;
   alive = true;
+  deadTicks = -1;
   visible = true;
+  warpTick = -1;
 
   readonly tuning: PlayerTuning;
   readonly derived: DerivedTuning;
@@ -43,9 +48,9 @@ export class PlayerController implements PlayerView {
     this.height = tuning.height;
   }
 
-  /** Spawn at a feet position: alive, visible, zero velocity, abilities restored, prev = cur. */
-  reset(x: number, y: number): void {
-    void x; void y;
+  /** Spawn at a feet position: alive, visible, zero velocity, abilities restored, prev = cur, warpTick = tick. */
+  reset(x: number, y: number, tick: number): void {
+    void x; void y; void tick;
     todo('SIM', 'PlayerController.reset');
   }
 
@@ -54,13 +59,13 @@ export class PlayerController implements PlayerView {
     todo('SIM', 'PlayerController.step');
   }
 
-  /** Enter 'dead' mode (stops moving, hidden). Emitting Died is GameWorld's job. */
+  /** Enter 'dead' mode (stops moving; deadTicks = 0). Emitting Died and hiding are GameWorld's job. */
   kill(cause: DeathCause): void {
     void cause;
     todo('SIM', 'PlayerController.kill');
   }
 
-  /** Enemy stomp: vy = −velocity, restores air jump and dash, ends dash/wall slide. */
+  /** Enemy stomp: vy = −velocity (cuttable like a jump), restores air jump and dash, ends dash/wall slide. */
   bounce(velocity: number): void {
     void velocity;
     todo('SIM', 'PlayerController.bounce');

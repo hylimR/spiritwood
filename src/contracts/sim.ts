@@ -24,15 +24,28 @@ export interface PlayerView {
   readonly wallDir: -1 | 0 | 1;
   readonly airJumpsLeft: number;
   readonly airDashesLeft: number;
-  /** 0 when not dashing, else 0..1 progress through the dash. */
+  /** 0 when not dashing, else k/dashTicks on the k-th dash tick (so 1/dashTicks on the first). */
   readonly dashProgress: number;
-  /** Ticks since the current mode started. */
+  /** Direction of the current/last dash (0 before any dash). */
+  readonly dashDir: -1 | 0 | 1;
+  /** Ticks since the current mode was entered (0 on the entry tick). */
   readonly modeTicks: number;
+  /** Ticks since the last grounded tick (0 while grounded). Unlike modeTicks, not reset by dash/wall. */
+  readonly airTicks: number;
+  /** Cumulative |Δx| while grounded, world units — drives a deterministic run-cycle phase. */
+  readonly runDistance: number;
   /** Horizontal input intention this tick (-1..1), for animation. */
   readonly inputX: number;
   readonly alive: boolean;
-  /** False while dead/respawning (render hides the hero). */
+  /** Ticks since death (0 on the Died tick), −1 while alive. */
+  readonly deadTicks: number;
+  /**
+   * False from `deathHideTicks` after death until the Respawned tick (the `dead` clip plays in the
+   * visible window). Visible during the fade-in.
+   */
   readonly visible: boolean;
+  /** Tick of the last respawn / teleport / reset (−1 = never). Render resets springs, scarf, trails when it changes. */
+  readonly warpTick: number;
 }
 
 export type EnemyMode = 'patrol' | 'stunned';
@@ -91,36 +104,54 @@ export interface CameraView {
   readonly prevY: number;
   readonly zoom: number;
   readonly prevZoom: number;
-  /** True for the tick in which a discontinuity happened (render must not interpolate). */
-  readonly snapped: boolean;
+  /**
+   * Tick of the last snap (−1 = never). A snap sets prev = cur, so interpolation needs no special case;
+   * views holding camera-relative state (ambient particles) re-seed when this changes.
+   */
+  readonly snapTick: number;
   /** View size in world units at zoom 1 (VIEW_H * aspect, VIEW_H). */
   readonly viewW: number;
   readonly viewH: number;
 }
 
+/**
+ * Event payloads (normative). Default: x, y = player feet; unused a/b = 0; id = −1.
+ *
+ * | type | x, y | a | b | id |
+ * |---|---|---|---|---|
+ * | Jump | feet | facing | 1 if it cancelled a dash | |
+ * | AirJump | feet | facing | airJumpsLeft after | |
+ * | WallJump | wall face x, feet y | launch dir (−wallDir) | | |
+ * | Dash | feet | dashDir | 1 if airborne | |
+ * | DashEnd | feet | dashDir | 0 timed out, 1 jump-cancel, 2 hit wall | |
+ * | Land | feet | impact speed u/s | fall height u (apex y of the airborne arc → landing y) | |
+ * | WallSlideStart | wall face x, feet y | wallDir | | |
+ * | WallSlideEnd | wall face x, feet y | wallDir | 0 released, 1 landed, 2 wall-jumped, 3 wall ended | |
+ * | OrbCollected | orb centre | value | | orb id |
+ * | CheckpointActivated | respawn feet | | | checkpoint id |
+ * | Died | body centre | DeathCause | | |
+ * | Respawned | respawn feet | | | checkpoint id or −1 |
+ * | EnemyStomped | enemy top-centre | | | enemy id |
+ * | EnemyReformed | enemy feet | | | enemy id |
+ * | GoalReached | feet | elapsed seconds | | |
+ * | DropThrough | feet | | | |  (once, when the drop starts)
+ */
 export const SimEventType = {
   Jump: 1,
   AirJump: 2,
   WallJump: 3,
   Dash: 4,
   DashEnd: 5,
-  /** a = impact speed (u/s, positive). */
   Land: 6,
-  /** a = wall dir. */
   WallSlideStart: 7,
   WallSlideEnd: 8,
-  /** id = orb id, a = value. */
   OrbCollected: 9,
-  /** id = checkpoint id. */
   CheckpointActivated: 10,
-  /** a = DeathCause. */
   Died: 11,
   Respawned: 12,
-  /** id = enemy id. */
   EnemyStomped: 13,
   EnemyReformed: 14,
   GoalReached: 15,
-  /** a = direction (-1/1): feet touched a one-way platform while dropping through. */
   DropThrough: 16,
 } as const;
 export type SimEventType = (typeof SimEventType)[keyof typeof SimEventType];
@@ -166,7 +197,9 @@ export interface SimView {
   /** Death/respawn fade: 0 = clear, 1 = fully faded. */
   readonly fade: number;
   readonly prevFade: number;
-  /** Sim time in seconds since level start (tick * SIM_DT), paused while completed. */
+  /**
+   * Run timer in seconds: starts on the first tick with non-neutral input, stops at GoalReached.
+   */
   readonly elapsed: number;
   readonly completed: boolean;
 }

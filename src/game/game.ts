@@ -89,7 +89,7 @@ export class Game {
       {
         beginFrame: () => this.beginFrame(),
         step: (dt) => this.step(dt),
-        render: (alpha, frameDt, now) => this.render(alpha, frameDt, now),
+        render: (alpha, frameDt, now, late) => this.render(alpha, frameDt, now, late),
       },
       { fpsCap: pipeline.quality.fpsCap },
     );
@@ -135,7 +135,7 @@ export class Game {
   }
 
   private readonly onVisibility = (): void => {
-    if (document.visibilityState === 'visible') this.loop.resetClock(performance.now());
+    if (document.visibilityState === 'visible') this.loop.resetClock();
   };
 
   private beginFrame(): void {
@@ -159,6 +159,7 @@ export class Game {
     }
     if (meta.pausePressed && this.phase !== 'bench') {
       this.menu.open();
+      this.loop.setPaused(true);
       return;
     }
     if (this.phase === 'title' && meta.anyPressed) {
@@ -172,7 +173,6 @@ export class Game {
   }
 
   private step(dt: number): void {
-    if (this.menu.isOpen) return;
     const t0 = performance.now();
     if (this.phase === 'play') {
       this.world.step(this.input.nextTick(this.tickInput));
@@ -188,7 +188,7 @@ export class Game {
     void dt;
   }
 
-  private render(alpha: number, frameDt: number, now: number): void {
+  private render(alpha: number, frameDt: number, now: number, lateFrames: number): void {
     const t0 = performance.now();
     const events = this.world.events;
     for (let i = 0; i < events.count; i++) {
@@ -202,12 +202,12 @@ export class Game {
     }
     events.clear();
 
-    this.pipeline.render(this.world, alpha, now, frameDt);
+    this.pipeline.render(this.world, alpha, now, frameDt, lateFrames);
     this.hud.update(this.world, now);
 
     const renderMs = performance.now() - t0;
     const frameMs = frameDt * 1000;
-    this.frameTimer.frame(frameMs, this.stepsThisFrame, this.simMsThisFrame, renderMs);
+    this.frameTimer.frame(frameMs, lateFrames, this.stepsThisFrame, this.simMsThisFrame, renderMs);
     if (this.overlay.visible) {
       this.overlay.update(
         this.frameTimer.stats, this.pipeline.stats, this.world, this.pipeline.quality.level, now, frameMs,
@@ -215,7 +215,7 @@ export class Game {
     }
 
     if (this.bench && !this.benchShown) {
-      this.bench.record(frameMs, this.pipeline.stats.renderScale, this.pipeline.stats.gpuMs);
+      this.bench.record(frameMs, lateFrames, this.pipeline.stats.renderScale, this.pipeline.stats.gpuMs);
       if (this.bench.done) {
         this.benchShown = true;
         const result = this.bench.result(this.settings.preset, this.pipeline.gpu.renderer, navigator.userAgent);
@@ -237,7 +237,8 @@ export class Game {
   private closeMenu(): void {
     this.menu.close();
     this.input.clearEdges();
-    this.loop.resetClock(performance.now());
+    this.loop.setPaused(false);
+    this.loop.resetClock();
   }
 
   private restart(): void {

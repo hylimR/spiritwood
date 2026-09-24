@@ -21,6 +21,11 @@ export interface FrameStats {
   simStepsLastFrame: number;
   simMs: number;
   renderCpuMs: number;
+  /**
+   * % of rendered frames that were late (missed a render deadline). The acceptance metric: frame-time
+   * percentiles include fps-cap cadence jitter on non-60-multiple displays (e.g. 13.9/20.8 ms at 144 Hz).
+   */
+  lateFramePct: number;
 }
 
 export interface BenchResult {
@@ -32,6 +37,8 @@ export interface BenchResult {
   frameMsP50: number;
   frameMsP95: number;
   frameMsP99: number;
+  /** % of rendered frames that were late — the pass/fail number (target < 1%). */
+  lateFramePct: number;
   renderScaleAvg: number;
   gpuMsAvg: number;
   userAgent: string;

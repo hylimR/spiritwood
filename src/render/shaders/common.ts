@@ -1,21 +1,36 @@
 /**
  * Shared GLSL ES 3.0 chunks. Custom mesh shaders get Pixi's global + local uniforms by name
- * (uProjectionMatrix, uWorldTransformMatrix from the global group; uTransformMatrix, uColor from the
- * mesh's local group). Always start with `#version 300 es`.
+ * (uProjectionMatrix, uWorldTransformMatrix, uWorldColorAlpha from the global group; uTransformMatrix,
+ * uColor from the mesh's local group).
+ *
+ * Rules:
+ * - Vertex shaders start with GLSL_VERSION; fragment shaders start with GLSL_FRAGMENT_HEADER (Pixi
+ *   injects `precision mediump` otherwise, and a uniform used in both stages with different precision
+ *   fails to link). Also pass `preferredFragmentPrecision: 'highp'` in the `gl` program options.
+ * - Shaders that share one GlProgram must declare identical resources in identical order (Pixi caches
+ *   the uniform sync per program).
  */
 
 export const GLSL_VERSION = '#version 300 es';
 
-/** Vertex header: Pixi transform uniforms + helper computing clip position with an explicit depth. */
+export const GLSL_FRAGMENT_HEADER = '#version 300 es\nprecision highp float;\nprecision highp int;\n';
+
+/** Vertex header: Pixi transform uniforms + helpers for clip position (explicit depth) and tint. */
 export const GLSL_VERTEX_TRANSFORM = /* glsl */ `
 uniform mat3 uProjectionMatrix;
 uniform mat3 uWorldTransformMatrix;
+uniform vec4 uWorldColorAlpha;
 uniform mat3 uTransformMatrix;
 uniform vec4 uColor;
 
 vec4 pixiClipPosition(vec2 pos, float depth01) {
   mat3 mvp = uProjectionMatrix * uWorldTransformMatrix * uTransformMatrix;
   return vec4((mvp * vec3(pos, 1.0)).xy, depth01 * 2.0 - 1.0, 1.0);
+}
+
+// Premultiplied display-object tint × render-group colour/alpha (what Pixi's own shaders apply).
+vec4 pixiTint() {
+  return uColor * uWorldColorAlpha;
 }
 `;
 

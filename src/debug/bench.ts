@@ -32,8 +32,8 @@ export class BenchRunner {
   }
 
   /** Record one rendered frame. */
-  record(frameMs: number, renderScale: number, gpuMs: number): void {
-    void frameMs; void renderScale; void gpuMs;
+  record(frameMs: number, lateFrames: number, renderScale: number, gpuMs: number): void {
+    void frameMs; void lateFrames; void renderScale; void gpuMs;
     todo('PIPE', 'BenchRunner.record');
   }
 

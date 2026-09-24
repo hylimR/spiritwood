@@ -1,5 +1,5 @@
 import type { Facing } from '../contracts/common.ts';
-import type { CameraView } from '../contracts/sim.ts';
+import type { CameraView, PlayerMode } from '../contracts/sim.ts';
 import { VIEW_H } from '../config.ts';
 import { todo } from '../core/todo.ts';
 import { DEFAULT_CAMERA_TUNING, type CameraTuning } from './tuning.ts';
@@ -11,6 +11,7 @@ export interface CameraTarget {
   readonly vy: number;
   readonly facing: Facing;
   readonly grounded: boolean;
+  readonly mode: PlayerMode;
 }
 
 /**
@@ -24,7 +25,7 @@ export class CameraController implements CameraView {
   prevY = 0;
   zoom = 1;
   prevZoom = 1;
-  snapped = false;
+  snapTick = -1;
   viewW = VIEW_H * (16 / 9);
   viewH = VIEW_H;
   readonly tuning: CameraTuning;
@@ -45,13 +46,13 @@ export class CameraController implements CameraView {
     todo('SIM', 'CameraController.setBounds');
   }
 
-  /** Jump straight to framing `target` (no smoothing), mark `snapped`. */
-  snapTo(target: CameraTarget): void {
-    void target;
+  /** Jump straight to framing `target`: value = target, velocities 0, prev = cur, snapTick = tick. */
+  snapTo(target: CameraTarget, tick: number): void {
+    void target; void tick;
     todo('SIM', 'CameraController.snapTo');
   }
 
-  /** Follow an explicit point instead of the target (bench flythrough); null to release. */
+  /** Follow an explicit point (bench flythrough) instead of the target until clearOverride(). */
   setOverride(x: number, y: number): void {
     void x; void y;
     todo('SIM', 'CameraController.setOverride');

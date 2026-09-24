@@ -59,6 +59,12 @@ export interface PlayerTuning {
   ledgeAssist: number;
   /** Ticks one-way platforms are ignored after a drop-through. */
   dropThroughTicks: number;
+  /** Probe distance for wall contact (wall jump legality / slide). */
+  wallJumpProbe: number;
+  /** |moveX| at or above this counts as holding a direction (wall hold, dash dir, facing). */
+  dirThreshold: number;
+  /** moveY at or above this counts as holding down (drop-through, fast fall). */
+  downThreshold: number;
 }
 
 export const DEFAULT_TUNING: Readonly<PlayerTuning> = Object.freeze({
@@ -104,6 +110,9 @@ export const DEFAULT_TUNING: Readonly<PlayerTuning> = Object.freeze({
   cornerCorrection: 10,
   ledgeAssist: 12,
   dropThroughTicks: 12,
+  wallJumpProbe: 6,
+  dirThreshold: 0.3,
+  downThreshold: 0.5,
 });
 
 export interface DerivedTuning {
@@ -115,6 +124,8 @@ export interface DerivedTuning {
   airJumpVelocity: number;
   /** sqrt(2·gravity·wallJumpHeight). */
   wallJumpVelocity: number;
+  /** Extra apex height from apex hang on a held jump: apexThreshold²/(2g)·(1/apexGravityMult − 1). */
+  apexHangExtra: number;
 }
 
 export function deriveTuning(t: PlayerTuning): DerivedTuning {
@@ -124,6 +135,7 @@ export function deriveTuning(t: PlayerTuning): DerivedTuning {
     jumpVelocity: (2 * t.jumpHeight) / t.jumpTimeToApex,
     airJumpVelocity: Math.sqrt(2 * gravity * t.airJumpHeight),
     wallJumpVelocity: Math.sqrt(2 * gravity * t.wallJumpHeight),
+    apexHangExtra: ((t.apexThreshold * t.apexThreshold) / (2 * gravity)) * (1 / t.apexGravityMult - 1),
   };
 }
 
@@ -141,6 +153,14 @@ export interface CameraTuning {
   smoothTimeX: number;
   smoothTimeY: number;
   zoom: number;
+  /** While airborne, the vertical ground reference only rises once the feet are this far above it. */
+  airRiseMargin: number;
+  /** Ticks |vx| must exceed lookAheadMinSpeed in a new direction before the look-ahead flips. */
+  lookAheadCommitTicks: number;
+  /** Ticks of slow speed before the look-ahead decays to 0. */
+  lookAheadHoldTicks: number;
+  /** Look-down only once the feet are this far below the last grounded y. */
+  lookDownMinDrop: number;
 }
 
 export const DEFAULT_CAMERA_TUNING: Readonly<CameraTuning> = Object.freeze({
@@ -155,6 +175,10 @@ export const DEFAULT_CAMERA_TUNING: Readonly<CameraTuning> = Object.freeze({
   smoothTimeX: 0.18,
   smoothTimeY: 0.28,
   zoom: 1,
+  airRiseMargin: 200,
+  lookAheadCommitTicks: 20,
+  lookAheadHoldTicks: 45,
+  lookDownMinDrop: 192,
 });
 
 export interface WorldTuning {
@@ -168,7 +192,13 @@ export interface WorldTuning {
   /** Ticks to fade back in after respawn. */
   fadeInTicks: number;
   stompBounceVelocity: number;
+  /** Stomp if the player's previous feet y ≤ enemy's previous top + this. */
+  stompTolerance: number;
   stunTicks: number;
+  /** Ticks after death during which the hero stays visible (plays `dead`). */
+  deathHideTicks: number;
+  /** Max speed of a magnetised orb. */
+  orbMaxSpeed: number;
   enemyWidth: number;
   enemyHeight: number;
   enemyDefaultSpeed: number;
@@ -182,7 +212,10 @@ export const DEFAULT_WORLD_TUNING: Readonly<WorldTuning> = Object.freeze({
   fadeOutTicks: 24,
   fadeInTicks: 30,
   stompBounceVelocity: 820,
+  stompTolerance: 8,
   stunTicks: 180,
+  deathHideTicks: 8,
+  orbMaxSpeed: 1400,
   enemyWidth: 64,
   enemyHeight: 44,
   enemyDefaultSpeed: 90,

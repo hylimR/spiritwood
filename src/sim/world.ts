@@ -60,7 +60,7 @@ export class GameWorld implements SimView {
     todo('SIM', 'GameWorld.setViewSize');
   }
 
-  /** Kill (DeathCause.Debug) → normal respawn sequence. */
+  /** Request a debug death (DeathCause.Debug) handled on the next step; no-op while dead. */
   respawn(): void {
     todo('SIM', 'GameWorld.respawn');
   }

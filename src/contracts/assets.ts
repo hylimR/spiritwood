@@ -71,7 +71,10 @@ export interface KitLayerDef extends LayerDefBase {
   glow: number;
   /** Wind sway amplitude scale 0..1 (0 = static). */
   sway: number;
-  /** Layer-space chunk width for merging/culling. */
+  /**
+   * Layer-space chunk width for merging/culling: ≥ 2048; layers with fx ≤ 0.3 should be one chunk.
+   * Keeps ≤ 2 visible chunks (≤ 4 draws with core + band) per layer.
+   */
   chunkWidth: number;
 }
 

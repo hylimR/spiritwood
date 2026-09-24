@@ -6,7 +6,7 @@ import {
 import type { CameraView } from '../../src/contracts/sim.ts';
 
 function cam(x: number, y: number, zoom = 1): CameraView {
-  return { x, y, prevX: x, prevY: y, zoom, prevZoom: zoom, snapped: false, viewW: 1920, viewH: 1080 };
+  return { x, y, prevX: x, prevY: y, zoom, prevZoom: zoom, snapTick: -1, viewW: 1920, viewH: 1080 };
 }
 
 describe('parallax maths', () => {
@@ -42,10 +42,10 @@ describe('parallax maths', () => {
     }
   });
 
-  test('camera frame interpolates unless snapped', () => {
+  test('camera frame interpolates prev → cur', () => {
     const c: CameraView = { ...cam(100, 100), prevX: 0, prevY: 0 };
     expect(computeCameraFrame(createCameraFrame(), c, 0.25).cx).toBeCloseTo(25);
-    expect(computeCameraFrame(createCameraFrame(), { ...c, snapped: true }, 0.25).cx).toBe(100);
+    expect(computeCameraFrame(createCameraFrame(), cam(100, 100), 0.25).cx).toBe(100);
   });
 
   test('depth ordering', () => {

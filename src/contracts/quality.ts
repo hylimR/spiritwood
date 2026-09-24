@@ -14,8 +14,9 @@ export interface QualitySettings {
   maxRenderPixels: number;
   dynamicResolution: boolean;
   bloom: boolean;
-  /** Glow RT scale relative to the scene RT. */
+  /** Glow RT (bloom base) resolution relative to the scene RT. */
   bloomScale: 0.5 | 0.25;
+  /** Number of ½-size downsample levels in the dual-filter bloom chain. */
   bloomPasses: number;
   /** Max number of kit layers drawn (manifest layers above the level are dropped far-first). */
   layerBudget: number;

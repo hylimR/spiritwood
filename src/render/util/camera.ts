@@ -1,11 +1,20 @@
 import type { Container } from 'pixi.js';
 import type { CameraFrame } from '../../contracts/render.ts';
 import type { CameraView } from '../../contracts/sim.ts';
+import { DEPTH_INSTANCE_EPS } from '../../config.ts';
 import { clamp } from '../../core/math.ts';
 
 /** Depth for a parallax factor (ARCHITECTURE.md §2.4): terrain 0.05 … farthest ≈ 0.95. */
 export function depthForParallax(f: number): number {
   return 0.05 + 0.9 * (1 - clamp(f, 0, 1));
+}
+
+/**
+ * Depth of instance `k` (painter order, 0 = backmost) inside a layer, so overlapping instances in one
+ * layer resolve front-over-back under depth test LESS.
+ */
+export function depthForInstance(f: number, k: number): number {
+  return depthForParallax(f) - k * DEPTH_INSTANCE_EPS;
 }
 
 export function zoomForParallax(zoom: number, f: number): number {
@@ -70,12 +79,11 @@ export function visibleLayerRect(cam: CameraFrame, fx: number, fy: number, out: 
   return out;
 }
 
-/** Fill `out` with the interpolated camera for this render frame. */
+/** Fill `out` with the interpolated camera for this render frame (a snap already set prev = cur). */
 export function computeCameraFrame(out: CameraFrame, cam: CameraView, alpha: number, shakeX = 0, shakeY = 0): CameraFrame {
-  const t = cam.snapped ? 1 : alpha;
-  out.cx = cam.prevX + (cam.x - cam.prevX) * t;
-  out.cy = cam.prevY + (cam.y - cam.prevY) * t;
-  out.zoom = cam.prevZoom + (cam.zoom - cam.prevZoom) * t;
+  out.cx = cam.prevX + (cam.x - cam.prevX) * alpha;
+  out.cy = cam.prevY + (cam.y - cam.prevY) * alpha;
+  out.zoom = cam.prevZoom + (cam.zoom - cam.prevZoom) * alpha;
   out.viewW = cam.viewW;
   out.viewH = cam.viewH;
   out.width = cam.viewW / out.zoom;
@@ -91,7 +99,7 @@ export function createCameraFrame(): CameraFrame {
   return { cx: 0, cy: 0, zoom: 1, viewW: 0, viewH: 0, left: 0, top: 0, width: 0, height: 0, shakeX: 0, shakeY: 0 };
 }
 
-/** Linear interpolation helper for prev/cur pairs honouring a snap. */
+/** Linear interpolation helper for prev/cur pairs. */
 export function interp(prev: number, cur: number, alpha: number): number {
   return prev + (cur - prev) * alpha;
 }

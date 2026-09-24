@@ -5,7 +5,7 @@ export const SIM_HZ = 60;
 export const SIM_DT = 1 / SIM_HZ;
 export const MAX_STEPS_PER_FRAME = 5;
 /** Frame deltas within this many seconds of a multiple of SIM_DT are snapped to it. */
-export const VSYNC_SNAP_EPSILON = 0.00025;
+export const VSYNC_SNAP_EPSILON = 0.001;
 /** Render-clock dt clamp (seconds). */
 export const MAX_RENDER_DT = 1 / 20;
 
@@ -20,8 +20,18 @@ export const KILL_MARGIN = 240;
 /** Hazard tiles hurt only when the player overlaps them by more than this inset. */
 export const HAZARD_INSET = 10;
 
-/** Depth written by the sky; see ARCHITECTURE.md §2.4. */
+/** Depths (0 near … 1 far) for the scene pre-pass; see ARCHITECTURE.md §2.4. */
 export const DEPTH_SKY = 0.99;
+export const DEPTH_TERRAIN = 0.05;
+export const DEPTH_SHAFTS = 0.055;
+/** Per-instance depth step inside one layer (nearer instances get smaller depth). */
+export const DEPTH_INSTANCE_EPS = 1 / 65536;
+/** Max instances per depth-tested layer so instance depths never cross into the next layer. */
+export const MAX_INSTANCES_PER_LAYER = 1024;
+/** Depth-tested kit/plate layers need parallax ≤ this (stay behind shafts and terrain). */
+export const MAX_LAYER_PARALLAX = 0.95;
+/** Minimum parallax gap between consecutive depth-tested layers. */
+export const MIN_LAYER_PARALLAX_GAP = 0.02;
 
 /** "Moonlit Hush" reference palette (0xRRGGBB). */
 export const PALETTE = {
