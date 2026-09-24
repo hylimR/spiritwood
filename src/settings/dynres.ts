@@ -1,5 +1,3 @@
-import { todo } from '../core/todo.ts';
-
 export interface DynResOptions {
   initial: number;
   min: number;
@@ -25,25 +23,89 @@ export const DEFAULT_DYNRES: Readonly<DynResOptions> = Object.freeze({
   raiseAfterSec: 3, raiseGpuMs: 13, cooldownSec: 1,
 });
 
-/** Pure dynamic-resolution policy (ARCHITECTURE.md §5.7). No allocation per update. */
+/** Snap to 1e-4 so repeated ±step never accumulates float drift. */
+function snap(v: number): number {
+  return Math.round(v * 1e4) / 1e4;
+}
+
+/**
+ * Pure dynamic-resolution policy (ARCHITECTURE.md §5.7). No allocation per update.
+ *
+ * - miss = lateFrames > 0 && (gpuMs < 0 || gpuMs > dropGpuMs); ≥ missesToDrop misses among the last
+ *   windowFrames frames step the scale down (and clear the window).
+ * - raiseAfterSec without a miss *and* without a change, with gpuMs unknown or < raiseGpuMs, steps up.
+ * - At most one change per cooldownSec; the scale stays within [min, initial]. `reset` starts a cooldown
+ *   so start-up hitches (shader compiles, uploads) cannot drop the scale immediately.
+ */
 export class DynamicResolution {
+  private readonly opts: DynResOptions;
+  private readonly misses: Uint8Array;
+  private head = 0;
+  private missCount = 0;
+  private current: number;
+  private initial: number;
+  private min: number;
+  private lastChangeAt = -Infinity;
+  private lastMissAt = -Infinity;
+
   constructor(options: Partial<DynResOptions> = {}) {
-    void options;
-    todo('PIPE', 'DynamicResolution');
+    this.opts = { ...DEFAULT_DYNRES, ...options };
+    this.misses = new Uint8Array(Math.max(1, Math.floor(this.opts.windowFrames)));
+    this.initial = this.opts.initial;
+    this.min = Math.min(this.opts.min, this.opts.initial);
+    this.current = this.initial;
   }
 
   get scale(): number {
-    return todo('PIPE', 'DynamicResolution.scale');
+    return this.current;
+  }
+
+  /** Misses currently inside the window (for the debug overlay and tests). */
+  get recentMisses(): number {
+    return this.missCount;
   }
 
   /** Feed one rendered frame. `gpuMs` < 0 when unknown. Returns the (possibly changed) scale. */
   update(lateFrames: number, gpuMs: number, nowSec: number): number {
-    void lateFrames; void gpuMs; void nowSec;
-    return todo('PIPE', 'DynamicResolution.update');
+    const o = this.opts;
+    const miss = lateFrames > 0 && (gpuMs < 0 || gpuMs > o.dropGpuMs) ? 1 : 0;
+    this.missCount += miss - (this.misses[this.head] as number);
+    this.misses[this.head] = miss;
+    this.head = (this.head + 1) % this.misses.length;
+    if (miss) this.lastMissAt = nowSec;
+
+    if (nowSec - this.lastChangeAt < o.cooldownSec) return this.current;
+
+    if (this.missCount >= o.missesToDrop) {
+      if (this.current > this.min) {
+        this.current = snap(Math.max(this.min, this.current - o.step));
+        this.lastChangeAt = nowSec;
+        this.clearWindow();
+      }
+      return this.current;
+    }
+
+    const quietSince = Math.max(this.lastMissAt, this.lastChangeAt);
+    const gpuOk = gpuMs < 0 || gpuMs < o.raiseGpuMs;
+    if (this.current < this.initial && gpuOk && nowSec - quietSince >= o.raiseAfterSec) {
+      this.current = snap(Math.min(this.initial, this.current + o.step));
+      this.lastChangeAt = nowSec;
+    }
+    return this.current;
   }
 
   reset(initial: number, min: number, nowSec: number): void {
-    void initial; void min; void nowSec;
-    todo('PIPE', 'DynamicResolution.reset');
+    this.initial = initial;
+    this.min = Math.min(min, initial);
+    this.current = initial;
+    this.lastChangeAt = nowSec;
+    this.lastMissAt = -Infinity;
+    this.clearWindow();
+  }
+
+  private clearWindow(): void {
+    this.misses.fill(0);
+    this.missCount = 0;
+    this.head = 0;
   }
 }
