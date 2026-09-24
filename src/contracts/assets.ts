@@ -119,4 +119,9 @@ export interface LayerManifest {
   atlases: AtlasDef[];
   /** Ordered far → near. */
   layers: LayerDef[];
+  /**
+   * Generated manifests only (§5.8): the base layer each plate replaced, keyed by plate id, so a failed or
+   * hot-reloaded plate can restore it. Absent in hand-edited base manifests.
+   */
+  replaced?: Record<string, LayerDef>;
 }
