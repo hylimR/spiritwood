@@ -54,8 +54,8 @@ export interface PlayerView {
 export type EnemyKind = 'gloomcrawler' | 'thornSpitter';
 
 /**
- * Gloomcrawler: `patrol` | `stunned`. Thorn Spitter: `idle` (player out of range) | `windup` (telegraph,
- * fires on its last tick) | `cooldown` | `stunned` (§5.3).
+ * Gloomcrawler: `patrol` | `stunned`. Thorn Spitter: `idle` (inactive) | `windup` (telegraph) | `cooldown`
+ * (entered on the fire tick: SeedFired comes on the step after the windup's last tick) | `stunned` (§5.3).
  */
 export type EnemyMode = 'patrol' | 'idle' | 'windup' | 'cooldown' | 'stunned';
 

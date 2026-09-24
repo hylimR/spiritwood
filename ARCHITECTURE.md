@@ -697,8 +697,8 @@ controller validated against `PlayerController`):
 | Straight-up launch from rest (apex gain) | 416.2 u (8.7 tiles) |
 | … then the restored air jump | 537.3 u (11.2 tiles) |
 | Jump + double jump, grab at the 293.9 u peak, launch up, air jump | ≈ 831 u (17.3 tiles) |
-| 45° launch on flat ground, holding forward (back to launch height) | ≈ 495 u, airtime ≈ 51 ticks, peak 233.6 u |
-| Launch off a mid-air seed, flat, then air jump + dash (cancelled) | ≈ 1166 u |
+| 45° launch, holding forward, measured over a void back to launch height | 495.2 u, airtime 51 ticks, peak 233.6 u (498.4 u on flat ground, counting the landing tick) |
+| Launch off a mid-air seed at a 32° analog aim, then dash at R+39 and air jump at R+48 (cancelling it) | ≈ 1166 u |
 
 **Design rules:**
 
@@ -742,9 +742,15 @@ controller validated against `PlayerController`):
   - Player-aimed spitters only fire from on-screen (§5.3), and every shot is telegraphed by a 36-tick
     windup.
 - **Shrine chokepoint (M2):** the AbilityShrine rect spans its corridor from floor to ceiling.
-  `forest.test.ts` blocks the shrine's cells and flood-fills non-Solid cells from the spawn (4-connected;
-  cells above the top edge count as open); the fill must reach no Spitter and not the Goal. So the
-  launch course can't be entered without the ability.
+  `forest.test.ts` runs the no-launch reachability closure (the one the gate proofs use) from the spawn,
+  with the shrine rect as a blocker. It must reach no Spitter and not the Goal. As a control, the same
+  closure without the blocker reaches the floor just past the shrine. So the launch course can't be
+  entered without the ability.
+  - The closure models jumps, so open sky doesn't count as a path the way a plain flood fill would count
+    it. No roof is needed.
+  - A region is sealed by walls that reach the top edge (above the top is Solid, §2.1) or by
+    thorn-lined faces that can't be climbed.
+  - The Moonwell stays open to the sky.
 - **Seed pool (M2):** Σ over spitters of ceil((seedLifetimeTicks + reflectedLifetimeTicks) / period) ≤
   `MAX_PROJECTILES` (`validate.ts`), so a shot is never skipped and anchor rhythms hold.
 - **Grade zones** cover every tile, leaving no uncovered remainder (`forest.test.ts`), so the audio mood
