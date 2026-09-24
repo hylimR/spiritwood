@@ -8,7 +8,10 @@ to floating-point rounding. It typechecks under the repo's strict `tsconfig.base
 
 What is simplified relative to `src/render/gen/raster.ts`: `finalize` writes a flat per-material colour
 instead of the packed R detail / G rim / B emissive / A coverage channels (see the channel-packed-atlas
-skill for those), and there is no `leaf`, `glow`, `haloAt`, bottom fade or edge fade.
+skill for those); there is no `leaf`, `glow`, `haloAt`, volume shading, bottom fade or edge fade; one
+`reach` serves every material (raster.ts sizes it per material with `configure`); and `finalize` walks
+the whole rect (raster.ts records touched row spans and reuses buffers through `Scratch`). To run the
+repo's tree generator (`trees.ts`, see [building-blocks.md](building-blocks.md)) use raster.ts itself.
 
 Contents: seeded RNG, SDF primitives and operators, a tileable fbm table, the bounded splat raster, a
 lit-part baker (pillow normal + rim, as in `src/render/hero/heroParts.ts`), a usage demo, and a
@@ -21,12 +24,13 @@ GLSL ES 3.0 port for evaluating silhouettes on the GPU.
   their own stream.
 - **Scaled-circle ellipse:** one sqrt per texel and exact on the contour, which is all AA needs for
   near-round shapes. It underestimates off the long axis by min/max, so keep aspect ≤ ~3.
-- **Noise table:** 256×256 periodic fbm built once (≈ 20 ms), then a bilinear lookup (≈ 15 ns) per
+- **Noise table:** 256×256 periodic fbm built once (≈ 20 ms), then a bilinear lookup (≈ 12–15 ns) per
   sample instead of ≈ 70 ns for 4-octave gradient fbm. Periodicity lets any offset wrap cleanly, so each
   element samples its own region via `noiseOffset`.
 - **Splat raster:** each shape visits only its bounding box plus `reach` texels and keeps the minimum
-  (or smooth minimum) distance with the nearest shape's material. `reach` must cover what `finalize`
-  reads: `soft / 2 + peak displacement`.
+  (or smooth minimum) distance with the nearest shape's material. `reach` must cover the band
+  `finalize` reads (`disp·1.2 + soft`; raster.ts's `configure` adds 0.75), or soft or noisy outer
+  edges get truncated.
 - **finalize:** noise is added to the distance only inside the edge band, then `coverage` turns distance
   into alpha. Interior texels stay solid and far texels stay empty, whatever the noise does.
 - **bakeLit:** for part art that should look like a soft volume. The SDF gradient (central differences)
@@ -174,7 +178,7 @@ export class NoiseTable {
       }
     }
   }
-  /** Bilinear, wraps every 256 units. Values ≈ ±0.6, rms ≈ 0.2. */
+  /** Bilinear, wraps every 256 units. Peaks ≈ ±0.6–0.75 depending on the seed, rms ≈ 0.2. */
   sample(x: number, y: number): number {
     const fx = Math.floor(x);
     const fy = Math.floor(y);
@@ -198,7 +202,7 @@ export interface Material { disp: number; freq: number; color: readonly [number,
 export class SplatRaster {
   readonly w: number;
   readonly h: number;
-  /** Texels beyond a shape's edge that still record its distance: ≥ soft / 2 + max edge displacement. */
+  /** Texels beyond a shape's edge that still record its distance: ≥ max(disp) · 1.2 + soft (finalize's band). */
   readonly reach: number;
   readonly dist: Float32Array;
   readonly mat: Uint8Array;
@@ -337,7 +341,7 @@ export function bakeLit(
       if (cov <= 0) continue;
       let gx = sdf(x + eps, y) - sdf(x - eps, y);
       let gy = sdf(x, y + eps) - sdf(x, y - eps);
-      const gl = Math.hypot(gx, gy) || 1;
+      const gl = Math.sqrt(gx * gx + gy * gy) || 1;
       gx /= gl;
       gy /= gl;
       const e = 1 - Math.min(1, Math.max(0, -d / thickness));
@@ -364,7 +368,7 @@ export function bakeLit(
 
 ```ts
 import { bakeLit, hashString, NoiseTable, Rng, sdCircle, sdEllipse, smin, SplatRaster, type Material } from './toolkit.ts';
-import { writePng } from './png.ts'; // tools/preview/png.ts: 55 lines, node:zlib only
+import { writePng } from './png.ts'; // tools/preview/png.ts: 55 lines, node:fs + node:zlib only
 
 const MATS: Material[] = [
   { disp: 0, freq: 0, color: [0, 0, 0] },
@@ -414,8 +418,9 @@ foliage, use the clump-of-clumps crown on a branching skeleton in
 
 Use when a silhouette animates or morphs, or must stay sharp at any zoom. `fwidth(d)` sizes the AA ramp
 to one screen pixel whatever the scale, which is the GPU counterpart of `coverage(d, soft)`. The chunk
-passes the same static lint as `tests/world/glsl.test.ts` (headers, reserved words, balanced
-delimiters, every called function defined).
+passes the static checks of `tests/world/glsl.test.ts` (headers, reserved words, balanced delimiters,
+every called function defined, counting `fwidth`, a core GLSL ES 3.00 built-in missing from that test's
+list); it has not been compiled by a GPU driver.
 
 ```glsl
 float sdCircle(vec2 p, vec2 c, float r) {
@@ -459,7 +464,10 @@ void main() {
 ```
 
 Rules for the GPU path: never name a helper `union`, `sample`, `filter`, `common`, `input`, `output` or
-`active` (reserved in GLSL ES 3.00); no `discard` in opaque passes (early-Z); in Pixi, start the
-fragment with `precision highp` and do not reuse Pixi's uniform names (`uColor`, `uTransformMatrix`, …).
+`active` (reserved in GLSL ES 3.00); no `discard` in opaque passes (early-Z); in Pixi, put
+`precision highp float;` right after `#version 300 es` *and* pass `preferredFragmentPrecision: 'highp'`
+to `GlProgram.from` (Pixi strips the version line and prepends `precision mediump float;` by default),
+and do not reuse Pixi's uniform names (`uColor`, `uTransformMatrix`, `uProjectionMatrix`,
+`uWorldTransformMatrix`, `uWorldColorAlpha`, `uResolution`, `uRound`).
 Per-pixel SDF cost scales with the number of primitives, so on the GPU keep to a handful per shape and
 bake anything with dozens of clumps.

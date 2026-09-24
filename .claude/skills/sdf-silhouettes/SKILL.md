@@ -15,7 +15,7 @@ Organic shapes grown from distance fields, baked on the CPU into an atlas once a
   droop and fractal edges.
 - You need AA or deliberately blurred edges, fillets, carved holes, or a bake that fits a boot budget.
 - Not for shapes that animate/morph or must stay crisp at any zoom: evaluate the SDF in a fragment
-  shader instead (GLSL port in [references/toolkit.md](references/toolkit.md)).
+  shader instead ([GLSL port](references/toolkit.md#glsl-es-30-port-gpu-evaluation)).
 
 ## Core idea
 
@@ -109,7 +109,7 @@ GLSL ES 3.0 port): [references/toolkit.md](references/toolkit.md). The repo's tr
 
 | Knob | Visual effect |
 |---|---|
-| `k` smin radius (texels) | 0 crisp overlaps (blades, needles, independent leaves); 1–3 clumps and lobes melt into one mass; `0.4–0.6·r` limb joints (≤ 6 on trunks, root flares `min(8, 0.4·r)`); 8–14 soft ground and foreground masses. |
+| `k` smin radius (texels) | 0 crisp overlaps (blades, needles, independent leaves); 1–3 clumps and lobes melt into one mass; `0.4–0.6·r` limb joints (≤ 6 on trunks, root flares `min(8, 0.4·r)`); 7–14 soft ground and foreground masses. |
 | taper | Child/parent radius 0.6–0.68 per branch level; recursion stops below 0.7–1.1 texels, so twigs end thin. Untapered strokes read as tubes, round ends as clubs. |
 | `BranchStyle` | `spread` 0.85–0.95 rad between siblings, `jitter`, `rise` 0.1–0.3 (pull toward up: light-seeking), `droop` (sag ∝ len²), `tri` chance of 3 children, `lenMin/lenMax` 0.55–0.82, `pad` keeps limb ends clear of the rect edge by the foliage they carry. |
 | `curve` segments | 5–6 for short strokes, 10–16 for long arcs; too few shows kinks on the outside of the bend. Joints after the first get `k ≥ 0.6` to hide creases. |
@@ -118,7 +118,7 @@ GLSL ES 3.0 port): [references/toolkit.md](references/toolkit.md). The repo's tr
 | `softness` | AA width, 1.25 texels by default (1.3 far); 4–6 bakes an out-of-focus blur (foreground frame). |
 | `fadeBottom` | `[0.66, 1]` far trees, `[0.55, 1]` far treeline: bases dissolve into mist instead of a hard line. |
 | `volume(cx, cy, r, k, flat)` / `lobe` | Luminance ramp toward the light across radius `r`, clamped ±`k`: clump 0.2 + lobe 0.1 make each lobe a lit ball inside a lit mass; `flat` −0.02…−0.04 darkens undergrowth. |
-| crown envelope | `1 + 0.2·sin 3a + 0.1·sin 5a` makes a lumpy, non-elliptic outline; lobes on the upper rim 25 % bigger heap the crown toward the light. |
+| crown envelope | `1 + 0.2·sin 3a + 0.1·sin 5a` makes a lumpy, non-elliptic outline; lobes on the upper rim up to ~28 % bigger heap the crown toward the light. |
 | `edgeFade` / `cut` | Fade to 0 inside the margin (safety net), except at a declared `cut` edge that placement hides. |
 | lit part `thickness` | Pillow-normal depth: large (head 8 u) = soft rounded volume, small (limbs 1.3–1.8 u) = flat with a thin rim. |
 
@@ -129,8 +129,8 @@ GLSL ES 3.0 port): [references/toolkit.md](references/toolkit.md). The repo's tr
 2. Crowns are clumps of clumps carried by visible limbs, never one convex blob on a stick. Heap lobes
    toward the light, let the underside thin and droop, punch an occasional sky hole.
 3. Everything droops or tapers: limbs sag, strands hang, sprays droop, conifer tiers sag and fringe.
-4. Repeats are irregular: jitter spacing, size and angle, drop a few (conifer tiers skip 12 %, 15 % reach
-   long, 20 % stay stunted), break mirror symmetry.
+4. Repeats are irregular: jitter spacing, size and angle, drop a few (conifer tier branches: 12 %
+   missing, 15 % reaching long, ~17 % stunted), break mirror symmetry.
 5. Everything is attached: every clump sits on a tip or fork; strands hang from something.
 6. The silhouette defines shape only. Separate planes with a value ramp (far lighter, bluer, softer)
    and fog gaps between them (layered-atmosphere), not with more outline detail.
@@ -145,14 +145,15 @@ GLSL ES 3.0 port): [references/toolkit.md](references/toolkit.md). The repo's tr
 
 - **No lollipops.** A round crown on a stick reads as clip-art at every scale (the old `cloudCrown`
   far trees did). Grow clump-of-clumps crowns on the tips of a branching skeleton.
-- **No floating satellites.** Clumps scattered around a body out to ~1.1× its radius detach and read as
+- **No floating satellites.** Small clumps scattered around a central body detach from it and read as
   paint splatter. Place each clump on a tip or fork so it overlaps its limb.
 - **No fishbones.** Tiers or leaflets at a fixed step, mirrored left/right, read as a fish skeleton.
-- **No hands.** A fan of ~10–13 similar blades radiating up from one twig tip read as raised hands or
-  claws at mid scale (the old `midTrunk` `sprig`). Use `leafSpray` (fan that droops outward around a
+- **No hands.** A fan of ~10–13 similar blades radiating up from one twig tip reads as a raised hand or
+  claw at mid scale (the old `midTrunk` `sprig`). Use `leafSpray` (fan that droops outward around a
   small core ellipse) or a clump.
 - **Configure the reach.** Shapes record distances only within `reach[mat] (+k)`: 8 texels unless
-  `configure(o)` sets `DISP·dispScale·1.2 + soft + 0.75`. Skipping it changed 3,670 bytes of this kit.
+  `configure(o)` sets `DISP·dispScale·1.2 + soft + 0.75`; pass it the options `finalize` gets (skipping
+  it changed 3,670 bytes of this kit: truncated soft edges and different blends).
 - **Edge noise is a distance offset.** Where it exceeds a stroke's radius the stroke vanishes or
   doubles. Keep the peak offset (≈0.5 × DISP × dispScale) below the thinnest radius.
 - **`sdEllipse` is approximate.** Exact on the contour, but it underestimates by min/max off the long
@@ -192,9 +193,8 @@ atlas (14 images, fbm inside the SDFs) ≈ 160–210 ms; hero atlas (27 frames) 
 - Keep the per-element work in a plain function (`buildElement`) called from the generator: V8
   optimises loops in plain functions much sooner, which matters for the single cold run at boot.
 - Reuse buffers across elements (`Scratch`), record per-row touched spans so `finalize` skips empty
-  space, and clip capsule/leaf rows to the slab around the segment.
-
-Code: [building-blocks.md §6](references/building-blocks.md#6-time-slicing-the-bake).
+  space, and clip capsule/leaf rows to the slab around the segment. Code:
+  [building-blocks.md §6](references/building-blocks.md#6-time-slicing-the-bake).
 
 ## PixiJS v8 specifics
 
@@ -210,10 +210,11 @@ Code: [building-blocks.md §6](references/building-blocks.md#6-time-slicing-the-
   no depth test, no depth write. The kit is drawn as merged meshes with a custom shader and states that
   split each element into an opaque core and a soft band (channel-packed-atlas).
 - For SDFs evaluated in a Pixi fragment shader: `#version 300 es` then `precision highp float;`, and
-  pass `preferredFragmentPrecision: 'highp'` to `GlProgram.from` (Pixi strips the version line and
-  prepends its default `precision mediump float;`; a uniform shared with the highp vertex stage then
-  fails to link). Never redeclare Pixi's uniform names (`uColor`, `uTransformMatrix`,
-  `uProjectionMatrix`, `uWorldTransformMatrix`, `uWorldColorAlpha`, `uResolution`, `uRound`).
+  pass `preferredFragmentPrecision: 'highp'` to `GlProgram.from`. Pixi strips the version line and
+  prepends `precision <preferred> float;` (default mediump); without your own highp line, a uniform
+  shared with the highp vertex stage fails to link. Never redeclare Pixi's uniform names (`uColor`,
+  `uTransformMatrix`, `uProjectionMatrix`, `uWorldTransformMatrix`, `uWorldColorAlpha`, `uResolution`,
+  `uRound`).
 - Mirrored rigs flip the baked light: hero parts are baked twice (`@R`, `@L` with the light mirrored)
   so the rim stays on the moon side when facing left.
 
