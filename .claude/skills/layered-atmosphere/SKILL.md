@@ -182,6 +182,7 @@ c = mix(c, g * 1.25, e);
 - **Only pure custom-shader meshes go in the depth-tested slots.** A Sprite or Graphics there paints over the terrain drawn in the pre-pass.
 - **Keep every shader's TS twin in sync** (`shadeKit`, `shadeSky`, `shadeFog`, `shadeShaft`, `shadeTerrainCore`), or the browser-free previews lie.
 - **Grid terrain reads as boxes** unless it has organic outlines, an interior gradient and texture, and undersides with drips and roots.
+- **Big solid masses read as holes.** Lift terrain interiors off black, give them structure visible at gameplay zoom, and carve any mass that fills much of a view (Spiritwood keeps dead rock under 8 % of every gameplay view).
   Walkable tops must stay within ±2 u of collision: clamp the noise, damp it on up-facing surfaces, and test the meshed contour.
 
 ## Worked example in this repo

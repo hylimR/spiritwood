@@ -72,9 +72,13 @@ return v;
   direction `(dx, dy)` is then `(−dy, dx)`. Vertex normals average the two adjacent segments and apply miter compensation
   (`1/cos`, with cos clamped to ≥ 0.35), so the strips keep a constant width around corners.
 - The core is a per-cell polygon (inside corners plus crossings), fan-triangulated. A core vertex (5 floats) carries `aPosition`,
-  `aDist` = depth inside (`clamp(−d, 0, shadeDepth = 90)`), `aLit` = how squarely the nearest surface faces the moon (direction (−0.55, −0.83)),
+  `aDist` = depth inside, `aLit` = how squarely the nearest surface faces the moon (direction (−0.55, −0.83)),
   and `aSpill`, baked light packed as `unorm8x4` (lantern warm, flora teal, thorn rose, each `(1 − d/r)²` within 330, 240 or 130 u).
   Baking static light costs nothing per frame. The flicker lives in additive light pools drawn on top.
+- `aDist` must keep growing deep inside thick masses, or they shade flat. The field is clamped (`maxDist` 96 u), so `interiorDepth`
+  keeps the exact `−d` where the field is below its clamp and fills deeper samples with a two-pass chamfer distance (3×3 plus knight
+  moves, within a few percent of Euclidean) seeded from that band, capped at `shadeDepth + TERRAIN_DEEP_REACH` = 90 + 336 u. The forced
+  outer ring seeds nothing, so ground that runs off the level edge keeps deepening instead of meeting a phantom surface.
 - Chunks are 16 tiles (768 u) with Uint16 indices, and the builder throws past 65,535 vertices. Each contour segment goes to the chunk of
   the cell that produced it.
 
@@ -111,18 +115,50 @@ export function terrainAAWidth(pxPerUnit: number, zoom: number): number {
 
 ## 4. Shading
 
+8 value-noise lookups and 2 hashes per fragment (`terrain.glsl.ts`, template constants resolved; CPU twin `shadeTerrainCore` and
+`stoneAt` in `terrainShading.ts`):
+
 ```glsl
 vec3 terrainColor(float depth, vec2 world, float lit, vec3 spill) {
   float t = pow(clamp(depth / uShadeDepth, 0.0, 1.0), 0.7);
+  float k = clamp((depth - uShadeDepth) / 336.0, 0.0, 1.0);
   float warp = sw_vnoise(world * 0.0045) * 70.0;
   float strata = sw_vnoise(vec2(world.x * 0.0022, (world.y + warp) * 0.026));
   float mottle = sw_vnoise(world * 0.019 + 13.1);
+  float band = sw_vnoise(vec2(world.x * 0.0011 + 3.1, (world.y + warp * 1.5) * 0.0072 + 7.3));
+  float seam = 1.0 - smoothstep(0.0, 0.016, abs(band - 0.5));
   vec2 rw = vec2(world.x * 0.866 - world.y * 0.5, world.x * 0.5 + world.y * 0.866);
   float sn = 0.6 * sw_vnoise(vec2(rw.x * 0.06 + 5.3, rw.y * 0.07 + 1.9)) + 0.4 * sw_vnoise(vec2(rw.y * 0.11 + 2.1, rw.x * 0.12 + 8.4));
-  float stone = smoothstep(0.64, 0.72, sn);
+  float pebble = smoothstep(0.64, 0.72, sn);
   float vein = 1.0 - smoothstep(0.0, 0.03, abs(sw_vnoise(vec2(rw.y * 0.011 + 7.7, rw.x * 0.017 + 3.1)) - 0.5));
-  vec3 c = mix(vec3(0.0431, 0.0980, 0.1569), vec3(0.0196, 0.0431, 0.0784), t) * (1.0 + 0.55 * (strata - 0.5) + 0.3 * (mottle - 0.5))
-    * (1.0 + 0.4 * stone + 0.7 * vein * (1.0 - t));
+  float root = (1.0 - smoothstep(0.0, 0.022, abs(sw_vnoise(vec2(rw.x * 0.0095 + 1.3, rw.y * 0.0032 + 4.9)) - 0.5)))
+    * smoothstep(0.3, 0.62, band);
+  vec2 q = rw / 72.0;
+  vec2 qi = floor(q);
+  float hs = sw_hash21(qi + vec2(41.7, 12.9));
+  float su = fract(hs * 7.3);
+  float sr = (0.11 + 0.23 * su * su) * 72.0;
+  vec2 sq = (q - qi) * 72.0 - (sr + (72.0 - 2.0 * sr) * fract(hs * vec2(31.1, 57.7)));
+  float asp = 0.62 + 0.38 * fract(hs * 91.3);
+  vec2 se = vec2(sq.x, sq.y / asp);
+  float sd = length(se) / sr * (1.0 + 0.5 * (sn - 0.5) + 0.4 * (mottle - 0.5));
+  float has = 1.0 - step(0.3, hs);
+  float body = has * (1.0 - smoothstep(0.9, 1.0, sd));
+  vec2 sn2 = vec2(se.x, se.y / asp);
+  float facing = dot(vec2(0.866 * sn2.x + 0.5 * sn2.y, -0.5 * sn2.x + 0.866 * sn2.y), vec2(-0.5500, -0.8300)) / (length(sn2) + 1e-6);
+  float crevice = has * smoothstep(0.98, 1.05, sd) * (1.0 - smoothstep(1.05, 1.2, sd)) * (0.2 + 0.8 * smoothstep(-0.2, 0.7, -facing));
+  float lum = (1.0 + 0.55 * (1.0 - 0.45 * k) * (strata - 0.5) + 0.3 * (mottle - 0.5))
+    * (0.85 + 0.3 * band) * (1.0 - 0.34 * seam)
+    * (1.0 - 0.35 * crevice);
+  float detail = 1.0 + 0.4 * pebble + 0.7 * vein * (1.0 - 0.6 * t)
+    + 0.45 * root + 0.2 * body + 0.42 * body * min(sd, 1.0) * facing;
+  vec3 tint = mix(vec3(1.0), vec3(0.8000, 1.1400, 1.0600), smoothstep(0.35, 0.65, band));
+  vec3 c = mix(vec3(0.0431, 0.0980, 0.1569), mix(vec3(0.0290, 0.0540, 0.0970), vec3(0.0310, 0.0520, 0.1080), k), t) * tint * (lum * detail);
+  vec2 gc = floor(world / 26.0);
+  float gh = sw_hash21(gc + vec2(17.3, 5.1));
+  vec2 gp = (gc + 0.2 + 0.6 * fract(gh * vec2(13.7, 71.3))) * 26.0;
+  float glint = step(0.965, gh) * (1.0 - smoothstep(0.6, 2.8, length(world - gp)));
+  c += mix(vec3(0.0494, 0.2284, 0.1854), vec3(0.0974, 0.1544, 0.2000), step(0.5, fract(gh * 431.7))) * glint;
   c += vec3(0.1000, 0.2500, 0.3100) * (lit * exp(-depth / 16.0));
   c += (vec3(0.3600, 0.1835, 0.0565) * spill.x + vec3(0.0346, 0.2108, 0.1854) * spill.y + vec3(0.3000, 0.0302, 0.0598) * spill.z) * exp(-depth / 46.0);
   return c;
@@ -130,16 +166,23 @@ vec3 terrainColor(float depth, vec2 world, float lit, vec3 spill) {
 // core: finalColor = vec4(terrainColor(vDist, vWorld, vLit, vSpill) + sw_dither(gl_FragCoord.xy), 1.0);
 ```
 
-(These are the template constants of `terrain.glsl.ts` resolved: edge `#0b1928`, deep `#050b14` = `PALETTE.silhouette`, rim reach 16 u,
-spill reach 46 u.)
-
-- **Depth ramp:** the colour runs from the lifted edge colour to the deep silhouette colour over 90 u (`pow 0.7` keeps the lift near the surface).
-  The terrain is the darkest plane in the depth ramp. Only the foreground frames are darker.
-- **Interior texture:** warped horizontal strata, mottling, embedded stones (peaks of a mid-frequency noise) and root veins (a thin iso-line
-  `|n − 0.5| < 0.03` of a stretched noise, strongest near the surface). The stone and vein noises use a lattice rotated by 30°, because
-  thresholded value noise on the axis-aligned lattice reads as blocks.
-- **Moonlit rim zone:** `lit · exp(−depth/16)` adds a cold light just inside surfaces that face the moon, which ties the ground to the rim-lit
-  parallax layers.
+- **Two ramps, no black.** `t` runs from the lifted edge colour `#0b1928` over the rim zone (`shadeDepth` 90 u, `pow 0.7` keeps the lift
+  near the surface) into a deep indigo/teal-black (0.029, 0.054, 0.097). `k` then drifts it slightly more indigo, to (0.031, 0.052, 0.108),
+  over the next 336 u instead of darkening. Interior p95 stays below `fogDeep`, so the terrain is still the darkest gameplay plane and
+  separates from every background layer; only the foreground frames are darker.
+- **Structure that survives gameplay zoom:** broad strata bands (a slow noise over warped rows, about 140 u apart) alternate indigo and
+  teal-shifted at ±15 % brightness, with thin dark bedding seams on their 0.5 iso-line; a root network (iso-line of a noise stretched down
+  and to the right, shown only where the band is high, so it breaks into strands); fine strata and mottling; pebbles (peaks of a
+  mid-frequency noise); rootlets (thin iso-line, strongest near the surface).
+- **Embedded stones:** at most one per 72-u cell of a lattice rotated by 30° (30 % of cells), radius 8–25 u, an ellipse kept inside its
+  cell. The outline is scaled by the pebble and mottle noises already sampled, so no stone is a perfect ellipse. Pillow shading lightens
+  the moon-facing rim and darkens the far one, and the crevice is a contact shadow on the far side (20 % strength on the lit side).
+  A symmetric dark ring around a round stone reads as a bubble.
+- **Rotated lattices:** the pebble, rootlet, root and stone noises use a lattice rotated by 30°, because thresholded value noise on the
+  axis-aligned lattice reads as blocks.
+- **Glints:** at most one faint moss or mineral speck (≈ 2.8 u) per 26-u cell in 3.5 % of cells.
+- **Moonlit rim zone:** `lit · exp(−depth/16)` adds a cold light just inside surfaces that face the moon, which ties the ground to the
+  rim-lit parallax layers.
 - **Spill:** baked lantern, flora and thorn light fades into the ground over 46 u.
 
 ## 5. Rules (why grid terrain stops reading as boxes)
@@ -150,6 +193,10 @@ undersides and uniform interiors. The rules it arrived at, now implemented as ab
 - **Organic outlines.** Use per-corner radii and facing-dependent displacement, and put the large, slow deformation where collision allows it (undersides:
   lumps and drips). No run of edge should look ruled for more than a tile or two.
 - **Interior gradient and texture.** Use a depth-inside gradient plus strata, stones and veins, so large masses don't read as flat fills.
+- **Big masses read as holes.** An interior that sinks to near-black reads as a void, however well textured its rim. Lift the floor off
+  black, keep structure visible at gameplay zoom, and carve the level itself: in Spiritwood, solid rock more than 3 tiles from open air
+  covers < 8 % of any gameplay view (`node tools/level/masses.ts`, enforced by `tests/level/forest.test.ts`). A 23 × 28-tile cliff that
+  filled 60 % of the goal view became ledges, a column, a knoll and open air onto the forest.
 - **Undersides with drips and roots.** Ceilings hang pendant drips in the field itself. Decor adds root `tendril`s under 20 % of ceiling tiles
   (`decorPlacement.ts`).
 - **Walkable tops stay within ±2 u of collision.** However organic the rest is, the feet must meet the drawn surface. Clamp the noise, damp its
