@@ -8,7 +8,8 @@ import {
 import { AREA_GRADE_TABLE, DEFAULT_GRADE } from '../../src/content/grades.ts';
 import type { PostChain } from '../../src/render/post/postChain.ts';
 import { SimEventType, type SimEvent } from '../../src/contracts/sim.ts';
-import { MAX_RENDER_DT, VIEW_H } from '../../src/config.ts';
+import { MAX_RENDER_DT, TIME_SCALE_EASE, TIME_SCALE_FROZEN, VIEW_H } from '../../src/config.ts';
+import { freezeAmount } from '../../src/render/post/worldClock.ts';
 import { DEFAULT_SETTINGS } from '../../src/settings/store.ts';
 import { QUALITY_PRESETS } from '../../src/settings/quality.ts';
 import { hasOverlay } from '../../src/render/post/context.ts';
@@ -237,6 +238,63 @@ describe('RenderPipeline orchestration (fake WebGL2)', () => {
     pipeline.render(sim, 1, 1.1, 1 / 60, 0);
     expect(u.uFade).toBeCloseTo(0.6, 6);
     expect(u.uExposure).toBeCloseTo(DEFAULT_GRADE.exposure, 6);
+  });
+
+  test('world clock: eases toward the freeze while sim.frozen and back after; worldTime sums worldDt', async () => {
+    const { pipeline, sim, view } = await setup();
+    pipeline.render(sim, 1, 1, 1 / 60, 0);
+    let f = view.lastFrame as FrameInfo;
+    expect(f.timeScale).toBe(1);
+    expect(f.worldDt).toBeCloseTo(1 / 60, 12);
+    const start = f.worldTime;
+    sim.frozen = true;
+    let sum = 0;
+    let t = 1;
+    for (let i = 0; i < 60; i++) {
+      t += 1 / 60;
+      pipeline.render(sim, 1, t, 1 / 60, 0);
+      f = view.lastFrame as FrameInfo;
+      sum += f.worldDt;
+      expect(f.worldDt).toBeLessThan(f.dt);
+      expect(f.time).toBeCloseTo(1 / 60 * (i + 2), 9);
+    }
+    expect(f.worldTime - start).toBeCloseTo(sum, 12);
+    expect(f.timeScale).toBeCloseTo(TIME_SCALE_FROZEN + (1 - TIME_SCALE_FROZEN) * Math.exp(-1 / TIME_SCALE_EASE), 6);
+    sim.frozen = false;
+    for (let i = 0; i < 30; i++) {
+      t += 1 / 60;
+      pipeline.render(sim, 1, t, 1 / 60, 0);
+    }
+    expect((view.lastFrame as FrameInfo).timeScale).toBeGreaterThan(0.999);
+  });
+
+  test('freeze grade: the composite desaturates, cools and vignettes with the time scale (CPU only)', async () => {
+    const { pipeline, sim, view } = await setup();
+    const u = (pipeline as unknown as { post: PostChain }).post.compositeUniforms.uniforms;
+    pipeline.render(sim, 1, 1, 1 / 60, 0);
+    const base = { sat: u.uSaturation as number, temp: u.uTemperature as number, vig: u.uVignette as number };
+    expect(base.sat).toBeCloseTo(DEFAULT_GRADE.saturation, 9);
+    sim.frozen = true;
+    for (let i = 0; i < 12; i++) pipeline.render(sim, 1, 1 + (i + 1) / 60, 1 / 60, 0);
+    const k = freezeAmount((view.lastFrame as FrameInfo).timeScale);
+    expect(k).toBeGreaterThan(0.5);
+    expect(u.uSaturation).toBeCloseTo(base.sat * (1 - 0.35 * k), 6);
+    expect(u.uTemperature).toBeCloseTo(base.temp - 0.3 * k, 6);
+    expect(u.uVignette).toBeCloseTo(base.vig + 0.15 * k, 6);
+  });
+
+  test('Spirit Launch shakes the camera a little', async () => {
+    const { pipeline, sim, view } = await setup();
+    sim.events.push({ type: SimEventType.Launch, a: -1 });
+    pipeline.render(sim, 1, 1, 1 / 60, 0);
+    sim.events.clear();
+    let moved = false;
+    for (let i = 0; i < 6; i++) {
+      pipeline.render(sim, 1, 1.02 + i / 60, 1 / 60, 0);
+      const cam = view.lastFrame?.camera;
+      if (cam && (cam.shakeX !== 0 || cam.shakeY !== 0)) moved = true;
+    }
+    expect(moved).toBe(true);
   });
 
   test('foreground content is drawn over the glow twins (bloom occlusion) before the bloom chain', async () => {

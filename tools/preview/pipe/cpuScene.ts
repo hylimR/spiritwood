@@ -1,6 +1,7 @@
 /**
  * Minimal software renderer for the Pixi display trees our views build (Sprites and batched Meshes,
- * tint, alpha, normal/add blending, premultiplied alpha). Used only by the browser-free previews.
+ * tint, alpha, normal/add blending, premultiplied alpha, emissive texels at alpha 0). Used only by the
+ * browser-free previews.
  */
 import { Container, Matrix, Mesh, Sprite, type Texture } from 'pixi.js';
 
@@ -61,7 +62,8 @@ interface Style {
 function blend(f: Frame, px: number, py: number, s: Float32Array, st: Style): void {
   const o = (py * f.w + px) * 4;
   const sa = (s[3] as number) * st.a;
-  if (sa <= 0 && !st.add) return;
+  // Premultiplied texels may carry light at alpha 0 (it adds even under normal blending).
+  if (sa <= 0 && (s[0] as number) <= 0 && (s[1] as number) <= 0 && (s[2] as number) <= 0) return;
   const r = (s[0] as number) * st.r * st.a;
   const g = (s[1] as number) * st.g * st.a;
   const b = (s[2] as number) * st.b * st.a;

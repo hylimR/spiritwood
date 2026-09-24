@@ -325,7 +325,7 @@ export class Game {
         this.statsRefreshedAt = now;
       }
       this.overlay.update(
-        this.frameTimer.stats, this.pipeline.stats, this.world, this.pipeline.quality.level, now, frameMs,
+        this.frameTimer.stats, this.pipeline.stats, this.world, this.pipeline.quality.level, now, frameMs, this.audio.stats,
       );
     }
 

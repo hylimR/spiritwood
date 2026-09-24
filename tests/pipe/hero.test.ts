@@ -6,8 +6,8 @@ import { buildHeroAssets } from '../../src/render/hero/heroAssets.ts';
 import { HERO_CLIP } from '../../src/render/hero/heroClips.ts';
 import { HERO_DENSITY, partImageName } from '../../src/render/hero/heroParts.ts';
 import { HERO_PARTS } from '../../src/render/hero/heroRig.ts';
-import { chooseHeroClip, HERO_ANIM, type HeroAnimInput } from '../../src/render/hero/heroState.ts';
-import { HeroView } from '../../src/render/hero/heroView.ts';
+import { chooseHeroClip, fadeBetween, fadeInto, HERO_ANIM, type HeroAnimInput } from '../../src/render/hero/heroState.ts';
+import { diveTarget, faceTarget, HeroView } from '../../src/render/hero/heroView.ts';
 import { createFakeSimView, levelFromAscii, type FakeSim } from '../shared/fixtures.ts';
 import { createFrame, createTestContext, stepFrame, walk } from './helpers.ts';
 
@@ -34,6 +34,41 @@ describe('hero clip selection', () => {
     expect(chooseHeroClip(input({ ...air, vy: 200 }))).toBe(HERO_CLIP.fall);
     expect(chooseHeroClip(input({ ...air, vy: -600, flipping: true }))).toBe(HERO_CLIP.doubleJump);
     expect(chooseHeroClip(input({ ...air, vy: -600, sinceWallJump: 0.1 }))).toBe(HERO_CLIP.wallJump);
+  });
+
+  test('Spirit Launch: launchAim and launched come from the player modes, fading in 60–120 ms', () => {
+    expect(chooseHeroClip(input({ mode: 'launchAim' }))).toBe(HERO_CLIP.launchAim);
+    expect(chooseHeroClip(input({ mode: 'launchAim', grounded: false, vy: -500, flipping: true }))).toBe(HERO_CLIP.launchAim);
+    expect(chooseHeroClip(input({ mode: 'launched', grounded: false, vy: -900 }))).toBe(HERO_CLIP.launched);
+    expect(chooseHeroClip(input({ mode: 'launched', sinceRespawn: 0.1 }))).toBe(HERO_CLIP.launched);
+    expect(chooseHeroClip(input({ mode: 'dead', alive: false }))).toBe(HERO_CLIP.dead);
+    for (const to of [HERO_CLIP.launchAim, HERO_CLIP.launched]) {
+      for (const from of Object.values(HERO_CLIP)) {
+        expect(fadeBetween(from, to)).toBeGreaterThanOrEqual(0.06);
+        expect(fadeBetween(from, to)).toBeLessThanOrEqual(0.12);
+      }
+    }
+    for (const to of Object.values(HERO_CLIP)) {
+      for (const from of [HERO_CLIP.launchAim, HERO_CLIP.launched]) {
+        expect(fadeBetween(from, to)).toBeGreaterThanOrEqual(0.06);
+        expect(fadeBetween(from, to)).toBeLessThanOrEqual(0.12);
+      }
+    }
+    expect(fadeBetween(HERO_CLIP.idle, HERO_CLIP.fall)).toBe(fadeInto(HERO_CLIP.fall));
+  });
+
+  test('dive and facing helpers', () => {
+    expect(diveTarget(0, -1150, 1)).toBeCloseTo(0, 9);
+    expect(diveTarget(1150, 0, 1)).toBeCloseTo(Math.PI / 2, 9);
+    expect(diveTarget(-1150, 0, -1)).toBeCloseTo(Math.PI / 2, 9);
+    expect(diveTarget(0, 1150, 1)).toBeCloseTo(Math.PI, 9);
+    expect(diveTarget(0, 0, 1)).toBe(0);
+    const p = { mode: 'launchAim', facing: 1 } as Parameters<typeof faceTarget>[0];
+    const L = { targetKind: 'seed', targetX: 100 } as Parameters<typeof faceTarget>[1];
+    expect(faceTarget(p, L, 200)).toBe(-1);
+    expect(faceTarget(p, L, 20)).toBe(1);
+    expect(faceTarget(p, L, 102)).toBe(1);
+    expect(faceTarget({ ...p, mode: 'air' }, L, 200)).toBe(1);
   });
 
   test('modes and life', () => {
@@ -96,7 +131,9 @@ describe('hero atlas', () => {
   });
 
   test('deterministic', () => {
-    expect(buildHeroAssets().pixels).toEqual(atlas.pixels);
+    const again = buildHeroAssets().pixels;
+    expect(again.length).toBe(atlas.pixels.length);
+    expect(Buffer.compare(Buffer.from(again), Buffer.from(atlas.pixels))).toBe(0);
   });
 });
 
@@ -242,6 +279,84 @@ describe('HeroView', () => {
       expect(blend, n.label).toBe('add');
     });
     expect(leaves).toBeGreaterThan(10);
+  });
+
+  test('Spirit Launch: aims facing the target, dives head-first along the flight, streaks, then rights itself', () => {
+    const { sim, ctx, run, emit } = setup();
+    const p = sim.player;
+    run(10);
+    const head = spritesOf(ctx.scene.hero).find((s) => s.texture.label?.startsWith('hero:head')) as Sprite;
+    const body = ctx.scene.hero.children[0]!.children[1]!;
+    // Aim at a seed to the left: the hero turns to face it.
+    Object.assign(sim.launch, { unlocked: true, targetKind: 'seed', targetId: 0, targetX: p.x - 80, targetY: p.y - 60, aimX: 0.6, aimY: -0.8 });
+    p.mode = 'launchAim';
+    emit({ type: SimEventType.LaunchAim, x: p.x - 80, y: p.y - 60, a: 1, id: 0 });
+    run(20);
+    head.updateLocalTransform();
+    expect(head.localTransform.a * head.localTransform.d - head.localTransform.b * head.localTransform.c).toBeLessThan(0);
+    // Release to the right: the head leads, level with the body's centre and right of the feet.
+    p.mode = 'launched';
+    p.grounded = false;
+    p.facing = 1;
+    p.vx = 1150;
+    p.vy = 0;
+    emit({ type: SimEventType.Launch, a: 0, b: 1, id: 0 });
+    const streak = ctx.scene.hero.children[0]!.children[0]!.children.find((c) => (c as Sprite).texture?.label === 'hero:streak') as Sprite;
+    run(6, () => {
+      p.prevX = p.x;
+      p.x += p.vx / 60;
+    });
+    expect(streak.alpha).toBeGreaterThan(0.2);
+    expect(streak.rotation).toBeCloseTo(0, 3);
+    // The head (anchored at its neck) sits right of the core, turned ≈ 90° onto the flight.
+    expect(head.x).toBeGreaterThan(5);
+    expect(Math.abs(head.y + 26)).toBeLessThan(6);
+    head.updateLocalTransform();
+    const angle = Math.atan2(head.localTransform.b, head.localTransform.a);
+    expect(angle).toBeGreaterThan(1.1);
+    expect(angle).toBeLessThan(1.8);
+    expect(body.alpha).toBe(1);
+    // The flight ends: the body rights itself and the streak is gone.
+    p.mode = 'air';
+    p.vx = 400;
+    p.vy = 200;
+    run(40, () => {
+      p.prevX = p.x;
+      p.x += p.vx / 60;
+    });
+    expect(head.y).toBeLessThan(-30);
+    expect(Math.abs(head.x)).toBeLessThan(12);
+    expect(streak.alpha).toBe(0);
+  });
+
+  test('a death mid-streak: the streak still plays out and parks while the hero is hidden', () => {
+    const { sim, ctx, run, emit } = setup();
+    const p = sim.player;
+    run(10);
+    const streak = ctx.scene.hero.children[0]!.children[0]!.children.find((c) => (c as Sprite).texture?.label === 'hero:streak') as Sprite;
+    Object.assign(p, { mode: 'launched', grounded: false, vx: 1150, vy: 0 });
+    emit({ type: SimEventType.Launch, a: 0, b: 1, id: 0 });
+    run(3, () => {
+      p.prevX = p.x;
+      p.x += p.vx / 60;
+    });
+    expect(streak.alpha).toBeGreaterThan(0.2);
+    // Flung into thorns three ticks after the release: dies, then hides after deathHideTicks.
+    Object.assign(p, { mode: 'dead', alive: false, deadTicks: 0, vx: 0, vy: 0 });
+    const hide = DEFAULT_WORLD_TUNING.deathHideTicks;
+    let hiddenAlpha = -1;
+    run(DEFAULT_WORLD_TUNING.dyingTicks - 1, (i) => {
+      p.deadTicks = i + 1;
+      if (p.deadTicks >= hide) {
+        if (p.visible) hiddenAlpha = streak.alpha;
+        (p as { visible: boolean }).visible = false;
+      }
+    });
+    expect(p.visible).toBe(false);
+    expect(hiddenAlpha).toBeGreaterThanOrEqual(0);
+    // Well past its 0.42 s life: faded and parked (alpha 0, zero area), not frozen on screen.
+    expect(streak.alpha).toBe(0);
+    expect(streak.width).toBe(0);
   });
 
   test('facing left swaps to the mirrored lighting variants', () => {

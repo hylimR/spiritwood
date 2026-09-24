@@ -31,6 +31,8 @@ export const HERO_ANIM = Object.freeze({
 /** The clip the hero should be playing (HERO_CLIP index). Pure. */
 export function chooseHeroClip(s: HeroAnimInput): number {
   if (!s.alive || s.mode === 'dead') return HERO_CLIP.dead;
+  if (s.mode === 'launchAim') return HERO_CLIP.launchAim;
+  if (s.mode === 'launched') return HERO_CLIP.launched;
   const still = s.grounded && Math.abs(s.vx) < HERO_ANIM.runSpeed && Math.abs(s.inputX) < 0.3;
   if (s.sinceRespawn < HERO_ANIM.respawnTime && still) return HERO_CLIP.respawn;
   if (s.mode === 'dash') return HERO_CLIP.dash;
@@ -51,7 +53,10 @@ export function fadeInto(clip: number): number {
     case HERO_CLIP.land:
     case HERO_CLIP.dash:
     case HERO_CLIP.dead:
+    case HERO_CLIP.launched:
       return 0.06;
+    case HERO_CLIP.launchAim:
+      return 0.08;
     case HERO_CLIP.jump:
     case HERO_CLIP.wallJump:
     case HERO_CLIP.doubleJump:
@@ -63,4 +68,10 @@ export function fadeInto(clip: number): number {
     default:
       return 0.09;
   }
+}
+
+/** Cross-fade from `from` to `to`: the Spirit Launch clips blend in and out within 60–120 ms (§5.6). */
+export function fadeBetween(from: number, to: number): number {
+  const f = fadeInto(to);
+  return from === HERO_CLIP.launchAim || from === HERO_CLIP.launched ? Math.min(0.12, Math.max(0.06, f)) : f;
 }

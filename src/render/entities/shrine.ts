@@ -31,7 +31,7 @@ export const SHRINE = Object.freeze({
 /**
  * Moonwell shrine (goal): a mossy stone arch around a small pool of moonlight with two warm lanterns
  * swaying under it. On GoalReached the pool surges (brighter light, a rising column), then settles a
- * little brighter than before.
+ * little brighter than before. World clock (the surge is anchored to the worldTime of its event).
  */
 export class ShrineRenderer implements EntityRenderer {
   private readonly group: InstanceGroup;
@@ -91,7 +91,7 @@ export class ShrineRenderer implements EntityRenderer {
   }
 
   onSimEvent(e: SimEvent, frame: FrameInfo): void {
-    if (e.type === SimEventType.GoalReached) this.reachedAt = frame.time;
+    if (e.type === SimEventType.GoalReached) this.reachedAt = frame.worldTime;
     else if (e.type === SimEventType.Reset) this.reachedAt = -1;
   }
 
@@ -101,7 +101,7 @@ export class ShrineRenderer implements EntityRenderer {
       this.group.setVisible(false);
       return;
     }
-    if (goal.reached && !this.wasReached && this.reachedAt < 0) this.reachedAt = frame.time;
+    if (goal.reached && !this.wasReached && this.reachedAt < 0) this.reachedAt = frame.worldTime;
     if (!goal.reached) this.reachedAt = -1;
     this.wasReached = goal.reached;
 
@@ -114,8 +114,8 @@ export class ShrineRenderer implements EntityRenderer {
     if (!visible) return;
     this.group.place(x, y, scale, scale);
 
-    const t = frame.time % 3600;
-    const since = this.reachedAt >= 0 ? frame.time - this.reachedAt : -1;
+    const t = frame.worldTime % 3600;
+    const since = this.reachedAt >= 0 ? frame.worldTime - this.reachedAt : -1;
     const surge = since >= 0 ? Math.exp(-since * SHRINE.surgeDecay) : 0;
     const level = (since >= 0 ? SHRINE.reachedLevel : 1) + 1.6 * surge;
 

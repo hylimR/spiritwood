@@ -3,17 +3,38 @@ import type { SimView } from '../contracts/sim.ts';
 import { GAME_TITLE } from '../config.ts';
 import { el, ensureUiStyles, formatTime } from './styles.ts';
 
-const CONTROLS: Record<'keyboard' | 'gamepad', readonly [string, string][]> = {
+type Device = 'keyboard' | 'gamepad';
+
+const CONTROLS: Record<Device, readonly (readonly [string, string])[]> = {
   keyboard: [['← →', 'Move'], ['Space', 'Jump'], ['Shift', 'Dash'], ['Esc', 'Menu']],
   gamepad: [['Stick', 'Move'], ['A', 'Jump'], ['X', 'Dash'], ['Start', 'Menu']],
 };
+/** Spirit Launch keys (§5.7): the first is the hint's, all of them are on the unlock toast. */
+export const LAUNCH_KEYS: Readonly<Record<Device, readonly string[]>> = {
+  keyboard: ['C', 'J', 'E'],
+  gamepad: ['B', 'LB', 'LT'],
+};
 /** Seconds after the first movement before the controls hint fades. */
 const CONTROLS_LINGER = 2.5;
+/** Seconds the Spirit Launch toast stays up. */
+export const TOAST_TIME = 6.5;
+export const SOUND_HINT = 'Press a key or click to enable sound';
+
+/** The controls hint for a device: Launch joins it (before Menu) once the ability is unlocked. */
+export function controlsFor(device: Device, launchUnlocked: boolean): readonly (readonly [string, string])[] {
+  const base = CONTROLS[device];
+  if (!launchUnlocked) return base;
+  const out = base.slice(0, base.length - 1);
+  out.push([LAUNCH_KEYS[device][0] as string, 'Launch'], base[base.length - 1] as readonly [string, string]);
+  return out;
+}
 
 /**
  * DOM HUD layered over the canvas: spirit-light orb counter (glowing, pulses on collect), title card
- * (GAME_TITLE + "press any key / button"), controls hint that fades after first movement, completion
- * card (time, orbs), bench results card. Text changes only when values change.
+ * (GAME_TITLE + "press any key / button"), controls hint that fades after first movement (it gains
+ * Launch once the ability is unlocked), the Spirit Launch toast on the `launch.unlocked` false → true
+ * edge, the "enable sound" line while audio is locked, completion card (time, orbs), bench results card.
+ * The DOM is touched only when a value changes.
  */
 export class Hud {
   private readonly doc: Document;
@@ -24,10 +45,17 @@ export class Hud {
   private readonly controls: HTMLDivElement;
   private readonly complete: HTMLDivElement;
   private readonly bench: HTMLDivElement;
+  private readonly toast: HTMLDivElement;
+  private readonly sound: HTMLDivElement;
   private lastCollected = -1;
   private lastTotal = -1;
   private controlsActive = false;
   private movedAt = -1;
+  private device: Device = 'keyboard';
+  /** launch.unlocked last frame (null until the first update: the first value is not an edge). */
+  private lastUnlocked: boolean | null = null;
+  private toastAt = -1;
+  private soundShown = false;
 
   constructor(parent: HTMLElement) {
     const doc = (this.doc = parent.ownerDocument);
@@ -48,11 +76,48 @@ export class Hud {
     this.controls = el(doc, 'div', 'sw-controls sw-panel sw-caps sw-fade sw-hidden');
     this.complete = el(doc, 'div', 'sw-center sw-fade sw-hidden');
     this.bench = el(doc, 'div', 'sw-center sw-fade sw-hidden');
-    this.root.append(this.orbs, this.title, this.controls, this.complete, this.bench);
+    this.sound = el(doc, 'div', 'sw-sound sw-caps sw-fade sw-hidden', SOUND_HINT);
+    this.sound.setAttribute('role', 'status');
+    this.toast = this.buildToast();
+    this.root.append(this.orbs, this.sound, this.title, this.controls, this.toast, this.complete, this.bench);
     parent.appendChild(this.root);
   }
 
+  /** "Spirit Launch" card: what it does and its keys on both devices. */
+  private buildToast(): HTMLDivElement {
+    const doc = this.doc;
+    const toast = el(doc, 'div', 'sw-toast sw-panel sw-fade sw-hidden');
+    toast.setAttribute('role', 'status');
+    const keys = el(doc, 'div', 'sw-toast-keys sw-caps');
+    for (const device of ['keyboard', 'gamepad'] as const) {
+      const group = el(doc, 'span', 'sw-toast-group');
+      for (const k of LAUNCH_KEYS[device]) group.append(el(doc, 'kbd', '', k));
+      keys.append(group);
+    }
+    toast.append(
+      el(doc, 'div', 'sw-toast-title', 'Spirit Launch'),
+      el(doc, 'div', 'sw-hairline'),
+      el(doc, 'div', 'sw-toast-body', 'Near a seed or a foe, hold to latch on and aim. Release to fly.'),
+      keys,
+    );
+    return toast;
+  }
+
   update(sim: SimView, nowSec: number): void {
+    const unlocked = sim.launch.unlocked;
+    if (unlocked !== this.lastUnlocked) {
+      const edge = this.lastUnlocked === false && unlocked;
+      this.lastUnlocked = unlocked;
+      if (edge) {
+        this.toastAt = nowSec;
+        this.toast.classList.remove('sw-hidden');
+      }
+      if (this.controlsActive) this.renderControls();
+    }
+    if (this.toastAt >= 0 && (nowSec - this.toastAt > TOAST_TIME || nowSec < this.toastAt || !unlocked)) {
+      this.toastAt = -1;
+      this.toast.classList.add('sw-hidden');
+    }
     if (sim.orbsCollected !== this.lastCollected || sim.orbsTotal !== this.lastTotal) {
       const gained = this.lastCollected >= 0 && sim.orbsCollected > this.lastCollected;
       this.lastCollected = sim.orbsCollected;
@@ -79,15 +144,25 @@ export class Hud {
   }
 
   showControls(device: 'keyboard' | 'gamepad'): void {
+    this.device = device;
+    this.renderControls();
+    this.controls.classList.remove('sw-hidden');
+    this.controlsActive = true;
+    this.movedAt = -1;
+  }
+
+  /** Whether the Spirit Launch toast is up (tests, the orchestrator). */
+  get toastVisible(): boolean {
+    return this.toastAt >= 0;
+  }
+
+  private renderControls(): void {
     this.controls.replaceChildren();
-    for (const [key, action] of CONTROLS[device]) {
+    for (const [key, action] of controlsFor(this.device, this.lastUnlocked === true)) {
       const item = el(this.doc, 'span');
       item.append(el(this.doc, 'kbd', '', key), action);
       this.controls.append(item);
     }
-    this.controls.classList.remove('sw-hidden');
-    this.controlsActive = true;
-    this.movedAt = -1;
   }
 
   showComplete(elapsedSec: number, orbs: number, total: number): void {
@@ -104,10 +179,11 @@ export class Hud {
     this.complete.classList.remove('sw-hidden');
   }
 
-  /** "Press a key or click to enable sound" while audio is still locked after play starts. */
+  /** "Press a key or click to enable sound" while audio is still locked after play starts (DOM only on change). */
   showSoundHint(visible: boolean): void {
-    // TODO(M2 PIPE): a small caps line under the orb counter; touch the DOM only when `visible` changes.
-    void visible;
+    if (visible === this.soundShown) return;
+    this.soundShown = visible;
+    this.sound.classList.toggle('sw-hidden', !visible);
   }
 
   hideComplete(): void {

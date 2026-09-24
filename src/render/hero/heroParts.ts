@@ -290,6 +290,34 @@ function bakeScarf(): AtlasImage {
   return { name: 'scarf', raster, pivotX: 0, pivotY: h / 2, density: 1 };
 }
 
+/** Streak texels along the release streak (u from the tail, 0, to the head, 1) and across it. */
+export const STREAK_TEXELS = { w: 96, h: 16 } as const;
+
+/**
+ * Spirit Launch release streak: a tapered comet of light, white (tinted at draw time), brightest and
+ * widest at the head end and thinning to nothing at the tail. Pivot at the head, pointing +x.
+ */
+function bakeStreak(): AtlasImage {
+  const { w, h } = STREAK_TEXELS;
+  const raster = createRaster(w, h);
+  const { data } = raster;
+  for (let py = 0; py < h; py++) {
+    for (let px = 0; px < w; px++) {
+      const u = (px + 0.5) / w;
+      const v = ((py + 0.5) / h) * 2 - 1;
+      const width = 0.2 + 0.8 * Math.pow(u, 0.7);
+      const across = Math.exp(-((v / width) ** 2) * 3.2) * (1 - smoothstep(0.85, 1, Math.abs(v)));
+      const along = Math.pow(u, 1.5) * (1 - smoothstep(0.9, 1, u));
+      const o = (py * w + px) * 4;
+      data[o] = 1;
+      data[o + 1] = 1;
+      data[o + 2] = 1;
+      data[o + 3] = across * along;
+    }
+  }
+  return { name: 'streak', raster, pivotX: w * 0.92, pivotY: h / 2, density: 1 };
+}
+
 /** All part images (lit shapes in both lighting variants plus the unlit extras). */
 export function buildHeroImages(density = HERO_DENSITY): AtlasImage[] {
   const out: AtlasImage[] = [];
@@ -298,7 +326,7 @@ export function buildHeroImages(density = HERO_DENSITY): AtlasImage[] {
     const l = bakeLitShape(s, -HERO_LIGHT.x, HERO_LIGHT.y, density);
     out.push({ ...r, name: `${s.name}@R` }, { ...l, name: `${s.name}@L` });
   }
-  out.push(bakeEye(density), bakeBud(density), bakeHalo(), bakeScarf());
+  out.push(bakeEye(density), bakeBud(density), bakeHalo(), bakeScarf(), bakeStreak());
   return out;
 }
 

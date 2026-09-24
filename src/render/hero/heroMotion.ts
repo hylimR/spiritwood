@@ -168,7 +168,7 @@ export class Ribbon {
 
   /** Lay the ribbon out straight from the anchor along (dirX, dirY), at rest. */
   reset(ax: number, ay: number, dirX: number, dirY: number): void {
-    const len = Math.hypot(dirX, dirY) || 1;
+    const len = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
     for (let i = 0; i < this.count; i++) {
       this.x[i] = ax + (dirX / len) * this.segment * i;
       this.y[i] = ay + (dirY / len) * this.segment * i;
@@ -181,14 +181,16 @@ export class Ribbon {
   }
 
   /**
-   * Advance by `dt`. The anchor moves linearly from its previous position to (ax, ay) across the
-   * substeps; (restX, restY) is the direction the ribbon floats toward when still.
+   * Advance by `dt` (always the real render dt). The anchor moves linearly from its previous position
+   * to (ax, ay) across the substeps; (restX, restY) is the direction the ribbon floats toward when
+   * still. `forceScale` scales gravity and the rest pull (the scarf floats while a Spirit Launch aim
+   * freezes the world): never the step, so the verlet velocity stays bounded as the scale comes back.
    */
-  update(dt: number, ax: number, ay: number, restX: number, restY: number, time: number): void {
+  update(dt: number, ax: number, ay: number, restX: number, restY: number, time: number, forceScale = 1): void {
     if (!(dt > 0)) return;
     const steps = Math.min(RIBBON.maxSubsteps, Math.max(1, Math.ceil(dt / RIBBON.substep - 1e-6)));
     const h = dt / steps;
-    const rl = Math.hypot(restX, restY) || 1;
+    const rl = Math.sqrt(restX * restX + restY * restY) || 1;
     const rx = restX / rl;
     const ry = restY / rl;
     const keep = Math.exp(-RIBBON.drag * h);
@@ -211,8 +213,9 @@ export class Ribbon {
         const k = i / (n - 1);
         const tx = axS + rx * this.segment * i;
         const ty = ayS + ry * this.segment * i;
-        const fx = (tx - xi) * RIBBON.restPull + Math.cos(tm * 2.3 + i * 1.1) * RIBBON.flutter * 0.6 * k;
-        const fy = (ty - yi) * RIBBON.restPull + RIBBON.gravity * 0.35 + Math.sin(tm * 3.1 + i * 0.85) * RIBBON.flutter * k;
+        const pull = RIBBON.restPull * forceScale;
+        const fx = (tx - xi) * pull + Math.cos(tm * 2.3 + i * 1.1) * RIBBON.flutter * 0.6 * k;
+        const fy = (ty - yi) * pull + RIBBON.gravity * 0.35 * forceScale + Math.sin(tm * 3.1 + i * 0.85) * RIBBON.flutter * k;
         const vx = (xi - (this.px[i] as number)) * ratio * keep;
         const vy = (yi - (this.py[i] as number)) * ratio * keep;
         this.px[i] = xi;
@@ -225,6 +228,13 @@ export class Ribbon {
     }
     this.anchorX = ax;
     this.anchorY = ay;
+  }
+
+  /** Speed estimate (u/s) of point i over the last substep. */
+  speed(i: number): number {
+    const dx = (this.x[i] as number) - (this.px[i] as number);
+    const dy = (this.y[i] as number) - (this.py[i] as number);
+    return Math.sqrt(dx * dx + dy * dy) / this.lastH;
   }
 
   private solve(): void {
@@ -245,7 +255,7 @@ export class Ribbon {
     for (let i = 1; i < n; i++) {
       const dx = (x[i] as number) - (x[i - 1] as number);
       const dy = (y[i] as number) - (y[i - 1] as number);
-      const d = Math.hypot(dx, dy);
+      const d = Math.sqrt(dx * dx + dy * dy);
       if (d < 1e-6) {
         this.cx[i] = 0;
         this.cy[i] = 0;

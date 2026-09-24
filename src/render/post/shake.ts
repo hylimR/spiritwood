@@ -16,6 +16,11 @@ export const SHAKE = Object.freeze({
   landMax: 0.55,
   died: 0.45,
   stomp: 0.25,
+  /** Spirit Launch release: a small kick. */
+  launch: 0.32,
+  /** A flung seed or a launch strikes an enemy. */
+  enemyHit: 0.2,
+  abilityUnlocked: 0.3,
 });
 
 /** Trauma a sim event adds (0 for events that don't shake). */
@@ -27,6 +32,12 @@ export function traumaForEvent(e: SimEvent): number {
       return SHAKE.died;
     case SimEventType.EnemyStomped:
       return SHAKE.stomp;
+    case SimEventType.Launch:
+      return SHAKE.launch;
+    case SimEventType.EnemyHit:
+      return SHAKE.enemyHit;
+    case SimEventType.AbilityUnlocked:
+      return SHAKE.abilityUnlocked;
     default:
       return 0;
   }

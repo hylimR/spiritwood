@@ -48,10 +48,15 @@ export function createFrame(sim: FakeSim, ctx: RenderContext): FrameInfo {
   };
 }
 
-/** Advance the frame clock and camera like the pipeline does. */
+/**
+ * Advance the render clock, the world clock (at the frame's current timeScale; the pipeline's easing is
+ * tested separately) and the camera like the pipeline does.
+ */
 export function stepFrame(frame: FrameInfo, sim: FakeSim, dt = 1 / 60, alpha = 1): FrameInfo {
   frame.dt = dt;
   frame.time += dt;
+  frame.worldDt = dt * frame.timeScale;
+  frame.worldTime += frame.worldDt;
   frame.alpha = alpha;
   frame.frame++;
   computeCameraFrame(frame.camera, sim.camera, alpha);

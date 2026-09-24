@@ -2,13 +2,16 @@ import { Container, type ParticleContainer, type Texture } from 'pixi.js';
 import { PALETTE } from '../../config.ts';
 import type { QualitySettings } from '../../contracts/quality.ts';
 import type { FrameInfo, RenderContext, RenderView } from '../../contracts/render.ts';
-import { SimEventType, type SimEvent } from '../../contracts/sim.ts';
+import { EnemyHitCause, SimEventType, type SimEvent } from '../../contracts/sim.ts';
 import { TileKind, type LevelData } from '../../contracts/level.ts';
 import { tileAt } from '../../core/tiles.ts';
 import { Rng } from '../../core/rng.ts';
+import { SHRINE_ART } from '../entities/abilityShrineArt.ts';
 import type { ParticleFrame } from '../gen/particleAtlas.ts';
 import type { WorldAssets } from '../layers/assets.ts';
-import { buildPool, fixedParticleContainer, hide, Mote, setColor, toBgr, type MoteRing } from './particlePool.ts';
+import {
+  buildPool, fixedParticleContainer, hide, Mote, PARTICLE_CLOCK, setColor, toBgr, type MoteRing, type ParticleClock,
+} from './particlePool.ts';
 import { shaftEnvelope, shaftPoint, shaftTrapezoid, trapezoidBounds, type Trapezoid } from './shaftGeometry.ts';
 
 /** Capacities at particle density 1 (pools are allocated once at these sizes). */
@@ -17,9 +20,9 @@ export const PARTICLE_CAPACITY = {
   fireflies: 40,
   dust: 96,
   leaves: 22,
-  sparks: 96,
-  dots: 160,
-  stars: 48,
+  sparks: 128,
+  dots: 192,
+  stars: 64,
   puffs: 72,
   wisps: 40,
 } as const;
@@ -45,6 +48,37 @@ const MOTE_PALE = toBgr(0x9fe8e0);
 const DUST = toBgr(0x6d8fa0);
 const DARK = toBgr(0x0a1220);
 const LEAF = toBgr(0x122232);
+const ROSE = toBgr(PALETTE.thorns);
+const ROSE_HOT = toBgr(0xffa3b5);
+const HUSK = toBgr(0x1a0f18);
+
+/**
+ * The clock a burst from `type` ages on (§5.5): the hero's own bursts, the Spirit Launch gather, burst and
+ * fizzle, and the ability bloom (a UI celebration) keep the real clock; everything the world emits
+ * (orbs, checkpoints, enemies, seeds, the goal) crawls with it while a launch aim freezes the world.
+ */
+export function burstClock(type: SimEventType): ParticleClock {
+  switch (type) {
+    case SimEventType.Jump:
+    case SimEventType.AirJump:
+    case SimEventType.WallJump:
+    case SimEventType.Dash:
+    case SimEventType.DashEnd:
+    case SimEventType.Land:
+    case SimEventType.DropThrough:
+    case SimEventType.Died:
+    case SimEventType.Respawned:
+    case SimEventType.Reset:
+    case SimEventType.Teleported:
+    case SimEventType.LaunchAim:
+    case SimEventType.Launch:
+    case SimEventType.LaunchFizzle:
+    case SimEventType.AbilityUnlocked:
+      return PARTICLE_CLOCK.real;
+    default:
+      return PARTICLE_CLOCK.world;
+  }
+}
 
 const ATT_FLORA = 0;
 const ATT_LANTERN = 1;
@@ -96,6 +130,10 @@ export class ParticlesView implements RenderView {
   private root: Container | null = null;
   private glowRoot: Container | null = null;
   private readonly rng = new Rng(0x9a871c1e);
+  /** This frame's world and real steps and world time (mod 3600). */
+  private worldDt = 0;
+  private realDt = 0;
+  private worldT = 0;
   private ambient: Mote[] = [];
   private leaves: Mote[] = [];
   private burstAdd: Mote[] = [];
@@ -120,8 +158,15 @@ export class ParticlesView implements RenderView {
   private nLeaves = 0;
   private trailClock = 0;
   private slideClock = 0;
+  /** Clock stamped on particles emitted next (set per event, and for the continuous hero emitters). */
+  private emitClock: ParticleClock = PARTICLE_CLOCK.world;
+  /** Centre of the latest LaunchAim (the target the next Launch bursts from); NaN = none since a reset. */
+  private aimX = Number.NaN;
+  private aimY = Number.NaN;
   /** Live burst particles after the last update (tests and stats). */
   liveBursts = 0;
+  /** Where the last Launch burst was centred (the preceding LaunchAim's target centre). */
+  readonly launchBurst = { x: Number.NaN, y: Number.NaN };
 
   constructor(assets: WorldAssets) {
     this.assets = assets;
@@ -350,7 +395,9 @@ export class ParticlesView implements RenderView {
     else if (m.y > w.y1) m.y -= wh * Math.ceil((m.y - w.y1) / wh);
   }
 
-  private updateAmbient(dt: number, t: number): number {
+  private updateAmbient(): number {
+    const dt = this.worldDt;
+    const t = this.worldT;
     const C = PARTICLE_CAPACITY;
     let live = 0;
     for (let i = 0; i < this.nMotes; i++) {
@@ -440,6 +487,7 @@ export class ParticlesView implements RenderView {
     m.spin = this.rng.range(-3, 3);
     m.rotation = this.rng.range(0, 6.283);
     m.phase = this.rng.range(0, 6.283);
+    m.clock = this.emitClock;
     return m;
   }
 
@@ -481,11 +529,27 @@ export class ParticlesView implements RenderView {
     this.wispRing?.clear(this.burstNormal);
     this.trailClock = 0;
     this.slideClock = 0;
+    this.aimX = Number.NaN;
+    this.aimY = Number.NaN;
+  }
+
+  /** Rose sparks thrown in a cone around (dx, dy) (unit or zero = all around). */
+  private cone(x: number, y: number, n: number, dx: number, dy: number, spread: number, speed: number, bgr: number, alpha: number): void {
+    const r = this.rng;
+    const base = dx === 0 && dy === 0 ? 0 : Math.atan2(dy, dx);
+    const full = dx === 0 && dy === 0;
+    for (let i = 0; i < n; i++) {
+      const a = full ? r.range(0, 6.283) : base + r.range(-spread, spread);
+      const v = speed * r.range(0.55, 1.1);
+      this.emit(this.sparkRing, this.burstAdd, B_SPARK, x, y, Math.cos(a) * v, Math.sin(a) * v, r.range(0.22, 0.42),
+        r.range(0.22, 0.34), bgr, alpha, 3.4, 120);
+    }
   }
 
   onSimEvent(e: SimEvent, frame: FrameInfo): void {
     const r = this.rng;
     const p = frame.sim.player;
+    this.emitClock = burstClock(e.type);
     switch (e.type) {
       case SimEventType.Land: {
         const k = Math.min(1, Math.max(0, (e.a - 150) / 900));
@@ -561,18 +625,118 @@ export class ParticlesView implements RenderView {
       case SimEventType.DropThrough:
         this.puff(e.x, e.y + 4, 3, 40, 10, 0.35, 0.12);
         break;
+      case SimEventType.SeedFired: {
+        // A wet spore puff at the mouth and a spray of rose sparks along the shot.
+        const len = Math.sqrt(e.a * e.a + e.b * e.b);
+        const dx = len > 1e-6 ? e.a / len : 0;
+        const dy = len > 1e-6 ? e.b / len : -1;
+        for (let i = 0; i < 4; i++) {
+          this.emit(this.puffRing, this.burstNormal, B_PUFF, e.x + r.range(-5, 5), e.y + r.range(-5, 5), dx * r.range(20, 70) + r.range(-18, 18),
+            dy * r.range(20, 70) + r.range(-18, 8), r.range(0.4, 0.7), r.range(0.28, 0.42), HUSK, 0.32, 3, -12);
+        }
+        this.cone(e.x, e.y, 7, dx, dy, 0.55, 260, ROSE, 0.9);
+        this.dots(e.x, e.y, 3, 40, ROSE_HOT, 10, 0.35, 0.16);
+        break;
+      }
+      case SimEventType.SeedBurst:
+        if (e.b === 0) {
+          // Hostile: the ember shatters into rose shards and dark husk flakes.
+          this.cone(e.x, e.y, 11, 0, 0, 0, 250, ROSE, 1);
+          this.dots(e.x, e.y, 4, 80, ROSE_HOT, 0, 0.4, 0.16);
+          for (let i = 0; i < 6; i++) {
+            const a = r.range(0, 6.283);
+            const v = r.range(50, 130);
+            this.emit(this.wispRing, this.burstNormal, B_WISP, e.x, e.y, Math.cos(a) * v, Math.sin(a) * v - 30, r.range(0.35, 0.6),
+              r.range(0.16, 0.26), HUSK, 0.75, 3, 160);
+          }
+        } else {
+          // Reflected: the wisp comes apart into soft blue motes.
+          this.dots(e.x, e.y, 12, 110, SPIRIT, 25, 0.7, 0.2);
+          this.cone(e.x, e.y, 6, 0, 0, 0, 200, SPIRIT, 0.8);
+        }
+        break;
+      case SimEventType.SpitterWindup:
+        // Thorn glints: rose stars twinkling on the bulb and its thorns while it draws breath.
+        for (let i = 0; i < 5; i++) {
+          this.emit(this.starRing, this.burstAdd, B_STAR, e.x + r.range(-24, 24), e.y + r.range(-8, 34), 0, r.range(-12, -4),
+            r.range(0.45, 0.8), r.range(0.14, 0.24), i % 2 === 0 ? ROSE : ROSE_HOT, 0.9, 1.5, 0);
+        }
+        break;
+      case SimEventType.EnemyHit:
+        if (e.a === EnemyHitCause.Seed) {
+          this.cone(e.x, e.y, 10, 0, 0, 0, 240, SPIRIT, 1);
+          this.dots(e.x, e.y, 6, 90, SPIRIT, 20, 0.6, 0.2);
+        } else {
+          this.cone(e.x, e.y, 8, 0, 0, 0, 200, TEAL, 0.9);
+        }
+        for (let i = 0; i < 7; i++) {
+          this.emit(this.wispRing, this.burstNormal, B_WISP, e.x + r.range(-16, 16), e.y + r.range(-10, 10), r.range(-60, 60),
+            -r.range(20, 80), r.range(0.6, 1), r.range(0.35, 0.6), DARK, 0.65, 2.2, -25);
+        }
+        break;
+      case SimEventType.LaunchAim:
+        // The hero's light latches on: motes converge on the target.
+        this.aimX = e.x;
+        this.aimY = e.y;
+        this.gather(e.x, e.y, 16, 55, 105, 0.24, 0.36);
+        break;
+      case SimEventType.Launch: {
+        // A radial light burst where the aim held (the LaunchAim that preceded this Launch, never
+        // LaunchView: a regrab later in the same frame has already overwritten it).
+        const bx = Number.isNaN(this.aimX) ? frame.sim.launch.targetX : this.aimX;
+        const by = Number.isNaN(this.aimY) ? frame.sim.launch.targetY : this.aimY;
+        this.launchBurst.x = bx;
+        this.launchBurst.y = by;
+        this.sparks(bx, by, 18, 340, SPIRIT, true);
+        this.dots(bx, by, 10, 150, TEAL, 0, 0.55, 0.22);
+        this.emit(this.starRing, this.burstAdd, B_STAR, bx, by, 0, 0, 0.35, 0.7, SPIRIT, 1, 0, 0);
+        // Push-off spray from the hero, opposite the launch.
+        const ca = Math.cos(e.a);
+        const sa = Math.sin(e.a);
+        const cy = e.y - p.height * 0.5;
+        for (let i = 0; i < 8; i++) {
+          const v = r.range(90, 240);
+          const j = r.range(-0.5, 0.5);
+          this.emit(this.dotRing, this.burstAdd, B_DOT, e.x, cy, (-ca + j * sa) * v, (-sa - j * ca) * v, r.range(0.25, 0.45),
+            r.range(0.14, 0.24), i % 3 === 0 ? TEAL : SPIRIT, 0.9, 3, 0);
+        }
+        break;
+      }
+      case SimEventType.LaunchFizzle:
+        // Nothing in reach: the light flickers and gutters out.
+        for (let i = 0; i < 7; i++) {
+          const a = r.range(0, 6.283);
+          const v = r.range(20, 60);
+          this.emit(this.dotRing, this.burstAdd, B_DOT, e.x + Math.cos(a) * 10, e.y + Math.sin(a) * 10, Math.cos(a) * v, Math.sin(a) * v - 10,
+            r.range(0.2, 0.34), r.range(0.1, 0.16), SPIRIT, 0.45, 4, 0);
+        }
+        break;
+      case SimEventType.AbilityUnlocked: {
+        // The lantern-seed gives up its light: a bloom centred on the seed (e.y is the shrine's bottom centre).
+        const cy = e.y + SHRINE_ART.seedY;
+        this.sparks(e.x, cy, 16, 300, SPIRIT, true);
+        this.dots(e.x, cy, 30, 150, SPIRIT, 70, 1.6, 0.26);
+        this.dots(e.x, cy, 14, 110, TEAL, 50, 1.4, 0.22);
+        for (let i = 0; i < 10; i++) {
+          const a = (i / 10) * 6.283;
+          this.emit(this.starRing, this.burstAdd, B_STAR, e.x, cy, Math.cos(a) * 150, Math.sin(a) * 150, r.range(0.6, 0.9),
+            r.range(0.3, 0.45), i % 2 === 0 ? SPIRIT : WARM_WHITE, 1, 2.6, 0);
+        }
+        break;
+      }
       default:
         break;
     }
   }
 
-  private gather(x: number, y: number): void {
+  /** Motes placed on a ring that converge on (x, y). */
+  private gather(x: number, y: number, n = 22, r0 = 110, r1 = 180, ttl0 = 0.55, ttl1 = 0.8): void {
     const r = this.rng;
-    for (let i = 0; i < 22; i++) {
-      const a = (i / 22) * 6.283 + r.range(-0.12, 0.12);
-      const rad = r.range(110, 180);
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * 6.283 + r.range(-0.12, 0.12);
+      const rad = r.range(r0, r1);
       const m = this.emit(this.dotRing, this.burstAdd, B_GATHER, x + Math.cos(a) * rad, y + Math.sin(a) * rad * 0.8, 0, 0,
-        r.range(0.55, 0.8), r.range(0.18, 0.3), i % 4 === 0 ? TEAL : SPIRIT, 1, 0, 0);
+        r.range(ttl0, ttl1), r.range(0.18, 0.3), i % 4 === 0 ? TEAL : SPIRIT, 1, 0, 0);
       if (!m) continue;
       m.a = x;
       m.b = y;
@@ -581,11 +745,15 @@ export class ParticlesView implements RenderView {
     }
   }
 
-  private updateBursts(pool: Mote[], dt: number): number {
+  /** Age every live burst particle on its own clock (PARTICLE_CLOCK). */
+  private updateBursts(pool: Mote[]): number {
+    const worldDt = this.worldDt;
+    const realDt = this.realDt;
     let live = 0;
     for (let i = 0; i < pool.length; i++) {
       const m = pool[i] as Mote;
       if (m.life <= 0) continue;
+      const dt = m.clock === PARTICLE_CLOCK.real ? realDt : worldDt;
       m.life -= dt;
       if (m.life <= 0) {
         hide(m);
@@ -640,9 +808,10 @@ export class ParticlesView implements RenderView {
     return live;
   }
 
-  /** Continuous emitters driven by the player's state (dash trail, wall-slide dust). */
+  /** Continuous emitters driven by the player's state (dash trail, wall-slide dust), on the real clock. */
   private emitContinuous(frame: FrameInfo): void {
     const p = frame.sim.player;
+    this.emitClock = PARTICLE_CLOCK.real;
     if (!p.alive || !p.visible) {
       this.trailClock = 0;
       this.slideClock = 0;
@@ -689,11 +858,14 @@ export class ParticlesView implements RenderView {
       this.lastSnap = snap;
       this.seedAmbient();
     }
-    const dt = frame.dt;
-    const t = frame.time % 3600;
     this.emitContinuous(frame);
-    let live = this.updateAmbient(dt, t);
-    this.liveBursts = this.updateBursts(this.burstAdd, dt) + this.updateBursts(this.burstNormal, dt);
+    // Ambient motes, fireflies, dust and leaves live on the world clock. The clocks go through fields, so
+    // the per-pool calls pass no fractional numbers (§6).
+    this.worldDt = frame.worldDt;
+    this.realDt = frame.dt;
+    this.worldT = frame.worldTime % 3600;
+    let live = this.updateAmbient();
+    this.liveBursts = this.updateBursts(this.burstAdd) + this.updateBursts(this.burstNormal);
     live += this.liveBursts;
     ctx.stats.particles += live;
     // Particles are small; charge a flat per-particle fill estimate (≈ 24 × 24 u each).

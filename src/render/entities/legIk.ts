@@ -13,7 +13,7 @@ export interface Point {
 export function solveTwoBone(hx: number, hy: number, fx: number, fy: number, l1: number, l2: number, bend: number, out: Point): Point {
   const dx = fx - hx;
   const dy = fy - hy;
-  const dist = Math.hypot(dx, dy);
+  const dist = Math.sqrt(dx * dx + dy * dy);
   const base = Math.atan2(dy, dx);
   const d = Math.min(l1 + l2 - 1e-6, Math.max(Math.abs(l1 - l2) + 1e-6, dist));
   const cos = (l1 * l1 + d * d - l2 * l2) / (2 * l1 * d);
