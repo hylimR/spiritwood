@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vitest/config';
+import { spiritwoodArt } from './tools/art/vite-plugin.ts';
 
 /** Self-host PixiJS's KTX2 (libktx) transcoder at transcoders/ktx/ for dev and build. */
 function ktxTranscoder(): Plugin {
@@ -27,7 +28,7 @@ function ktxTranscoder(): Plugin {
 
 export default defineConfig({
   base: './',
-  plugins: [ktxTranscoder()],
+  plugins: [ktxTranscoder(), spiritwoodArt()],
   build: {
     target: 'es2022',
     assetsInlineLimit: 0,

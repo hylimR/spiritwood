@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
+import { pathnameOf, plateTextureBorder } from '../../../src/assets/plateLayout.ts';
 import type { LayerManifest, PlateLayerDef } from '../../../src/contracts/assets.ts';
 import { CHUNK, planPlate, plateManifest, PLATE_SEED } from '../../plates/plan.ts';
 import { chunkHulls, paintTreeline, type PlateImage } from '../../plates/paint.ts';
@@ -52,11 +53,28 @@ export async function decodeKtx2(bytes: Uint8Array): Promise<{ width: number; he
   }
 }
 
-async function decodeFile(path: string, format: PlateFormat): Promise<Uint8Array> {
+async function decodeFile(path: string, format: PlateFormat): Promise<{ rgba: Uint8Array; width: number; height: number }> {
   const bytes = new Uint8Array(readFileSync(path));
-  if (format === 'ktx2') return (await decodeKtx2(bytes)).rgba;
-  const { data } = await sharp(bytes).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  if (format === 'ktx2') {
+    const k = await decodeKtx2(bytes);
+    return { rgba: k.rgba, width: k.width, height: k.height };
+  }
+  const { data, info } = await sharp(bytes).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  return { rgba: new Uint8Array(data.buffer, data.byteOffset, data.byteLength), width: info.width, height: info.height };
+}
+
+/** The chunk's content (chunkSize) without the duplicated border the bake adds for filtering (§5.8). */
+function cropBorder(def: PlateLayerDef, img: { rgba: Uint8Array; width: number; height: number }, path: string): Uint8Array {
+  const border = plateTextureBorder(def, img.width, img.height);
+  if (border === null) throw new Error(`${path}: ${img.width}×${img.height} does not fit chunkSize ${def.chunkSize.join('×')}`);
+  if (border === 0) return img.rgba;
+  const [w, h] = def.chunkSize;
+  const out = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    const from = ((y + border) * img.width + border) * 4;
+    out.set(img.rgba.subarray(from, from + w * 4), y * w * 4);
+  }
+  return out;
 }
 
 /** Decode every chunk of the manifest's plate layers in `format` (falling back like the loader). */
@@ -69,7 +87,8 @@ export async function loadBakedPlates(manifest: LayerManifest, format: PlateForm
       const f: PlateFormat = c.source[format] ? format : c.source.webp ? 'webp' : 'png';
       const rel = c.source[f];
       if (!rel) continue;
-      chunks.push({ col: c.col, row: c.row, rgba: await decodeFile(fileURLToPath(new URL(rel, LAYERS)), f), straight: f === 'ktx2' });
+      const path = fileURLToPath(new URL(pathnameOf(rel), LAYERS));
+      chunks.push({ col: c.col, row: c.row, rgba: cropBorder(def, await decodeFile(path, f), path), straight: f === 'ktx2' });
     }
     out.set(def.id, preparePlate(def, chunks));
   }

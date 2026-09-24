@@ -3,6 +3,7 @@ import 'pixi.js/ktx2';
 import type { TextureSourceDef } from '../contracts/assets.ts';
 import { evalAllowed } from '../core/csp.ts';
 import type { TextureBudget } from '../contracts/render.ts';
+import { PLATE_LOAD_TIMEOUT_MS } from './plateLayout.ts';
 
 export interface TextureFormatSupport {
   /** GPU can sample a Basis/KTX2 transcode target (BC7/BC3/ETC2/ASTC) and the CSP lets the transcoder run. */
@@ -65,30 +66,88 @@ function configureKtx2(): void {
  * chunk would stay 'loading' forever and the WebP/PNG fallback would never run.
  */
 export const KTX2_TIMEOUT_MS = 12000;
+/** Every other image load has a deadline too (§5.8): a plate whose chunk never arrives fails. */
+export const IMAGE_TIMEOUT_MS = PLATE_LOAD_TIMEOUT_MS;
 
-/** Assets.load with a deadline; a result that arrives after the deadline is unloaded again. */
+/**
+ * Who uses a URL. Pixi's Assets cache hands every loader of one URL the same Texture, and
+ * `Assets.unload(url)` destroys it for all of them, so a URL is unloaded only when nobody holds it
+ * (`leases`) and no load of it is still pending (`pending`): an old owner (an evicted chunk, a timed-out
+ * load, a layer generation replaced by hot reload) can never unload a texture a newer owner uses.
+ */
+interface UrlUse {
+  leases: number;
+  pending: number;
+}
+const uses = new Map<string, UrlUse>();
+
+function use(url: string): UrlUse {
+  let u = uses.get(url);
+  if (!u) {
+    u = { leases: 0, pending: 0 };
+    uses.set(url, u);
+  }
+  return u;
+}
+
+function unloadIfUnused(url: string): void {
+  const u = uses.get(url);
+  if (u && (u.leases > 0 || u.pending > 0)) return;
+  uses.delete(url);
+  void Assets.unload(url);
+}
+
+/** Leases and pending loads of a URL (tests, debug). */
+export function textureUrlUse(url: string): { leases: number; pending: number } {
+  const u = uses.get(url);
+  return { leases: u?.leases ?? 0, pending: u?.pending ?? 0 };
+}
+
+/** URLs with a lease or a pending load (tests, debug): nothing else is tracked. */
+export function trackedTextureUrls(): number {
+  return uses.size;
+}
+
+/** Forget a URL nobody holds or awaits (its entry is recreated by the next load). */
+function forgetIfIdle(url: string, u: UrlUse): void {
+  if (u.leases === 0 && u.pending === 0 && uses.get(url) === u) uses.delete(url);
+}
+
+/**
+ * Assets.load with a deadline; the result is a lease on the URL (release it with
+ * unloadTextureSource). A texture that arrives after the deadline is unloaded unless someone else
+ * holds or awaits the same URL.
+ */
 function loadWithTimeout(url: string, ms: number): Promise<Texture> {
+  const u = use(url);
+  u.pending++;
   return new Promise<Texture>((resolve, reject) => {
     let settled = false;
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
+      u.pending--;
+      forgetIfIdle(url, u);
       reject(new Error(`timed out after ${ms} ms`));
     }, ms);
     Assets.load<Texture>(url).then(
       (texture) => {
         if (settled) {
-          void Assets.unload(url);
+          unloadIfUnused(url);
           return;
         }
         settled = true;
         clearTimeout(timer);
+        u.pending--;
+        u.leases++;
         resolve(texture);
       },
       (err: unknown) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        u.pending--;
+        forgetIfIdle(url, u);
         reject(err);
       },
     );
@@ -104,12 +163,14 @@ export function textureBytes(texture: Texture): number {
 }
 
 /**
- * Load a file-backed texture and register its bytes in `budget` under `key`. KTX2 goes through
- * `import 'pixi.js/ktx2'` with the transcoder served/emitted by the vite.config.ts plugin at
- * `transcoders/ktx/` (never copy it into public/). Call `setKTXTranscoderPath` once with ABSOLUTE urls
- * (`new URL('transcoders/ktx/libktx.js', document.baseURI).href`, same for .wasm): Pixi's worker
- * resolves relative paths against location.origin. On a KTX2 failure, fall back to WebP/PNG for that
- * chunk and disable KTX2 for the session. Returns the resolved URL (needed to unload).
+ * Load a file-backed texture and register its bytes in `budget` under `key` (plates put their layer
+ * generation in the key). KTX2 goes through `import 'pixi.js/ktx2'` with the transcoder served/emitted
+ * by the vite.config.ts plugin at `transcoders/ktx/` (never copy it into public/). Call
+ * `setKTXTranscoderPath` once with ABSOLUTE urls (`new URL('transcoders/ktx/libktx.js',
+ * document.baseURI).href`, same for .wasm): Pixi's worker resolves relative paths against
+ * location.origin. On a KTX2 failure, fall back to WebP/PNG for that chunk and disable KTX2 for the
+ * session. Every load has a deadline. Returns the resolved URL: the caller holds a lease on it until
+ * unloadTextureSource.
  */
 export async function loadTextureSource(
   src: TextureSourceDef, baseUrl: string, support: TextureFormatSupport, budget: TextureBudget, key: string,
@@ -129,13 +190,21 @@ export async function loadTextureSource(
       return loadTextureSource(src, baseUrl, { ...support, ktx2: false }, budget, key);
     }
   }
-  const texture = await Assets.load<Texture>(url);
+  const texture = await loadWithTimeout(url, IMAGE_TIMEOUT_MS);
   budget.set(key, textureBytes(texture));
   return { texture, url };
 }
 
-/** Release via `Assets.unload(url)` (clears Pixi's loader cache too) and remove from the budget. */
+/**
+ * Remove `key` from the budget and give up this lease on `url`; the texture is unloaded (Assets.unload,
+ * which clears Pixi's loader cache too) once no lease or pending load remains.
+ */
 export async function unloadTextureSource(url: string, budget: TextureBudget, key: string): Promise<void> {
   budget.remove(key);
+  const u = uses.get(url);
+  if (!u || u.leases <= 0) return;
+  u.leases--;
+  if (u.leases > 0 || u.pending > 0) return;
+  uses.delete(url);
   await Assets.unload(url);
 }

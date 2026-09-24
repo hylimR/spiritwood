@@ -25,6 +25,14 @@ const PIXI_DIR = join(ROOT, 'node_modules/pixi.js');
 /** Data files the page embeds, by the path the game requests them at. */
 export const EMBEDDED_PATHS = [GAME_DATA.level, GAME_DATA.manifest] as const;
 /**
+ * The public file each embedded path is read from. The page gets the hand-edited base manifest: it has no
+ * plate layers and keeps every layer a plate would replace (§5.8), since the page ships no image files.
+ */
+export const EMBEDDED_SOURCES: Readonly<Record<(typeof EMBEDDED_PATHS)[number], string>> = {
+  [GAME_DATA.level]: GAME_DATA.level,
+  [GAME_DATA.manifest]: 'layers/forest.base.manifest.json',
+};
+/**
  * Bundle-time stand-ins for pixi.js subpaths. KTX2 never runs without eval. The CDN unsafe-eval script
  * installs itself on load, except that (pixi.js 8.21.0) it patches a private copy of ParticleBuffer
  * instead of PIXI.ParticleBuffer, so particle updates would still call `new Function`: patch the real one.
@@ -210,7 +218,9 @@ async function main(): Promise<void> {
   assertNoProblems('bundle', checkShippedBundle(code));
   const files: Record<string, string> = {};
   // Both are JSON read with res.json(); compacting drops the pretty-printing (~54 KB of the level).
-  for (const path of EMBEDDED_PATHS) files[path] = JSON.stringify(JSON.parse(readFileSync(join(ROOT, 'public', path), 'utf8')));
+  for (const path of EMBEDDED_PATHS) {
+    files[path] = JSON.stringify(JSON.parse(readFileSync(join(ROOT, 'public', EMBEDDED_SOURCES[path]), 'utf8')));
+  }
 
   const page = assemblePage({ indexHtml: readFileSync(join(ROOT, 'index.html'), 'utf8'), cdn, files, code });
   writeFileSync(join(out, 'index.html'), page);

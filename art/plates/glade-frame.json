@@ -1,0 +1,13 @@
+{
+  "_note": "Stand-in painted by tools/art/paint-example.ts: an ancient tree whose bough arches over the glade, between L5 and L6 on the value ramp.",
+  "parallax": [0.6, 0.6],
+  "replaces": null,
+  "origin": [-471, -240],
+  "texelScale": 2,
+  "minQuality": "medium",
+  "fog": 0.243,
+  "fogColor": "#15304a",
+  "desaturate": 0.057,
+  "tint": "#ffffff",
+  "area": "glade"
+}
