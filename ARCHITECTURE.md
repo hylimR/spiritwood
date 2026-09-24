@@ -1253,13 +1253,18 @@ remainder goes to glade. Each area has a mode, a chord cycle, a density and timb
 
 - **Harmony:**
   - All moods share one transport: tempo, bar grid and tonic.
-  - Layer gains follow the area weights, smoothed with τ = 1.5 s.
+  - Layer gains follow the area weights, smoothed with τ = 1.5 s. Each layer's note density also scales
+    with its smoothed weight, so a two-area blend doesn't double the notes or force voice steals.
   - Mode and chord follow the dominant area. They change only on a bar line, and only when the new
     area's weight beats the current one by 0.2.
   - Every sounding layer takes its notes from the current harmony, so two harmonic engines never clash
     at a boundary.
 - **Scheduler:** a lookahead scheduler inside `update()` (no timers).
   - It books notes in (currentTime + lead, currentTime + 0.25], with lead = max(0.03, 2·baseLatency).
+    Ornaments (drips, grace notes) may sit up to 0.2 s after the step that books them. They are booked
+    once with that step, so they can never burst after a stall.
+  - SFX don't use that lead: they start at currentTime + 6 ms (two render quanta at 48 kHz), so attacks
+    stay intact and jumps feel instant.
   - A lane that has fallen behind skips to its next step boundary: missed notes are dropped, never
     played late or in a burst.
   - Nothing is booked unless the context is running.
@@ -1282,7 +1287,9 @@ remainder goes to glade. Each area has a mode, a chord cycle, a density and timb
   s.
   - They are built in slices of ≤ 2 ms per `update()`.
   - Patches whose buffer isn't ready yet are skipped.
-  - The convolver's internal copies count toward the budget.
+  - The budget counts the JS-visible buffers plus one copy of the impulse. Browsers keep more
+    internal FFT state per convolver (Chromium ≈ 10 floats per impulse sample per channel, ≈ 4 MB for
+    a 1 s stereo impulse). That is accepted and counted in §6.
 
 #### Tests
 
@@ -1332,7 +1339,7 @@ High features with pixel-ratio cap 1 and dynamic resolution.
 | M2 fill | Seeds, trails, rings and the arrow ≤ 0.05 screens; the freeze grade adds ALU only in the composite. Terrain core ≤ 10 value-noise lookups per fragment. |
 | M2 CPU | Launch candidate search + seeds ≤ 0.1 ms per step (≤ `MAX_PROJECTILES` seeds, LOS walk only for in-range targets). Audio `update()` ≤ 0.3 ms per frame average (`stats.updateMs`). |
 | M2 audio thread | ≤ 34 budgeted voices (SFX 16, music 12, ambience 6) plus the beds, one compressor and one ≤ 1.5 s convolver: ≈ 20–30 % of one core by the offline measurement, which is indicative only. Music pans and filters per bus, not per voice. |
-| M2 memory | Painted plates count toward `textureBudgetMB` through one shared streamer (the bake enforces the worst case, RGBA8 4·w·h per chunk); audio buffers ≤ 1 MB at 48 kHz, including the convolver's copies; no new atlases. |
+| M2 memory | Painted plates count toward `textureBudgetMB` through one shared streamer (the bake enforces the worst case, RGBA8 4·w·h per chunk); audio buffers ≤ 1 MB at 48 kHz (JS-visible buffers plus one impulse copy), and the convolver's internal FFT state (≈ 4 MB in Chromium for the 1 s stereo impulse) is accepted; no new atlases. |
 
 **Verification.** The debug overlay (F3) shows fps (average and 1% low), late-frame %, frame, sim and render CPU ms,
 GPU ms (timer query), draw calls, estimated fill (sum of on-screen mesh bounds ÷ screen area), render
