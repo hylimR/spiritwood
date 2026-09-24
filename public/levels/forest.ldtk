@@ -1,0 +1,3145 @@
+{
+	"__header__": {
+		"fileType": "LDtk Project JSON",
+		"app": "LDtk",
+		"doc": "https://ldtk.io/json",
+		"schema": "https://ldtk.io/files/JSON_SCHEMA.json",
+		"appAuthor": "Sebastien 'deepnight' Benard",
+		"appVersion": "1.5.3",
+		"url": "https://ldtk.io"
+	},
+	"iid": "d0eefada-955b-4337-b898-293094b54e9d",
+	"jsonVersion": "1.5.3",
+	"appBuildId": 473702,
+	"nextUid": 41,
+	"identifierStyle": "Free",
+	"toc": [],
+	"worldLayout": "Free",
+	"worldGridWidth": 9600,
+	"worldGridHeight": 2400,
+	"defaultLevelWidth": 9600,
+	"defaultLevelHeight": 2400,
+	"defaultPivotX": 0.5,
+	"defaultPivotY": 1,
+	"defaultGridSize": 48,
+	"defaultEntityWidth": 48,
+	"defaultEntityHeight": 48,
+	"bgColor": "#040A16",
+	"defaultLevelBgColor": "#0B1A2E",
+	"minifyJson": false,
+	"externalLevels": false,
+	"exportTiled": false,
+	"simplifiedExport": false,
+	"imageExportMode": "None",
+	"exportLevelBg": true,
+	"pngFilePattern": null,
+	"backupOnSave": false,
+	"backupLimit": 10,
+	"backupRelPath": null,
+	"levelNamePattern": "Level_%idx",
+	"tutorialDesc": null,
+	"customCommands": [],
+	"flags": [],
+	"defs": {
+		"layers": [
+			{
+				"__type": "Entities",
+				"identifier": "Entities",
+				"type": "Entities",
+				"uid": 2,
+				"doc": "Gameplay and decor entities.",
+				"uiColor": "#BFF6FF",
+				"gridSize": 24,
+				"guideGridWid": 0,
+				"guideGridHei": 0,
+				"displayOpacity": 1,
+				"inactiveOpacity": 1,
+				"hideInList": false,
+				"hideFieldsWhenInactive": true,
+				"canSelectWhenInactive": true,
+				"renderInWorldView": true,
+				"pxOffsetX": 0,
+				"pxOffsetY": 0,
+				"parallaxFactorX": 0,
+				"parallaxFactorY": 0,
+				"parallaxScaling": true,
+				"requiredTags": [],
+				"excludedTags": [],
+				"autoTilesKilledByOtherLayerUid": null,
+				"uiFilterTags": [],
+				"useAsyncRender": false,
+				"intGridValues": [],
+				"intGridValuesGroups": [],
+				"autoRuleGroups": [],
+				"autoSourceLayerDefUid": null,
+				"tilesetDefUid": null,
+				"tilePivotX": 0,
+				"tilePivotY": 0,
+				"biomeFieldUid": null
+			},
+			{
+				"__type": "IntGrid",
+				"identifier": "Collision",
+				"type": "IntGrid",
+				"uid": 3,
+				"doc": "1 Solid, 2 OneWay (solid from above), 3 Thorns (hazard).",
+				"uiColor": "#1F4A63",
+				"gridSize": 48,
+				"guideGridWid": 0,
+				"guideGridHei": 0,
+				"displayOpacity": 1,
+				"inactiveOpacity": 0.6,
+				"hideInList": false,
+				"hideFieldsWhenInactive": false,
+				"canSelectWhenInactive": true,
+				"renderInWorldView": true,
+				"pxOffsetX": 0,
+				"pxOffsetY": 0,
+				"parallaxFactorX": 0,
+				"parallaxFactorY": 0,
+				"parallaxScaling": true,
+				"requiredTags": [],
+				"excludedTags": [],
+				"autoTilesKilledByOtherLayerUid": null,
+				"uiFilterTags": [],
+				"useAsyncRender": false,
+				"intGridValues": [
+					{
+						"value": 1,
+						"identifier": "Solid",
+						"color": "#34495E",
+						"tile": null,
+						"groupUid": 0
+					},
+					{
+						"value": 2,
+						"identifier": "OneWay",
+						"color": "#3FE0C5",
+						"tile": null,
+						"groupUid": 0
+					},
+					{
+						"value": 3,
+						"identifier": "Thorns",
+						"color": "#FF4D6D",
+						"tile": null,
+						"groupUid": 0
+					}
+				],
+				"intGridValuesGroups": [],
+				"autoRuleGroups": [],
+				"autoSourceLayerDefUid": null,
+				"tilesetDefUid": null,
+				"tilePivotX": 0,
+				"tilePivotY": 0,
+				"biomeFieldUid": null
+			}
+		],
+		"entities": [
+			{
+				"identifier": "PlayerStart",
+				"uid": 10,
+				"tags": [],
+				"exportToToc": false,
+				"allowOutOfBounds": false,
+				"doc": "Player spawn (feet).",
+				"width": 28,
+				"height": 58,
+				"resizableX": false,
+				"resizableY": false,
+				"minWidth": null,
+				"maxWidth": null,
+				"minHeight": null,
+				"maxHeight": null,
+				"keepAspectRatio": false,
+				"tileOpacity": 1,
+				"fillOpacity": 1,
+				"lineOpacity": 1,
+				"hollow": false,
+				"color": "#BFF6FF",
+				"renderMode": "Rectangle",
+				"showName": true,
+				"tilesetId": null,
+				"tileRenderMode": "FitInside",
+				"tileRect": null,
+				"uiTileRect": null,
+				"nineSliceBorders": [],
+				"maxCount": 1,
+				"limitScope": "PerLevel",
+				"limitBehavior": "MoveLastOne",
+				"pivotX": 0.5,
+				"pivotY": 1,
+				"fieldDefs": []
+			},
+			{
+				"identifier": "Orb",
+				"uid": 11,
+				"tags": [],
+				"exportToToc": false,
+				"allowOutOfBounds": false,
+				"doc": "Spirit orb (centre).",
+				"width": 24,
+				"height": 24,
+				"resizableX": false,
+				"resizableY": false,
+				"minWidth": null,
+				"maxWidth": null,
+				"minHeight": null,
+				"maxHeight": null,
+				"keepAspectRatio": false,
+				"tileOpacity": 1,
+				"fillOpacity": 1,
+				"lineOpacity": 1,
+				"hollow": false,
+				"color": "#BFF6FF",
+				"renderMode": "Ellipse",
+				"showName": true,
+				"tilesetId": null,
+				"tileRenderMode": "FitInside",
+				"tileRect": null,
+				"uiTileRect": null,
+				"nineSliceBorders": [],
+				"maxCount": 0,
+				"limitScope": "PerLevel",
+				"limitBehavior": "MoveLastOne",
+				"pivotX": 0.5,
+				"pivotY": 0.5,
+				"fieldDefs": [
+					{
+						"identifier": "value",
+						"doc": "Orbs this pickup counts for.",
+						"__type": "Int",
+						"uid": 20,
+						"type": "F_Int",
+						"isArray": false,
+						"canBeNull": false,
+						"arrayMinLength": null,
+						"arrayMaxLength": null,
+						"editorDisplayMode": "NameAndValue",
+						"editorDisplayScale": 1,
+						"editorDisplayPos": "Above",
+						"editorLinkStyle": "StraightArrow",
+						"editorDisplayColor": null,
+						"editorAlwaysShow": false,
+						"editorShowInWorld": true,
+						"editorCutLongValues": true,
+						"editorTextSuffix": null,
+						"editorTextPrefix": null,
+						"useForSmartColor": false,
+						"exportToToc": false,
+						"searchable": false,
+						"min": 1,
+						"max": null,
+						"regex": null,
+						"acceptFileTypes": null,
+						"defaultOverride": {
+							"id": "V_Int",
+							"params": [1]
+						},
+						"textLanguageMode": null,
+						"symmetricalRef": false,
+						"autoChainRef": false,
+						"allowOutOfLevelRef": true,
+						"allowedRefs": "OnlySame",
+						"allowedRefsEntityUid": null,
+						"allowedRefTags": [],
+						"tilesetUid": null
+					}
+				]
+			},
+			{
+				"identifier": "Checkpoint",
+				"uid": 12,
+				"tags": [],
+				"exportToToc": false,
+				"allowOutOfBounds": false,
+				"doc": "Touch to activate; respawn at the bottom-centre.",
+				"width": 48,
+				"height": 96,
+				"resizableX": true,
+				"resizableY": true,
+				"minWidth": null,
+				"maxWidth": null,
+				"minHeight": null,
+				"maxHeight": null,
+				"keepAspectRatio": false,
+				"tileOpacity": 1,
+				"fillOpacity": 0.08,
+				"lineOpacity": 1,
+				"hollow": true,
+				"color": "#3FE0C5",
+				"renderMode": "Rectangle",
+				"showName": true,
+				"tilesetId": null,
+				"tileRenderMode": "FitInside",
+				"tileRect": null,
+				"uiTileRect": null,
+				"nineSliceBorders": [],
+				"maxCount": 0,
+				"limitScope": "PerLevel",
+				"limitBehavior": "MoveLastOne",
+				"pivotX": 0,
+				"pivotY": 0,
+				"fieldDefs": []
+			},
+			{
+				"identifier": "Enemy",
+				"uid": 13,
+				"tags": [],
+				"exportToToc": false,
+				"allowOutOfBounds": false,
+				"doc": "Gloomcrawler. Width = patrol span; spawns at the centre, feet on the bottom edge.",
+				"width": 480,
+				"height": 44,
+				"resizableX": true,
+				"resizableY": false,
+				"minWidth": null,
+				"maxWidth": null,
+				"minHeight": null,
+				"maxHeight": null,
+				"keepAspectRatio": false,
+				"tileOpacity": 1,
+				"fillOpacity": 0.08,
+				"lineOpacity": 1,
+				"hollow": true,
+				"color": "#FF4D6D",
+				"renderMode": "Rectangle",
+				"showName": true,
+				"tilesetId": null,
+				"tileRenderMode": "FitInside",
+				"tileRect": null,
+				"uiTileRect": null,
+				"nineSliceBorders": [],
+				"maxCount": 0,
+				"limitScope": "PerLevel",
+				"limitBehavior": "MoveLastOne",
+				"pivotX": 0.5,
+				"pivotY": 1,
+				"fieldDefs": [
+					{
+						"identifier": "speed",
+						"doc": "Patrol speed (px/s). The entity width is the patrol span.",
+						"__type": "Float",
+						"uid": 21,
+						"type": "F_Float",
+						"isArray": false,
+						"canBeNull": false,
+						"arrayMinLength": null,
+						"arrayMaxLength": null,
+						"editorDisplayMode": "NameAndValue",
+						"editorDisplayScale": 1,
+						"editorDisplayPos": "Above",
+						"editorLinkStyle": "StraightArrow",
+						"editorDisplayColor": null,
+						"editorAlwaysShow": false,
+						"editorShowInWorld": true,
+						"editorCutLongValues": true,
+						"editorTextSuffix": null,
+						"editorTextPrefix": null,
+						"useForSmartColor": false,
+						"exportToToc": false,
+						"searchable": false,
+						"min": 0,
+						"max": null,
+						"regex": null,
+						"acceptFileTypes": null,
+						"defaultOverride": {
+							"id": "V_Float",
+							"params": [90]
+						},
+						"textLanguageMode": null,
+						"symmetricalRef": false,
+						"autoChainRef": false,
+						"allowOutOfLevelRef": true,
+						"allowedRefs": "OnlySame",
+						"allowedRefsEntityUid": null,
+						"allowedRefTags": [],
+						"tilesetUid": null
+					}
+				]
+			},
+			{
+				"identifier": "Goal",
+				"uid": 14,
+				"tags": [],
+				"exportToToc": false,
+				"allowOutOfBounds": false,
+				"doc": "Moonwell shrine.",
+				"width": 144,
+				"height": 192,
+				"resizableX": true,
+				"resizableY": true,
+				"minWidth": null,
+				"maxWidth": null,
+				"minHeight": null,
+				"maxHeight": null,
+				"keepAspectRatio": false,
+				"tileOpacity": 1,
+				"fillOpacity": 1,
+				"lineOpacity": 1,
+				"hollow": false,
+				"color": "#FFB45A",
+				"renderMode": "Rectangle",
+				"showName": true,
+				"tilesetId": null,
+				"tileRenderMode": "FitInside",
+				"tileRect": null,
+				"uiTileRect": null,
+				"nineSliceBorders": [],
+				"maxCount": 1,
+				"limitScope": "PerLevel",
+				"limitBehavior": "MoveLastOne",
+				"pivotX": 0,
+				"pivotY": 0,
+				"fieldDefs": []
+			},
+			{
+				"identifier": "LightShaft",
+				"uid": 15,
+				"tags": [],
+				"exportToToc": false,
+				"allowOutOfBounds": false,
+				"doc": "Top aperture (x, y, width) and vertical length (height).",
+				"width": 144,
+				"height": 480,
+				"resizableX": true,
+				"resizableY": true,
+				"minWidth": null,
+				"maxWidth": null,
+				"minHeight": null,
+				"maxHeight": null,
+				"keepAspectRatio": false,
+				"tileOpacity": 1,
+				"fillOpacity": 0.08,
+				"lineOpacity": 1,
+				"hollow": true,
+				"color": "#D8F3FF",
+				"renderMode": "Rectangle",
+				"showName": true,
+				"tilesetId": null,
+				"tileRenderMode": "FitInside",
+				"tileRect": null,
+				"uiTileRect": null,
+				"nineSliceBorders": [],
+				"maxCount": 0,
+				"limitScope": "PerLevel",
+				"limitBehavior": "MoveLastOne",
+				"pivotX": 0,
+				"pivotY": 0,
+				"fieldDefs": [
+					{
+						"identifier": "angleDeg",
+						"doc": "Lean from vertical in degrees; positive leans the bottom right.",
+						"__type": "Float",
+						"uid": 22,
+						"type": "F_Float",
+						"isArray": false,
+						"canBeNull": false,
+						"arrayMinLength": null,
+						"arrayMaxLength": null,
+						"editorDisplayMode": "NameAndValue",
+						"editorDisplayScale": 1,
+						"editorDisplayPos": "Above",
+						"editorLinkStyle": "StraightArrow",
+						"editorDisplayColor": null,
+						"editorAlwaysShow": false,
+						"editorShowInWorld": true,
+						"editorCutLongValues": true,
+						"editorTextSuffix": null,
+						"editorTextPrefix": null,
+						"useForSmartColor": false,
+						"exportToToc": false,
+						"searchable": false,
+						"min": -60,
+						"max": 60,
+						"regex": null,
+						"acceptFileTypes": null,
+						"defaultOverride": {
+							"id": "V_Float",
+							"params": [0]
+						},
+						"textLanguageMode": null,
+						"symmetricalRef": false,
+						"autoChainRef": false,
+						"allowOutOfLevelRef": true,
+						"allowedRefs": "OnlySame",
+						"allowedRefsEntityUid": null,
+						"allowedRefTags": [],
+						"tilesetUid": null
+					},
+					{
+						"identifier": "spread",
+						"doc": "Bottom width as a multiple of the top aperture.",
+						"__type": "Float",
+						"uid": 23,
+						"type": "F_Float",
+						"isArray": false,
+						"canBeNull": false,
+						"arrayMinLength": null,
+						"arrayMaxLength": null,
+						"editorDisplayMode": "NameAndValue",
+						"editorDisplayScale": 1,
+						"editorDisplayPos": "Above",
+						"editorLinkStyle": "StraightArrow",
+						"editorDisplayColor": null,
+						"editorAlwaysShow": false,
+						"editorShowInWorld": true,
+						"editorCutLongValues": true,
+						"editorTextSuffix": null,
+						"editorTextPrefix": null,
+						"useForSmartColor": false,
+						"exportToToc": false,
+						"searchable": false,
+						"min": 0.1,
+						"max": null,
+						"regex": null,
+						"acceptFileTypes": null,
+						"defaultOverride": {
+							"id": "V_Float",
+							"params": [1.6]
+						},
+						"textLanguageMode": null,
+						"symmetricalRef": false,
+						"autoChainRef": false,
+						"allowOutOfLevelRef": true,
+						"allowedRefs": "OnlySame",
+						"allowedRefsEntityUid": null,
+						"allowedRefTags": [],
+						"tilesetUid": null
+					},
+					{
+						"identifier": "intensity",
+						"doc": "Brightness 0..1.",
+						"__type": "Float",
+						"uid": 24,
+						"type": "F_Float",
+						"isArray": false,
+						"canBeNull": false,
+						"arrayMinLength": null,
+						"arrayMaxLength": null,
+						"editorDisplayMode": "NameAndValue",
+						"editorDisplayScale": 1,
+						"editorDisplayPos": "Above",
+						"editorLinkStyle": "StraightArrow",
+						"editorDisplayColor": null,
+						"editorAlwaysShow": false,
+						"editorShowInWorld": true,
+						"editorCutLongValues": true,
+						"editorTextSuffix": null,
+						"editorTextPrefix": null,
+						"useForSmartColor": false,
+						"exportToToc": false,
+						"searchable": false,
+						"min": 0,
+						"max": 1,
+						"regex": null,
+						"acceptFileTypes": null,
+						"defaultOverride": {
+							"id": "V_Float",
+							"params": [0.6]
+						},
+						"textLanguageMode": null,
+						"symmetricalRef": false,
+						"autoChainRef": false,
+						"allowOutOfLevelRef": true,
+						"allowedRefs": "OnlySame",
+						"allowedRefsEntityUid": null,
+						"allowedRefTags": [],
+						"tilesetUid": null
+					}
+				]
+			},
+			{
+				"identifier": "GradeZone",
+				"uid": 16,
+				"tags": [],
+				"exportToToc": false,
+				"allowOutOfBounds": false,
+				"doc": "Area colour grade, cross-faded by `blend` px outside the rect.",
+				"width": 1920,
+				"height": 2400,
+				"resizableX": true,
+				"resizableY": true,
+				"minWidth": null,
+				"maxWidth": null,
+				"minHeight": null,
+				"maxHeight": null,
+				"keepAspectRatio": false,
+				"tileOpacity": 1,
+				"fillOpacity": 0.08,
+				"lineOpacity": 1,
+				"hollow": true,
+				"color": "#1F4A63",
+				"renderMode": "Rectangle",
+				"showName": true,
+				"tilesetId": null,
+				"tileRenderMode": "FitInside",
+				"tileRect": null,
+				"uiTileRect": null,
+				"nineSliceBorders": [],
+				"maxCount": 0,
+				"limitScope": "PerLevel",
+				"limitBehavior": "MoveLastOne",
+				"pivotX": 0,
+				"pivotY": 0,
+				"fieldDefs": [
+					{
+						"identifier": "grade",
+						"doc": "Colour grade of this area.",
+						"__type": "LocalEnum.AreaGrade",
+						"uid": 25,
+						"type": "F_Enum(1)",
+						"isArray": false,
+						"canBeNull": true,
+						"arrayMinLength": null,
+						"arrayMaxLength": null,
+						"editorDisplayMode": "NameAndValue",
+						"editorDisplayScale": 1,
+						"editorDisplayPos": "Above",
+						"editorLinkStyle": "StraightArrow",
+						"editorDisplayColor": null,
+						"editorAlwaysShow": false,
+						"editorShowInWorld": true,
+						"editorCutLongValues": true,
+						"editorTextSuffix": null,
+						"editorTextPrefix": null,
+						"useForSmartColor": false,
+						"exportToToc": false,
+						"searchable": false,
+						"min": null,
+						"max": null,
+						"regex": null,
+						"acceptFileTypes": null,
+						"defaultOverride": null,
+						"textLanguageMode": null,
+						"symmetricalRef": false,
+						"autoChainRef": false,
+						"allowOutOfLevelRef": true,
+						"allowedRefs": "OnlySame",
+						"allowedRefsEntityUid": null,
+						"allowedRefTags": [],
+						"tilesetUid": null
+					},
+					{
+						"identifier": "blend",
+						"doc": "Cross-fade distance outside the rect (px).",
+						"__type": "Int",
+						"uid": 26,
+						"type": "F_Int",
+						"isArray": false,
+						"canBeNull": false,
+						"arrayMinLength": null,
+						"arrayMaxLength": null,
+						"editorDisplayMode": "NameAndValue",
+						"editorDisplayScale": 1,
+						"editorDisplayPos": "Above",
+						"editorLinkStyle": "StraightArrow",
+						"editorDisplayColor": null,
+						"editorAlwaysShow": false,
+						"editorShowInWorld": true,
+						"editorCutLongValues": true,
+						"editorTextSuffix": null,
+						"editorTextPrefix": null,
+						"useForSmartColor": false,
+						"exportToToc": false,
+						"searchable": false,
+						"min": 0,
+						"max": null,
+						"regex": null,
+						"acceptFileTypes": null,
+						"defaultOverride": {
+							"id": "V_Int",
+							"params": [288]
+						},
+						"textLanguageMode": null,
+						"symmetricalRef": false,
+						"autoChainRef": false,
+						"allowOutOfLevelRef": true,
+						"allowedRefs": "OnlySame",
+						"allowedRefsEntityUid": null,
+						"allowedRefTags": [],
+						"tilesetUid": null
+					}
+				]
+			},
+			{
+				"identifier": "Lantern",
+				"uid": 17,
+				"tags": [],
+				"exportToToc": false,
+				"allowOutOfBounds": false,
+				"doc": "Lantern decor hint (anchor).",
+				"width": 32,
+				"height": 48,
+				"resizableX": false,
+				"resizableY": false,
+				"minWidth": null,
+				"maxWidth": null,
+				"minHeight": null,
+				"maxHeight": null,
+				"keepAspectRatio": false,
+				"tileOpacity": 1,
+				"fillOpacity": 1,
+				"lineOpacity": 1,
+				"hollow": false,
+				"color": "#FFB45A",
+				"renderMode": "Ellipse",
+				"showName": true,
+				"tilesetId": null,
+				"tileRenderMode": "FitInside",
+				"tileRect": null,
+				"uiTileRect": null,
+				"nineSliceBorders": [],
+				"maxCount": 0,
+				"limitScope": "PerLevel",
+				"limitBehavior": "MoveLastOne",
+				"pivotX": 0.5,
+				"pivotY": 1,
+				"fieldDefs": []
+			},
+			{
+				"identifier": "Flora",
+				"uid": 18,
+				"tags": [],
+				"exportToToc": false,
+				"allowOutOfBounds": false,
+				"doc": "Glowing flora decor hint (feet).",
+				"width": 32,
+				"height": 48,
+				"resizableX": false,
+				"resizableY": false,
+				"minWidth": null,
+				"maxWidth": null,
+				"minHeight": null,
+				"maxHeight": null,
+				"keepAspectRatio": false,
+				"tileOpacity": 1,
+				"fillOpacity": 1,
+				"lineOpacity": 1,
+				"hollow": false,
+				"color": "#3FE0C5",
+				"renderMode": "Ellipse",
+				"showName": true,
+				"tilesetId": null,
+				"tileRenderMode": "FitInside",
+				"tileRect": null,
+				"uiTileRect": null,
+				"nineSliceBorders": [],
+				"maxCount": 0,
+				"limitScope": "PerLevel",
+				"limitBehavior": "MoveLastOne",
+				"pivotX": 0.5,
+				"pivotY": 1,
+				"fieldDefs": []
+			}
+		],
+		"tilesets": [],
+		"enums": [
+			{
+				"identifier": "AreaGrade",
+				"uid": 1,
+				"values": [
+					{
+						"id": "glade",
+						"tileRect": null,
+						"color": 4186309
+					},
+					{
+						"id": "gully",
+						"tileRect": null,
+						"color": 16731501
+					},
+					{
+						"id": "rootwell",
+						"tileRect": null,
+						"color": 2050659
+					},
+					{
+						"id": "canopy",
+						"tileRect": null,
+						"color": 12580607
+					},
+					{
+						"id": "shrine",
+						"tileRect": null,
+						"color": 16757850
+					}
+				],
+				"iconTilesetUid": null,
+				"externalRelPath": null,
+				"externalFileChecksum": null,
+				"tags": []
+			}
+		],
+		"externalEnums": [],
+		"levelFields": [
+			{
+				"identifier": "seed",
+				"doc": "Seed for procedural placement tied to this level.",
+				"__type": "Int",
+				"uid": 30,
+				"type": "F_Int",
+				"isArray": false,
+				"canBeNull": false,
+				"arrayMinLength": null,
+				"arrayMaxLength": null,
+				"editorDisplayMode": "NameAndValue",
+				"editorDisplayScale": 1,
+				"editorDisplayPos": "Above",
+				"editorLinkStyle": "StraightArrow",
+				"editorDisplayColor": null,
+				"editorAlwaysShow": false,
+				"editorShowInWorld": true,
+				"editorCutLongValues": true,
+				"editorTextSuffix": null,
+				"editorTextPrefix": null,
+				"useForSmartColor": false,
+				"exportToToc": false,
+				"searchable": false,
+				"min": null,
+				"max": null,
+				"regex": null,
+				"acceptFileTypes": null,
+				"defaultOverride": {
+					"id": "V_Int",
+					"params": [0]
+				},
+				"textLanguageMode": null,
+				"symmetricalRef": false,
+				"autoChainRef": false,
+				"allowOutOfLevelRef": true,
+				"allowedRefs": "OnlySame",
+				"allowedRefsEntityUid": null,
+				"allowedRefTags": [],
+				"tilesetUid": null
+			}
+		]
+	},
+	"levels": [
+		{
+			"identifier": "Forest_Night",
+			"iid": "695a0a77-c3e2-4d8e-8ecf-08e18669f3b0",
+			"uid": 40,
+			"worldX": 0,
+			"worldY": 0,
+			"worldDepth": 0,
+			"pxWid": 9600,
+			"pxHei": 2400,
+			"__bgColor": "#0B1A2E",
+			"bgColor": null,
+			"useAutoIdentifier": false,
+			"bgRelPath": null,
+			"bgPos": null,
+			"bgPivotX": 0.5,
+			"bgPivotY": 0.5,
+			"__smartColor": "#8591A0",
+			"__bgPos": null,
+			"externalRelPath": null,
+			"fieldInstances": [
+				{
+					"__identifier": "seed",
+					"__type": "Int",
+					"__value": 20240917,
+					"__tile": null,
+					"defUid": 30,
+					"realEditorValues": [
+						{
+							"id": "V_Int",
+							"params": [20240917]
+						}
+					]
+				}
+			],
+			"layerInstances": [
+				{
+					"__identifier": "Entities",
+					"__type": "Entities",
+					"__cWid": 400,
+					"__cHei": 100,
+					"__gridSize": 24,
+					"__opacity": 1,
+					"__pxTotalOffsetX": 0,
+					"__pxTotalOffsetY": 0,
+					"__tilesetDefUid": null,
+					"__tilesetRelPath": null,
+					"iid": "944e341f-74bf-46d4-84c8-f15118540506",
+					"levelId": 40,
+					"layerDefUid": 2,
+					"pxOffsetX": 0,
+					"pxOffsetY": 0,
+					"visible": true,
+					"optionalRules": [],
+					"intGridCsv": [],
+					"autoLayerTiles": [],
+					"seed": 8068691,
+					"overrideTilesetUid": null,
+					"gridTiles": [],
+					"entityInstances": [
+						{
+							"__identifier": "PlayerStart",
+							"__grid": [9,88],
+							"__pivot": [0.5,1],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "db1c4fc7-e31f-4b8a-988f-c4d57fd3c968",
+							"width": 28,
+							"height": 58,
+							"defUid": 10,
+							"px": [216,2112],
+							"fieldInstances": [],
+							"__worldX": 216,
+							"__worldY": 2112
+						},
+						{
+							"__identifier": "Checkpoint",
+							"__grid": [12,84],
+							"__pivot": [0,0],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#3FE0C5",
+							"iid": "f4f0d222-b710-4c39-bf0e-468c0c1faddb",
+							"width": 48,
+							"height": 96,
+							"defUid": 12,
+							"px": [288,2016],
+							"fieldInstances": [],
+							"__worldX": 288,
+							"__worldY": 2016
+						},
+						{
+							"__identifier": "Checkpoint",
+							"__grid": [166,76],
+							"__pivot": [0,0],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#3FE0C5",
+							"iid": "f5f0d3b5-b610-4aa6-800e-481f0b1fac48",
+							"width": 48,
+							"height": 96,
+							"defUid": 12,
+							"px": [3984,1824],
+							"fieldInstances": [],
+							"__worldX": 3984,
+							"__worldY": 1824
+						},
+						{
+							"__identifier": "Checkpoint",
+							"__grid": [192,20],
+							"__pivot": [0,0],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#3FE0C5",
+							"iid": "f2f0cefc-b510-4913-810e-49b20e1fb101",
+							"width": 48,
+							"height": 96,
+							"defUid": 12,
+							"px": [4608,480],
+							"fieldInstances": [],
+							"__worldX": 4608,
+							"__worldY": 480
+						},
+						{
+							"__identifier": "Checkpoint",
+							"__grid": [290,24],
+							"__pivot": [0,0],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#3FE0C5",
+							"iid": "f3f0d08f-b410-4780-820e-4b450d1faf6e",
+							"width": 48,
+							"height": 96,
+							"defUid": 12,
+							"px": [6960,576],
+							"fieldInstances": [],
+							"__worldX": 6960,
+							"__worldY": 576
+						},
+						{
+							"__identifier": "GradeZone",
+							"__grid": [0,0],
+							"__pivot": [0,0],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#1F4A63",
+							"iid": "67346d11-9345-43cc-bad5-b92f83cf5652",
+							"width": 2016,
+							"height": 2400,
+							"defUid": 16,
+							"px": [0,0],
+							"fieldInstances": [
+								{
+									"__identifier": "grade",
+									"__type": "LocalEnum.AreaGrade",
+									"__value": "glade",
+									"__tile": null,
+									"defUid": 25,
+									"realEditorValues": [
+										{
+											"id": "V_String",
+											"params": ["glade"]
+										}
+									]
+								},
+								{
+									"__identifier": "blend",
+									"__type": "Int",
+									"__value": 288,
+									"__tile": null,
+									"defUid": 26,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [288]
+										}
+									]
+								}
+							],
+							"__worldX": 0,
+							"__worldY": 0
+						},
+						{
+							"__identifier": "GradeZone",
+							"__grid": [84,0],
+							"__pivot": [0,0],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#1F4A63",
+							"iid": "66346b7e-9445-455f-b9d5-b79c84cf57e5",
+							"width": 1920,
+							"height": 2400,
+							"defUid": 16,
+							"px": [2016,0],
+							"fieldInstances": [
+								{
+									"__identifier": "grade",
+									"__type": "LocalEnum.AreaGrade",
+									"__value": "gully",
+									"__tile": null,
+									"defUid": 25,
+									"realEditorValues": [
+										{
+											"id": "V_String",
+											"params": ["gully"]
+										}
+									]
+								},
+								{
+									"__identifier": "blend",
+									"__type": "Int",
+									"__value": 288,
+									"__tile": null,
+									"defUid": 26,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [288]
+										}
+									]
+								}
+							],
+							"__worldX": 2016,
+							"__worldY": 0
+						},
+						{
+							"__identifier": "GradeZone",
+							"__grid": [164,0],
+							"__pivot": [0,0],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#1F4A63",
+							"iid": "653469eb-9545-46f2-bcd5-bc5581cf532c",
+							"width": 768,
+							"height": 2400,
+							"defUid": 16,
+							"px": [3936,0],
+							"fieldInstances": [
+								{
+									"__identifier": "grade",
+									"__type": "LocalEnum.AreaGrade",
+									"__value": "rootwell",
+									"__tile": null,
+									"defUid": 25,
+									"realEditorValues": [
+										{
+											"id": "V_String",
+											"params": ["rootwell"]
+										}
+									]
+								},
+								{
+									"__identifier": "blend",
+									"__type": "Int",
+									"__value": 288,
+									"__tile": null,
+									"defUid": 26,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [288]
+										}
+									]
+								}
+							],
+							"__worldX": 3936,
+							"__worldY": 0
+						},
+						{
+							"__identifier": "GradeZone",
+							"__grid": [196,0],
+							"__pivot": [0,0],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#1F4A63",
+							"iid": "64346858-9645-4885-bbd5-bac282cf54bf",
+							"width": 3216,
+							"height": 2400,
+							"defUid": 16,
+							"px": [4704,0],
+							"fieldInstances": [
+								{
+									"__identifier": "grade",
+									"__type": "LocalEnum.AreaGrade",
+									"__value": "canopy",
+									"__tile": null,
+									"defUid": 25,
+									"realEditorValues": [
+										{
+											"id": "V_String",
+											"params": ["canopy"]
+										}
+									]
+								},
+								{
+									"__identifier": "blend",
+									"__type": "Int",
+									"__value": 288,
+									"__tile": null,
+									"defUid": 26,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [288]
+										}
+									]
+								}
+							],
+							"__worldX": 4704,
+							"__worldY": 0
+						},
+						{
+							"__identifier": "GradeZone",
+							"__grid": [330,0],
+							"__pivot": [0,0],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#1F4A63",
+							"iid": "6b34735d-8f45-4d80-b6d5-b2e37fcf5006",
+							"width": 1680,
+							"height": 2400,
+							"defUid": 16,
+							"px": [7920,0],
+							"fieldInstances": [
+								{
+									"__identifier": "grade",
+									"__type": "LocalEnum.AreaGrade",
+									"__value": "shrine",
+									"__tile": null,
+									"defUid": 25,
+									"realEditorValues": [
+										{
+											"id": "V_String",
+											"params": ["shrine"]
+										}
+									]
+								},
+								{
+									"__identifier": "blend",
+									"__type": "Int",
+									"__value": 288,
+									"__tile": null,
+									"defUid": 26,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [288]
+										}
+									]
+								}
+							],
+							"__worldX": 7920,
+							"__worldY": 0
+						},
+						{
+							"__identifier": "LightShaft",
+							"__grid": [26,36],
+							"__pivot": [0,0],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#D8F3FF",
+							"iid": "5958f940-65c3-42b3-af52-95ea2bcd240d",
+							"width": 144,
+							"height": 1248,
+							"defUid": 15,
+							"px": [624,864],
+							"fieldInstances": [
+								{
+									"__identifier": "angleDeg",
+									"__type": "Float",
+									"__value": 10,
+									"__tile": null,
+									"defUid": 22,
+									"realEditorValues": [
+										{
+											"id": "V_Float",
+											"params": [10]
+										}
+									]
+								},
+								{
+									"__identifier": "spread",
+									"__type": "Float",
+									"__value": 1.7,
+									"__tile": null,
+									"defUid": 23,
+									"realEditorValues": [
+										{
+											"id": "V_Float",
+											"params": [1.7]
+										}
+									]
+								},
+								{
+									"__identifier": "intensity",
+									"__type": "Float",
+									"__value": 0.55,
+									"__tile": null,
+									"defUid": 24,
+									"realEditorValues": [
+										{
+											"id": "V_Float",
+											"params": [0.55]
+										}
+									]
+								}
+							],
+							"__worldX": 624,
+							"__worldY": 864
+						},
+						{
+							"__identifier": "LightShaft",
+							"__grid": [238,0],
+							"__pivot": [0,0],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#D8F3FF",
+							"iid": "5a58fad3-64c3-4120-b052-977d2acd227a",
+							"width": 144,
+							"height": 480,
+							"defUid": 15,
+							"px": [5712,0],
+							"fieldInstances": [
+								{
+									"__identifier": "angleDeg",
+									"__type": "Float",
+									"__value": -8,
+									"__tile": null,
+									"defUid": 22,
+									"realEditorValues": [
+										{
+											"id": "V_Float",
+											"params": [-8]
+										}
+									]
+								},
+								{
+									"__identifier": "spread",
+									"__type": "Float",
+									"__value": 1.8,
+									"__tile": null,
+									"defUid": 23,
+									"realEditorValues": [
+										{
+											"id": "V_Float",
+											"params": [1.8]
+										}
+									]
+								},
+								{
+									"__identifier": "intensity",
+									"__type": "Float",
+									"__value": 0.6,
+									"__tile": null,
+									"defUid": 24,
+									"realEditorValues": [
+										{
+											"id": "V_Float",
+											"params": [0.6]
+										}
+									]
+								}
+							],
+							"__worldX": 5712,
+							"__worldY": 0
+						},
+						{
+							"__identifier": "LightShaft",
+							"__grid": [274,0],
+							"__pivot": [0,0],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#D8F3FF",
+							"iid": "5b58fc66-67c3-45d9-ad52-92c429cd20e7",
+							"width": 192,
+							"height": 672,
+							"defUid": 15,
+							"px": [6576,0],
+							"fieldInstances": [
+								{
+									"__identifier": "angleDeg",
+									"__type": "Float",
+									"__value": 6,
+									"__tile": null,
+									"defUid": 22,
+									"realEditorValues": [
+										{
+											"id": "V_Float",
+											"params": [6]
+										}
+									]
+								},
+								{
+									"__identifier": "spread",
+									"__type": "Float",
+									"__value": 1.6,
+									"__tile": null,
+									"defUid": 23,
+									"realEditorValues": [
+										{
+											"id": "V_Float",
+											"params": [1.6]
+										}
+									]
+								},
+								{
+									"__identifier": "intensity",
+									"__type": "Float",
+									"__value": 0.5,
+									"__tile": null,
+									"defUid": 24,
+									"realEditorValues": [
+										{
+											"id": "V_Float",
+											"params": [0.5]
+										}
+									]
+								}
+							],
+							"__worldX": 6576,
+							"__worldY": 0
+						},
+						{
+							"__identifier": "LightShaft",
+							"__grid": [372,0],
+							"__pivot": [0,0],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#D8F3FF",
+							"iid": "5c58fdf9-66c3-4446-ae52-945728cd1f54",
+							"width": 288,
+							"height": 2112,
+							"defUid": 15,
+							"px": [8928,0],
+							"fieldInstances": [
+								{
+									"__identifier": "angleDeg",
+									"__type": "Float",
+									"__value": -4,
+									"__tile": null,
+									"defUid": 22,
+									"realEditorValues": [
+										{
+											"id": "V_Float",
+											"params": [-4]
+										}
+									]
+								},
+								{
+									"__identifier": "spread",
+									"__type": "Float",
+									"__value": 1.3,
+									"__tile": null,
+									"defUid": 23,
+									"realEditorValues": [
+										{
+											"id": "V_Float",
+											"params": [1.3]
+										}
+									]
+								},
+								{
+									"__identifier": "intensity",
+									"__type": "Float",
+									"__value": 0.5,
+									"__tile": null,
+									"defUid": 24,
+									"realEditorValues": [
+										{
+											"id": "V_Float",
+											"params": [0.5]
+										}
+									]
+								}
+							],
+							"__worldX": 8928,
+							"__worldY": 0
+						},
+						{
+							"__identifier": "Enemy",
+							"__grid": [276,28],
+							"__pivot": [0.5,1],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#FF4D6D",
+							"iid": "8411a210-e928-464d-bf73-31fee94e1ab3",
+							"width": 480,
+							"height": 44,
+							"defUid": 13,
+							"px": [6624,672],
+							"fieldInstances": [
+								{
+									"__identifier": "speed",
+									"__type": "Float",
+									"__value": 90,
+									"__tile": null,
+									"defUid": 21,
+									"realEditorValues": [
+										{
+											"id": "V_Float",
+											"params": [90]
+										}
+									]
+								}
+							],
+							"__worldX": 6624,
+							"__worldY": 672
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [229,9],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "a8465059-dd5f-4544-98f3-5357c38a1372",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [5496,216],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 5496,
+							"__worldY": 216
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [237,9],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "a7464ec6-de5f-46d7-97f3-51c4c48a1505",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [5688,216],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 5688,
+							"__worldY": 216
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [249,9],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "a6464d33-df5f-486a-9af3-567dc18a104c",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [5976,216],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 5976,
+							"__worldY": 216
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [251,9],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "a5464ba0-e05f-49fd-99f3-54eac28a11df",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [6024,216],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 6024,
+							"__worldY": 216
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [309,13],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "ac4656a5-d95f-4ef8-94f3-4d0bbf8a0d26",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [7416,312],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 7416,
+							"__worldY": 312
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [317,13],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "ab465512-da5f-408b-93f3-4b78c08a0eb9",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [7608,312],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 7608,
+							"__worldY": 312
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [221,15],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "aa46537f-db5f-421e-96f3-5031bd8a0a00",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [5304,360],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 5304,
+							"__worldY": 360
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [275,17],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "a94651ec-dc5f-43b1-95f3-4e9ebe8a0b93",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [6600,408],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 6600,
+							"__worldY": 408
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [301,19],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "b0465cf1-d55f-48ac-90f3-46bfcb8a200a",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [7224,456],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 7224,
+							"__worldY": 456
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [261,23],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "af465b5e-d65f-4a3f-8ff3-452ccc8a219d",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [6264,552],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 6264,
+							"__worldY": 552
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [285,23],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "49ae4d42-f7f8-4da5-a80a-031c9a5f626f",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [6840,552],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 6840,
+							"__worldY": 552
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [185,29],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "4aae4ed5-f6f8-4c12-a90a-04af995f60dc",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [4440,696],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 4440,
+							"__worldY": 696
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [341,31],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "47ae4a1c-f5f8-4a7f-aa0a-06429c5f6595",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [8184,744],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 8184,
+							"__worldY": 744
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [185,35],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "48ae4baf-f4f8-48ec-ab0a-07d59b5f6402",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [4440,840],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 4440,
+							"__worldY": 840
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [185,41],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "45ae46f6-f3f8-4759-a409-fcd0965f5c23",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [4440,984],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 4440,
+							"__worldY": 984
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [353,41],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "46ae4889-f2f8-45c6-a509-fe63955f5a90",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [8472,984],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 8472,
+							"__worldY": 984
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [361,41],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "43ae43d0-f1f8-4433-a609-fff6985f5f49",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [8664,984],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 8664,
+							"__worldY": 984
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [185,47],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "44ae4563-f0f8-42a0-a70a-0189975f5db6",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [4440,1128],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 4440,
+							"__worldY": 1128
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [183,49],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "51ae59da-fff8-4a3d-b00a-0fb4a25f6f07",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [4392,1176],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 4392,
+							"__worldY": 1176
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [375,53],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "52ae5b6d-fef8-48aa-b10a-1147a15f6d74",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [9000,1272],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 9000,
+							"__worldY": 1272
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [185,61],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "c3ab3bb9-fdfa-45ae-ba10-db372857f334",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [4440,1464],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 4440,
+							"__worldY": 1464
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [375,65],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "c2ab3a26-fefa-4741-b910-d9a42957f4c7",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [9000,1560],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 9000,
+							"__worldY": 1560
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [61,67],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "c1ab3893-fbfa-4288-bc10-de5d2a57f65a",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [1464,1608],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 1464,
+							"__worldY": 1608
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [65,67],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "c0ab3700-fcfa-441b-bb10-dcca2b57f7ed",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [1560,1608],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 1560,
+							"__worldY": 1608
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [185,67],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "c7ab4205-01fa-4bfa-b610-d4eb2457ece8",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [4440,1608],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 4440,
+							"__worldY": 1608
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [125,71],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "c6ab4072-02fa-4d8d-b510-d3582557ee7b",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [3000,1704],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 3000,
+							"__worldY": 1704
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [97,73],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "c5ab3edf-fffa-48d4-b810-d8112657f00e",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [2328,1752],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 2328,
+							"__worldY": 1752
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [121,73],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "c4ab3d4c-00fa-4a67-b710-d67e2757f1a1",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [2904,1752],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 2904,
+							"__worldY": 1752
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [129,73],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "cbab4851-f5fa-4916-b210-ce9f2057e69c",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [3096,1752],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 3096,
+							"__worldY": 1752
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [153,73],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "caab46be-f6fa-4aa9-b110-cd0c2157e82f",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [3672,1752],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 3672,
+							"__worldY": 1752
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [185,73],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "bda8f3b0-03fd-4db7-b40e-932e2e5a3b3d",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [4440,1752],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 4440,
+							"__worldY": 1752
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [63,75],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "bea8f543-02fd-4c24-b50e-94c12d5a39aa",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [1512,1800],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 1512,
+							"__worldY": 1800
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [93,75],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "bfa8f6d6-05fd-40dd-b20e-90082c5a3817",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [2232,1800],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 2232,
+							"__worldY": 1800
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [101,75],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "c0a8f869-04fd-4f4a-b30e-919b2b5a3684",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [2424,1800],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 2424,
+							"__worldY": 1800
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [149,75],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "c1a8f9fc-fffd-476b-b80e-997a2a5a34f1",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [3576,1800],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 3576,
+							"__worldY": 1800
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [157,75],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "c2a8fb8f-fefd-45d8-b90e-9b0d295a335e",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [3768,1800],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 3768,
+							"__worldY": 1800
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [39,77],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "c3a8fd22-01fd-4a91-b60e-9654285a31cb",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [936,1848],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 936,
+							"__worldY": 1848
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [61,77],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "c4a8feb5-00fd-48fe-b70e-97e7275a3038",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [1464,1848],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 1464,
+							"__worldY": 1848
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [65,77],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "c5a90048-fbfd-411f-ac0e-8696265a2ea5",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [1560,1848],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 1560,
+							"__worldY": 1848
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [375,77],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "c6a901db-fafc-4f8c-ad0e-8829255a2d12",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [9000,1848],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 9000,
+							"__worldY": 1848
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [23,81],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "c7ba4c8f-f9eb-44d8-b602-93e19c5299a2",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [552,1944],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 552,
+							"__worldY": 1944
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [25,81],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "c6ba4afc-faeb-466b-b502-924e9d529b35",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [600,1944],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 600,
+							"__worldY": 1944
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [119,85],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "c9ba4fb5-fbeb-47fe-b402-90bb9a52967c",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [2856,2040],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 2856,
+							"__worldY": 2040
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [123,85],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "c8ba4e22-fceb-4991-b302-8f289b52980f",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [2952,2040],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 2952,
+							"__worldY": 2040
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [125,85],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "c3ba4643-fdeb-4b24-ba02-9a2d98529356",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [3000,2040],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 3000,
+							"__worldY": 2040
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [129,85],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "c2ba44b0-feeb-4cb7-b902-989a995294e9",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [3096,2040],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 3096,
+							"__worldY": 2040
+						},
+						{
+							"__identifier": "Orb",
+							"__grid": [383,85],
+							"__pivot": [0.5,0.5],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#BFF6FF",
+							"iid": "c5ba4969-ffeb-4e4a-b802-970796529030",
+							"width": 24,
+							"height": 24,
+							"defUid": 11,
+							"px": [9192,2040],
+							"fieldInstances": [
+								{
+									"__identifier": "value",
+									"__type": "Int",
+									"__value": 1,
+									"__tile": null,
+									"defUid": 20,
+									"realEditorValues": [
+										{
+											"id": "V_Int",
+											"params": [1]
+										}
+									]
+								}
+							],
+							"__worldX": 9192,
+							"__worldY": 2040
+						},
+						{
+							"__identifier": "Flora",
+							"__grid": [245,20],
+							"__pivot": [0.5,1],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#3FE0C5",
+							"iid": "92762972-1c1c-4313-a600-0a80f2be01c9",
+							"width": 32,
+							"height": 48,
+							"defUid": 18,
+							"px": [5880,480],
+							"fieldInstances": [],
+							"__worldX": 5880,
+							"__worldY": 480
+						},
+						{
+							"__identifier": "Flora",
+							"__grid": [207,24],
+							"__pivot": [0.5,1],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#3FE0C5",
+							"iid": "93762b05-1b1c-4180-a700-0c13f1be0036",
+							"width": 32,
+							"height": 48,
+							"defUid": 18,
+							"px": [4968,576],
+							"fieldInstances": [],
+							"__worldX": 4968,
+							"__worldY": 576
+						},
+						{
+							"__identifier": "Flora",
+							"__grid": [335,34],
+							"__pivot": [0.5,1],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#3FE0C5",
+							"iid": "9076264c-1e1c-4639-a800-0da6f0bdfea3",
+							"width": 32,
+							"height": 48,
+							"defUid": 18,
+							"px": [8040,816],
+							"fieldInstances": [],
+							"__worldX": 8040,
+							"__worldY": 816
+						},
+						{
+							"__identifier": "Flora",
+							"__grid": [355,44],
+							"__pivot": [0.5,1],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#3FE0C5",
+							"iid": "917627df-1d1c-44a6-a900-0f39efbdfd10",
+							"width": 32,
+							"height": 48,
+							"defUid": 18,
+							"px": [8520,1056],
+							"fieldInstances": [],
+							"__worldX": 8520,
+							"__worldY": 1056
+						},
+						{
+							"__identifier": "Lantern",
+							"__grid": [365,44],
+							"__pivot": [0.5,1],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#FFB45A",
+							"iid": "5eec2a4c-ec49-4999-ac37-8f3a12ed2a2f",
+							"width": 32,
+							"height": 48,
+							"defUid": 17,
+							"px": [8760,1056],
+							"fieldInstances": [],
+							"__worldX": 8760,
+							"__worldY": 1056
+						},
+						{
+							"__identifier": "Flora",
+							"__grid": [51,82],
+							"__pivot": [0.5,1],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#3FE0C5",
+							"iid": "8e762326-201c-495f-aa00-10ccf6be0815",
+							"width": 32,
+							"height": 48,
+							"defUid": 18,
+							"px": [1224,1968],
+							"fieldInstances": [],
+							"__worldX": 1224,
+							"__worldY": 1968
+						},
+						{
+							"__identifier": "Flora",
+							"__grid": [71,82],
+							"__pivot": [0.5,1],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#3FE0C5",
+							"iid": "8f7624b9-1f1c-47cc-ab00-125ff5be0682",
+							"width": 32,
+							"height": 48,
+							"defUid": 18,
+							"px": [1704,1968],
+							"fieldInstances": [],
+							"__worldX": 1704,
+							"__worldY": 1968
+						},
+						{
+							"__identifier": "Flora",
+							"__grid": [29,88],
+							"__pivot": [0.5,1],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#3FE0C5",
+							"iid": "8c762000-221c-4c85-ac00-13f2f4be04ef",
+							"width": 32,
+							"height": 48,
+							"defUid": 18,
+							"px": [696,2112],
+							"fieldInstances": [],
+							"__worldX": 696,
+							"__worldY": 2112
+						},
+						{
+							"__identifier": "Lantern",
+							"__grid": [371,88],
+							"__pivot": [0.5,1],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#FFB45A",
+							"iid": "5fec2bdf-eb49-4806-ad37-90cd11ed289c",
+							"width": 32,
+							"height": 48,
+							"defUid": 17,
+							"px": [8904,2112],
+							"fieldInstances": [],
+							"__worldX": 8904,
+							"__worldY": 2112
+						},
+						{
+							"__identifier": "Flora",
+							"__grid": [373,88],
+							"__pivot": [0.5,1],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#3FE0C5",
+							"iid": "8d762193-211c-4af2-ad00-1585f3be035c",
+							"width": 32,
+							"height": 48,
+							"defUid": 18,
+							"px": [8952,2112],
+							"fieldInstances": [],
+							"__worldX": 8952,
+							"__worldY": 2112
+						},
+						{
+							"__identifier": "Lantern",
+							"__grid": [377,88],
+							"__pivot": [0.5,1],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#FFB45A",
+							"iid": "60ec2d72-ea49-4673-aa37-8c1414ed2d55",
+							"width": 32,
+							"height": 48,
+							"defUid": 17,
+							"px": [9048,2112],
+							"fieldInstances": [],
+							"__worldX": 9048,
+							"__worldY": 2112
+						},
+						{
+							"__identifier": "Lantern",
+							"__grid": [383,88],
+							"__pivot": [0.5,1],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#FFB45A",
+							"iid": "61ec2f05-e949-44e0-ab37-8da713ed2bc2",
+							"width": 32,
+							"height": 48,
+							"defUid": 17,
+							"px": [9192,2112],
+							"fieldInstances": [],
+							"__worldX": 9192,
+							"__worldY": 2112
+						},
+						{
+							"__identifier": "Lantern",
+							"__grid": [395,88],
+							"__pivot": [0.5,1],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#FFB45A",
+							"iid": "5aec2400-f049-4fe5-a837-88ee0eed23e3",
+							"width": 32,
+							"height": 48,
+							"defUid": 17,
+							"px": [9480,2112],
+							"fieldInstances": [],
+							"__worldX": 9480,
+							"__worldY": 2112
+						},
+						{
+							"__identifier": "Goal",
+							"__grid": [386,80],
+							"__pivot": [0,0],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#FFB45A",
+							"iid": "2792480b-5509-4ee0-9917-9619bfe37f6e",
+							"width": 144,
+							"height": 192,
+							"defUid": 14,
+							"px": [9264,1920],
+							"fieldInstances": [],
+							"__worldX": 9264,
+							"__worldY": 1920
+						}
+					]
+				},
+				{
+					"__identifier": "Collision",
+					"__type": "IntGrid",
+					"__cWid": 200,
+					"__cHei": 50,
+					"__gridSize": 48,
+					"__opacity": 1,
+					"__pxTotalOffsetX": 0,
+					"__pxTotalOffsetY": 0,
+					"__tilesetDefUid": null,
+					"__tilesetRelPath": null,
+					"iid": "cb1f8894-7415-4d99-9f9d-819ed52c83f3",
+					"levelId": 40,
+					"layerDefUid": 3,
+					"pxOffsetX": 0,
+					"pxOffsetY": 0,
+					"visible": true,
+					"optionalRules": [],
+					"intGridCsv": [
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,2,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,0,0,2,2,2,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,3,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,3,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,3,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,3,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,3,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,1,1,1,1,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,1,1,1,3,3,3,3,3,3,3,3,3,3,3,3,1,1,1,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,
+						1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,2,2,0,0,0,0,1,1,1,1,1,
+						1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,
+						1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,
+						1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,
+						1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,2,0,0,0,0,0,1,1,1,1,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,2,2,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,2,2,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,0,0,0,0,0,0,0,0,0,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,0,0,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+						1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,0,0,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+						1,1,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,0,0,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+						1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,2,2,2,2,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+						1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+						1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,3,3,3,3,3,3,3,3,3,3,1,1,1,3,3,3,3,3,3,3,3,3,3,3,3,1,1,3,3,3,3,3,3,3,3,3,3,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+						1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+						1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+						1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+					],
+					"autoLayerTiles": [],
+					"seed": 7323136,
+					"overrideTilesetUid": null,
+					"gridTiles": [],
+					"entityInstances": []
+				}
+			],
+			"__neighbours": []
+		}
+	],
+	"worlds": [],
+	"dummyWorldIid": "37222d4b-a95a-4bd0-95b5-233513d9f8d2"
+}

@@ -1,5 +1,6 @@
-import type { LevelData, TileKind } from '../contracts/level.ts';
-import { todo } from '../core/todo.ts';
+import { TileKind, type LevelData } from '../contracts/level.ts';
+import { tileAt } from '../core/tiles.ts';
+import { levelFromAscii } from './ascii.ts';
 
 /**
  * Tile queries over LevelData.tiles. Out of bounds: tx outside [0, width) → Solid for every ty; else
@@ -10,13 +11,18 @@ export class CollisionGrid {
   readonly height: number;
   readonly tileSize: number;
   readonly tiles: Uint8Array;
+  /** tileAt's view of this grid (LevelData field names). */
+  private readonly lookup: Pick<LevelData, 'widthTiles' | 'heightTiles' | 'tiles'>;
 
   constructor(width: number, height: number, tileSize: number, tiles: Uint8Array) {
+    if (tiles.length !== width * height) {
+      throw new RangeError(`CollisionGrid: ${tiles.length} tiles for a ${width}×${height} grid`);
+    }
     this.width = width;
     this.height = height;
     this.tileSize = tileSize;
     this.tiles = tiles;
-    todo('SIM', 'CollisionGrid');
+    this.lookup = { widthTiles: width, heightTiles: height, tiles };
   }
 
   static fromLevel(level: LevelData): CollisionGrid {
@@ -25,21 +31,15 @@ export class CollisionGrid {
 
   /** Tiles only, via levelFromAscii from ./ascii.ts (entity glyphs → Empty). */
   static fromAscii(rows: readonly string[], tileSize: number): CollisionGrid {
-    void rows;
-    void tileSize;
-    return todo('SIM', 'CollisionGrid.fromAscii');
+    return CollisionGrid.fromLevel(levelFromAscii(rows, { tileSize }));
   }
 
   get(tx: number, ty: number): TileKind {
-    void tx;
-    void ty;
-    return todo('SIM', 'CollisionGrid.get');
+    return tileAt(this.lookup, tx, ty);
   }
 
   isSolid(tx: number, ty: number): boolean {
-    void tx;
-    void ty;
-    return todo('SIM', 'CollisionGrid.isSolid');
+    return tileAt(this.lookup, tx, ty) === TileKind.Solid;
   }
 
   /** World coordinate → tile index (floor). */
@@ -49,7 +49,15 @@ export class CollisionGrid {
 
   /** Does the world rect [minX,maxX)×[minY,maxY) overlap any tile of `kind`? */
   rectHas(minX: number, minY: number, maxX: number, maxY: number, kind: TileKind): boolean {
-    void minX; void minY; void maxX; void maxY; void kind;
-    return todo('SIM', 'CollisionGrid.rectHas');
+    if (!(maxX > minX) || !(maxY > minY)) return false;
+    const t = this.tileSize;
+    const tx1 = Math.ceil(maxX / t) - 1;
+    const ty1 = Math.ceil(maxY / t) - 1;
+    for (let ty = Math.floor(minY / t); ty <= ty1; ty++) {
+      for (let tx = Math.floor(minX / t); tx <= tx1; tx++) {
+        if (tileAt(this.lookup, tx, ty) === kind) return true;
+      }
+    }
+    return false;
   }
 }
