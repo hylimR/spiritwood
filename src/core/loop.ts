@@ -215,8 +215,8 @@ export class FixedStepLoop {
   }
 
   start(
-    raf: (cb: FrameRequestCallback) => number = requestAnimationFrame,
-    caf: (id: number) => void = cancelAnimationFrame,
+    raf: (cb: FrameRequestCallback) => number = (cb) => requestAnimationFrame(cb),
+    caf: (id: number) => void = (id) => cancelAnimationFrame(id),
   ): void {
     if (this.isRunning) return;
     this.raf = raf;

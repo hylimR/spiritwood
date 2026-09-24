@@ -67,9 +67,11 @@ union types replace enums.
   `x/y`. The renderer draws `lerp(prev, cur, alpha)` with `alpha = accumulator / SIM_DT`. When a
   discontinuity happens (respawn, teleport) the sim sets `prev = cur`.
 - **FPS cap:** keep an EMA of the rAF interval (`rafEst`, starting at 16.67 ms; samples are clamped to
-  4–50 ms). A frame is rendered when `now ≥ deadline − rafEst/2`. Then `deadline += 1000/cap`, and if the
-  deadline is already ≤ now it resyncs to `now + 1000/cap`. This averages exactly the cap on
-  120/144/165 Hz displays and resyncs after hitches.
+  4–50 ms). A frame is rendered when `now ≥ deadline − rafEst/2`. Then `deadline += 1000/cap`. A late
+  frame (a deadline was missed) resyncs to `now + 1000/cap`, so one missed deadline is counted once and
+  hitches don't unleash uncapped frames. This averages exactly the cap on 120/144/165 Hz displays.
+  `render` receives the raw wall-clock dt; the pipeline clamps its own render clock. A reset frame
+  after `resetClock()` reports one nominal rAF interval.
 - **Accumulator in ticks:** `accTicks += dt'·hz`. Loop `while (accTicks ≥ 1 − 1e-6 && n < max)`.
   After the clamp, whole ticks are dropped (counted in `droppedSeconds`). `alpha = clamp01(accTicks)`.
   `setPaused(true)` runs no steps and sets alpha = 1, so the frozen scene does not wobble.
@@ -356,7 +358,8 @@ tunnelling at any speed. A blocked sweep ends exactly on the tile boundary. Thor
 
 Simulated on the fixed step with prev/cur interpolation. The framing point is the feet + `targetOffsetY`.
 
-- **X:** an edge-follow dead zone. focusX moves only while |x − focusX| > deadZoneW/2.
+- **X:** an edge-follow dead zone. focusX moves only while |x − focusX| > deadZoneW/2, and only far
+  enough to bring x back to the zone edge. Y's dead zone is edge-follow in the same way.
 - **Y:** a ground reference `groundRef`.
   - mode ∈ {ground, wallSlide} → groundRef = y.
   - Otherwise, when y > groundRef → groundRef = y.
@@ -429,8 +432,11 @@ The level is one LDtk level, "Forest_Night", `200 × 50` tiles (9600 × 2400 u, 
 
 - **IntGrid layer `Collision`:** 1 Solid, 2 OneWay, 3 Thorns.
 - **Entities:** `PlayerStart`, `Orb`, `Checkpoint`, `Enemy` (its width is the patrol span), `Goal`,
-  `LightShaft` (resizable; fields `angle` in degrees, `intensity`), `GradeZone` (resizable; fields
+  `LightShaft` (resizable; fields `angleDeg`, `spread`, `intensity`), `GradeZone` (resizable; fields
   `grade: AreaGrade`, `blend`), `Lantern`, `Flora`.
+- **Workflow:** edit `tools/level/forest.map.txt` (format documented at its top), then `npm run level`.
+  `node tools/level/build-level.ts --check` and `tests/level/forest.test.ts` fail when the committed
+  `.ldtk` is stale. `node tools/level/preview-level.ts out.png` renders a map preview.
 - **ASCII:** `src/level/ascii.ts` (`levelFromAscii`, `ASCII_TILES`) is the one ASCII legend, shared by
   tests, `CollisionGrid.fromAscii` and `tools/level`.
 
@@ -439,19 +445,23 @@ The level is one LDtk level, "Forest_Night", `200 × 50` tiles (9600 × 2400 u, 
 | Move | Reach |
 |---|---|
 | Full jump rise | 172.9 u (3.6 tiles) |
-| Jump + double-jump peak | 293.7 u (6.1 tiles) |
+| Jump + double-jump peak | 293.9 u (6.1 tiles) |
 | Flat run-jump | 345 u of feet travel |
-| Jump + double jump | 535 u (11.1 tiles) |
-| Jump + double jump + dash at the second apex | 739 u (15.4 tiles) |
+| Jump + double jump (air jump at the apex) | 550 u (11.5 tiles) |
+| Jump + double jump, late air jump (restarts the arc) | ≈ 650 u (13.5 tiles) |
+| Jump + double jump + dash at the second apex | 765 u (15.9 tiles) |
 | Dash | 196.7 u |
 
-Coyote time (≈ 51 u) and the collider width widen the crossable gaps.
+Coyote time (≈ 51 u) and the collider width widen the crossable gaps. The air jump sets vy =
+−airJumpVelocity whenever it fires, so a *late* double jump restarts the arc.
 
 **Design rules:**
 
 - Single-jump ledges ≤ 3 tiles; jump + double-jump ledges ≤ 5 tiles.
 - Gaps crossable without the double jump ≤ 6 tiles.
-- Double-jump gaps 9–10 tiles; dash + double-jump gaps 13–14 tiles.
+- Double-jump gaps 9–10 tiles. A gap that forces the dash must beat the late double jump: flat gaps
+  ≥ 15 tiles, or 14 tiles with the far side 2 tiles higher (what Canopy Walk uses; `reach.test.ts`
+  proves no jump + double-jump timing lands).
 - Wall-jump shafts 3–5 tiles wide.
 - `tests/sim/reach.test.ts` asserts each gate: the intended move succeeds and the next-weaker move
   fails.

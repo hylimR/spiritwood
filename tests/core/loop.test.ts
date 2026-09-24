@@ -363,3 +363,32 @@ describe('FixedStepLoop', () => {
     expect(cancelled).toBe(nextId - 1);
   });
 });
+
+describe('FixedStepLoop.start default rAF binding', () => {
+  test('calls the global requestAnimationFrame unbound (browsers throw "Illegal invocation" otherwise)', () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const prevRaf = g.requestAnimationFrame;
+    const prevCaf = g.cancelAnimationFrame;
+    const receivers: unknown[] = [];
+    let pending: FrameRequestCallback | null = null;
+    g.requestAnimationFrame = function (this: unknown, cb: FrameRequestCallback) {
+      receivers.push(this);
+      pending = cb;
+      return 1;
+    };
+    g.cancelAnimationFrame = function (this: unknown) {
+      receivers.push(this);
+    };
+    try {
+      const loop = new FixedStepLoop({ beginFrame() {}, step() {}, render() {} });
+      loop.start();
+      (pending as FrameRequestCallback | null)?.(16);
+      loop.stop();
+      expect(receivers.length).toBe(3);
+      for (const r of receivers) expect(r === undefined || r === globalThis).toBe(true);
+    } finally {
+      g.requestAnimationFrame = prevRaf;
+      g.cancelAnimationFrame = prevCaf;
+    }
+  });
+});
