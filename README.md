@@ -38,3 +38,13 @@ npm test
 | `?debug=1` | Show the debug overlay |
 | `?bench` | 30 s scripted flythrough; prints the fps summary (`?bench=60` for 60 s) |
 | `?manifest=plates` | Load the demo painted-plate manifest (streams KTX2 or WebP chunks) |
+
+Hosts that pass only a URL hash to the page (e.g. Claude artifacts) accept `#token` equivalents,
+joined with `-`: `#bench`, `#plates`, `#debug`, `#high`/`#medium`/`#low`, `#uncapped`. For example,
+`#bench-low` runs the benchmark on the Low preset.
+
+## Deploying
+
+`npm run build` writes a static site to `dist/` with relative paths. Serve `levels/*.ldtk` as
+`application/json`. On hosts with a strict Content-Security-Policy (no `unsafe-eval`), the game detects
+the restriction and loads PixiJS's eval-free fallback automatically.
