@@ -50,7 +50,12 @@ joined with `-`: `#bench`, `#plates`, `#debug`, `#high`/`#medium`/`#low`, `#unca
 the restriction, loads PixiJS's eval-free fallback and skips KTX2 (its transcoder needs eval), so
 painted plates load as WebP.
 
-To publish as a Claude artifact, run `npm run build && npm run artifact -- <outDir>`. That writes the
-page as an HTML fragment (`<outDir>/index.html`) and the supporting-files map (`<outDir>/files.json`).
-Artifacts neither serve `.ktx2` nor allow the eval its transcoder needs, so the package leaves out
-KTX2 files and the transcoder and strips `ktx2` sources from the layer manifests.
+To publish as a Claude artifact, run `npm run artifact -- <outDir>` and publish `<outDir>/index.html`
+on its own. Public artifact links need the host to review the page, and a multi-file build (19 JS
+modules) couldn't be reviewed, so this build is one self-contained page (≈430 KB):
+- PixiJS loads from jsDelivr, pinned with SRI;
+- the game is inlined as one script;
+- the level and layer manifest are inlined as JSON.
+
+It leaves out KTX2, which needs eval, and the painted-plate demo, which streams image files, so
+`#plates` falls back to the procedural forest there.

@@ -12,7 +12,7 @@ npx vitest run tests/sim --maxWorkers=2       # one area
 npm run build                                 # vite build → dist/
 npm run level                                 # regenerate public/levels/forest.ldtk from the ASCII map
 npm run plates                                # bake the demo painted plates (sharp + ktx2-encoder)
-npm run artifact -- <outDir>                  # package dist/ as a Claude artifact (fragment + files map)
+npm run artifact -- <outDir>                  # single-file Claude artifact page (PixiJS from CDN, data inlined)
 ```
 
 ## Machine safety (hard rules)

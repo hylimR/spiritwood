@@ -2,6 +2,7 @@ import { GAME_TITLE, SIM_DT } from '../config.ts';
 import { createInputFrame, type InputFrame } from '../contracts/input.ts';
 import type { UserSettings } from '../contracts/quality.ts';
 import { AudioSystem } from '../audio/audio.ts';
+import type { FetchFn } from '../assets/embedded.ts';
 import { loadManifest } from '../assets/manifest.ts';
 import { FixedStepLoop } from '../core/loop.ts';
 import { BenchRunner, type BenchWaypoint } from '../debug/bench.ts';
@@ -23,6 +24,8 @@ export interface GameOptions {
   levelUrl: string;
   manifestUrl: string;
   search: string;
+  /** Fetch for the level and manifest (the single-file build answers them from embedded data). */
+  fetchFn?: FetchFn;
 }
 
 type Phase = 'title' | 'play' | 'bench';
@@ -125,7 +128,11 @@ export class Game {
     document.title = GAME_TITLE;
     const persisted = loadSettings();
     const settings = applyUrlOverrides(persisted, opts.search);
-    const [level, manifest] = await Promise.all([loadLevel(opts.levelUrl), loadManifest(opts.manifestUrl)]);
+    const fetchFn = opts.fetchFn ?? fetch;
+    const [level, manifest] = await Promise.all([
+      loadLevel(opts.levelUrl, undefined, fetchFn),
+      loadManifest(opts.manifestUrl, fetchFn),
+    ]);
 
     const canvas = document.createElement('canvas');
     canvas.tabIndex = 0;

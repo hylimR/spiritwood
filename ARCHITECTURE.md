@@ -588,7 +588,8 @@ With the full High budget there are 10 kit layers plus sky and fog:
 - **Publishing:** `levels/forest.ldtk` must be served as `application/json`. KTX2 also needs blob
   workers, WASM and eval. Under a no-eval CSP it is skipped up front. When workers or WASM are blocked,
   a load still pending after `KTX2_TIMEOUT_MS` counts as failed. Either way the loader falls back to
-  WebP/PNG. `npm run artifact` packages `dist/` for Claude artifacts without KTX2 (see README).
+  WebP/PNG. `npm run artifact` builds a single-file page for Claude artifacts (see README): PixiJS from
+  the CDN, the game and its data inlined through `src/assets/embedded.ts`, no KTX2 or plates.
 - **Bake tool** (`tools/plates/bake-plates.ts`, Node + sharp + ktx2-encoder): renders a plate to PNG,
   then writes WebP + KTX2 (ETC1S, mipmapped) chunks and tight hull polygons alongside a manifest. M1
   ships one demo plate layer in `public/layers/forest.plates.manifest.json` (open with
