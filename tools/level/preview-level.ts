@@ -1,10 +1,11 @@
 /**
  * Browser-free level preview: renders the map (tiles, entities, zones, optional player trace) to a PNG.
  *
- *   node tools/level/preview-level.ts <out.png> [--scale 6] [--trace trace.json] [--crop x0,x1]
+ *   node tools/level/preview-level.ts <out.png> [--scale 6] [--trace trace.json] [--crop x0,x1] [--map file]
  *
  * `--trace` is a JSON array of [x, y] feet positions in world units (e.g. dumped by a playthrough).
- * `--crop` limits the output to tile columns x0..x1.
+ * `--crop` limits the output to tile columns x0..x1. `--map` reads another map source (e.g. an older
+ * revision, for before/after comparisons) instead of tools/level/forest.map.txt.
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -132,7 +133,7 @@ export function renderLevel(level: LevelData, scale: number, trace: readonly (re
 function main(argv: readonly string[]): void {
   const out = argv[0];
   if (!out) {
-    console.error('usage: node tools/level/preview-level.ts <out.png> [--scale 6] [--trace trace.json] [--crop x0,x1]');
+    console.error('usage: node tools/level/preview-level.ts <out.png> [--scale 6] [--trace trace.json] [--crop x0,x1] [--map file]');
     process.exitCode = 1;
     return;
   }
@@ -144,7 +145,7 @@ function main(argv: readonly string[]): void {
   const tracePath = opt('--trace');
   const crop = opt('--crop')?.split(',').map(Number) as [number, number] | undefined;
   const trace = tracePath ? (JSON.parse(readFileSync(tracePath, 'utf8')) as [number, number][]) : [];
-  const level = parseMapFile(readFileSync(MAP_PATH, 'utf8'));
+  const level = parseMapFile(readFileSync(opt('--map') ?? MAP_PATH, 'utf8'));
   const img = renderLevel(level, scale, trace, crop);
   writePng(out, img.px, img.w, img.h);
   console.log(`wrote ${out} (${img.w}×${img.h})`);

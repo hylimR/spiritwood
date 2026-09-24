@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'vitest';
 import { levelFromAscii } from '../shared/fixtures.ts';
-import { buildTerrainMesh, CORE_STRIDE_FLOATS, DEFAULT_TERRAIN, EDGE_KIND_MOSS, EDGE_STRIDE_FLOATS } from '../../src/render/terrain/terrainMesh.ts';
+import {
+  buildTerrainMesh, CORE_STRIDE_FLOATS, DEFAULT_TERRAIN, EDGE_KIND_MOSS, EDGE_STRIDE_FLOATS, interiorDepth,
+} from '../../src/render/terrain/terrainMesh.ts';
+import { TERRAIN_DEEP_REACH } from '../../src/render/terrain/terrainShading.ts';
 import { TerrainField, DEFAULT_FIELD, FLOOR_TOLERANCE, WALL_TOLERANCE } from '../../src/render/terrain/terrainField.ts';
 import { TERRAIN_LIGHTS } from '../../src/render/terrain/terrainLight.ts';
 import { AA_MAX_UNITS, AA_PX, terrainAAWidth } from '../../src/render/terrain/terrainView.ts';
@@ -125,7 +128,9 @@ describe('buildTerrainMesh', () => {
       for (let v = 0; v < c.core.length; v += CORE_STRIDE_FLOATS) {
         const f = mesh.field.sample(c.core[v] as number, c.core[v + 1] as number);
         expect(f).toBeLessThan(0.5);
-        expect(c.core[v + 2]).toBeCloseTo(Math.min(DEFAULT_TERRAIN.shadeDepth, Math.max(0, -f)), 1);
+        // Thin islands never reach the field clamp, so the attribute is the field depth itself.
+        expect(-f).toBeLessThan(DEFAULT_FIELD.maxDist - 1);
+        expect(c.core[v + 2]).toBeCloseTo(Math.max(0, -f), 1);
       }
     }
   });
@@ -179,6 +184,84 @@ describe('buildTerrainMesh', () => {
       expect(c.bounds.x0).toBeGreaterThanOrEqual(c.col * chunkSize - DEFAULT_TERRAIN.cell - DEFAULT_TERRAIN.mossIn - 1);
       expect(c.bounds.x1).toBeLessThanOrEqual((c.col + 1) * chunkSize + DEFAULT_TERRAIN.cell + DEFAULT_TERRAIN.mossIn + 1);
     }
+  });
+});
+
+describe('interior depth of thick masses', () => {
+  // A 30 × 22-tile block (well past the field clamp) inside an open border, and ground that runs off the
+  // bottom edge of the level.
+  const rows: string[] = [];
+  for (let y = 0; y < 30; y++) {
+    let r = '';
+    for (let x = 0; x < 40; x++) r += (x >= 4 && x < 34 && y >= 3 && y < 25) || y >= 27 ? '#' : '.';
+    rows.push(r);
+  }
+  const level = levelFromAscii(rows);
+  const mesh = buildTerrainMesh(level);
+  const T = level.tileSize;
+  const cap = DEFAULT_TERRAIN.shadeDepth + TERRAIN_DEEP_REACH;
+  const verts: { x: number; y: number; d: number }[] = [];
+  for (const c of mesh.chunks) {
+    for (let v = 0; v < c.core.length; v += CORE_STRIDE_FLOATS) verts.push({ x: c.core[v] as number, y: c.core[v + 1] as number, d: c.core[v + 2] as number });
+  }
+
+  test('keeps deepening past the field clamp, within a few percent of the true distance, up to the cap', () => {
+    let deepest = 0;
+    let checked = 0;
+    for (const p of verts) {
+      if (p.y > 26 * T) continue;
+      const inX = Math.min(p.x - 4 * T, 34 * T - p.x);
+      const inY = Math.min(p.y - 3 * T, 25 * T - p.y);
+      const truth = Math.min(inX, inY);
+      if (truth < DEFAULT_FIELD.maxDist + 12) continue;
+      checked++;
+      deepest = Math.max(deepest, p.d);
+      expect(Math.abs(p.d - Math.min(cap, truth))).toBeLessThanOrEqual(0.06 * truth + 1);
+    }
+    expect(checked).toBeGreaterThan(500);
+    expect(deepest).toBeCloseTo(cap, 3);
+  });
+
+  test('the distance transform joins the field band continuously', () => {
+    // Pairs of neighbouring grid corners where either one lies past the field clamp (the transformed part).
+    const byPos = new Map<string, number>();
+    for (const p of verts) byPos.set(`${p.x},${p.y}`, p.d);
+    const C = DEFAULT_TERRAIN.cell;
+    const sat = DEFAULT_FIELD.maxDist - 0.5;
+    let pairs = 0;
+    for (const p of verts) {
+      for (const o of [byPos.get(`${p.x + C},${p.y}`), byPos.get(`${p.x},${p.y + C}`)]) {
+        if (o === undefined || (o < sat && p.d < sat)) continue;
+        pairs++;
+        expect(Math.abs(o - p.d)).toBeLessThanOrEqual(C + 0.5);
+      }
+    }
+    expect(pairs).toBeGreaterThan(1000);
+  });
+
+  test('ground running off the bottom edge deepens toward it (no phantom surface below the level)', () => {
+    // The 3-row floor at rows 27..29 continues below the level: depth grows monotonically downward.
+    // (The mesh closes its contour in the margin below the level, which the camera never shows.)
+    const column = verts.filter((p) => Math.abs(p.x - 20 * T - DEFAULT_TERRAIN.cell / 2) < 1 && p.y > 27 * T && p.y <= level.pxHeight)
+      .sort((a, b) => a.y - b.y);
+    expect(column.length).toBeGreaterThan(8);
+    for (let i = 1; i < column.length; i++) expect((column[i] as { d: number }).d).toBeGreaterThanOrEqual((column[i - 1] as { d: number }).d - 1e-3);
+    expect((column[column.length - 1] as { d: number }).d).toBeGreaterThan(2.5 * T);
+  });
+
+  test('interiorDepth seeds from the unclamped band only and caps', () => {
+    // 1-D strip along x: outside, then a ramp into solid, then saturated samples.
+    const nx = 40;
+    const ny = 3;
+    const f = new Float32Array(nx * ny);
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) f[j * nx + i] = i < 4 ? 20 : -Math.min(96, (i - 4) * 12);
+    const d = interiorDepth(f, nx, ny, 12, 96, 300);
+    const mid = (i: number): number => d[nx + i] as number;
+    expect(mid(2)).toBe(0);
+    expect(mid(6)).toBeCloseTo(24, 5);
+    expect(mid(12)).toBeCloseTo(96, 5);
+    expect(mid(20)).toBeCloseTo(192, 5);
+    expect(mid(38)).toBe(300);
   });
 });
 

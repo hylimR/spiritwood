@@ -1,18 +1,30 @@
 /**
- * Compose the forest (sky, kit layers, shafts, terrain, decor, particles, fog, foreground) for the
- * five area cameras of the synthetic preview level, then bloom the glow twins and apply the area's
- * composite grade (the CPU reference of the post chain), and write PNGs.
- * Usage: node tools/preview/world/scene-preview.ts [outDir] [--w 1280] [--time 12.5] [--raw] [camera names…]
+ * Compose the forest (sky, kit layers, shafts, terrain, decor, particles, fog, foreground) for a set
+ * of cameras, then bloom the glow twins and apply the blended area grade (the CPU reference of the
+ * post chain), and write PNGs.
+ *
+ *   node tools/preview/world/scene-preview.ts [outDir] [--w 1280] [--time 12.5] [--raw] [camera names…]
+ *   node tools/preview/world/scene-preview.ts [outDir] --level forest [--ldtk file] [--at name=fx,fy …] [camera names…]
+ *
+ * The default is the synthetic preview level and its five area cameras. `--level forest` loads the
+ * real public/levels/forest.ldtk and frames gameplay cameras the way the sim camera does (feet in
+ * tiles, targetOffsetY, clamped to the level at 16:9), with a hero stand-in at the feet and the orbs;
+ * `--ldtk file` reads another LDtk file the same way (e.g. an older revision, to compare), and
+ * `--at name=fx,fy` adds a camera with the feet at tile (fx, fy).
  */
 import { readFileSync } from 'node:fs';
-import { PALETTE, VIEW_H } from '../../../src/config.ts';
-import { AREA_GRADE_TABLE } from '../../../src/content/grades.ts';
-import type { AreaGradeId } from '../../../src/contracts/level.ts';
+import { PALETTE, TILE, VIEW_H } from '../../../src/config.ts';
+import { AREA_GRADE_TABLE, DEFAULT_GRADE } from '../../../src/content/grades.ts';
+import type { AreaGradeId, LevelData } from '../../../src/contracts/level.ts';
 import { hexToRgb, type RGB } from '../../../src/core/color.ts';
 import { parseManifest } from '../../../src/assets/manifest.ts';
+import { parseLdtk } from '../../../src/level/loader.ts';
 import { generateKit, kitSeed } from '../../../src/render/gen/kit.ts';
+import { blendGrades, createGradeParams } from '../../../src/render/post/grade.ts';
 import { gradePixel } from '../../../src/render/post/gradeMath.ts';
 import { visibleLayerRect } from '../../../src/render/util/camera.ts';
+import { DEFAULT_CAMERA_TUNING } from '../../../src/sim/tuning.ts';
+import { LDTK_PATH } from '../../level/build-level.ts';
 import { buildScene, renderScene, type Camera, type Frame } from './compose.ts';
 import { outDir, save } from './common.ts';
 import { decorOverlay, particlesOverlay, shaftsOverlay } from './gameplay-overlay.ts';
@@ -34,11 +46,28 @@ const crop = ci >= 0 ? (args[ci + 1] as string).split(',').map(Number) : null;
 if (ci >= 0) args.splice(ci, 2);
 const TIME = opt('time', 12.5);
 const raw = args.includes('--raw');
+const li = args.indexOf('--level');
+const forestArg = li >= 0 && args[li + 1] === 'forest';
+if (li >= 0) args.splice(li, 2);
+const ldi = args.indexOf('--ldtk');
+const ldtkPath = ldi >= 0 ? (args[ldi + 1] as string) : LDTK_PATH;
+if (ldi >= 0) args.splice(ldi, 2);
+/** A real LDtk level (the shipped forest, or `--ldtk file`), rather than the synthetic preview level. */
+const realLevel = forestArg || ldi >= 0;
+/** Extra cameras: `--at name=fx,fy` (feet at tile fx, fy of the real level). */
+const extraAt: [string, number, number][] = [];
+for (let i = args.indexOf('--at'); i >= 0; i = args.indexOf('--at')) {
+  const [name, pos] = (args[i + 1] ?? '').split('=');
+  const [fx, fy] = (pos ?? '').split(',').map(Number);
+  if (!name || !Number.isFinite(fx) || !Number.isFinite(fy)) throw new Error(`bad --at ${args[i + 1]}`);
+  extraAt.push([name, fx as number, fy as number]);
+  args.splice(i, 2);
+}
 const only = args.filter((a) => !a.startsWith('--'));
 
 const manifestPath = new URL('../../../public/layers/forest.manifest.json', import.meta.url);
 const manifest = parseManifest(JSON.parse(readFileSync(manifestPath, 'utf8')));
-const level = previewLevel();
+const level: LevelData = realLevel ? parseLdtk(JSON.parse(readFileSync(ldtkPath, 'utf8'))) : previewLevel();
 const t0 = performance.now();
 const kit = generateKit(kitSeed('forest-kit'));
 const t1 = performance.now();
@@ -48,7 +77,9 @@ scene.overlays.push(shaftsOverlay(scene));
 addTerrain(scene);
 const t3 = performance.now();
 const decor = decorOverlay(scene);
-scene.overlays.push(decor.back, decor.front, particlesOverlay(scene));
+scene.overlays.push(decor.back);
+if (realLevel) scene.overlays.push(entitiesOverlay(level));
+scene.overlays.push(decor.front, particlesOverlay(scene));
 console.log(`kit ${(t1 - t0).toFixed(0)} ms, layers ${(t2 - t1).toFixed(0)} ms, terrain ${(t3 - t2).toFixed(0)} ms, decor ${decor.count}`);
 for (const [id, L] of scene.layers) {
   let verts = 0;
@@ -62,15 +93,35 @@ for (const [id, L] of scene.layers) {
   console.log(`${id}: ${L.placement.instances.length} instances, ${L.chunks.length} chunks, ${verts} verts (max mesh ${maxMesh})`);
 }
 
-/** The main session's GPU screenshot cameras (centre x, y) and the grade of each area. */
-const cams: (Camera & { grade: AreaGradeId })[] = [
-  { name: 'glade', cx: 1100, cy: 1700, grade: 'glade' },
-  { name: 'gully', cx: 2700, cy: 1750, grade: 'gully' },
-  { name: 'rootwell', cx: 4300, cy: 1100, grade: 'rootwell' },
-  { name: 'canopy', cx: 6000, cy: 800, grade: 'canopy' },
-  { name: 'shrine', cx: 8800, cy: 1750, grade: 'shrine' },
-];
 const viewW = VIEW_H * (16 / 9);
+
+/** Gameplay cameras on the real level: the player's feet (tiles), framed like the settled sim camera. */
+const FOREST_FEET: readonly [string, number, number][] = [
+  ['start', 4.5, 43], ['cp1', 83.5, 40], ['rootwell-mid', 91, 28], ['cp2', 96.5, 12], ['canopy-gap', 118, 12],
+  ['cp3', 145.5, 14], ['moonwell-top', 170, 17], ['moonwell-ledge', 178, 22], ['moonwell-mid', 186, 29],
+  ['moonwell-low', 186, 36], ['goal', 194.5, 44],
+];
+
+function feetCamera(name: string, fx: number, fy: number): Camera & { feet: [number, number] } {
+  const x = fx * TILE;
+  const y = fy * TILE;
+  const clamp = (v: number, half: number, size: number): number => (size <= 2 * half ? size / 2 : Math.min(size - half, Math.max(half, v)));
+  return {
+    name, cx: clamp(x, viewW / 2, level.pxWidth), cy: clamp(y + DEFAULT_CAMERA_TUNING.targetOffsetY, VIEW_H / 2, level.pxHeight), feet: [x, y],
+  };
+}
+
+/** The main session's GPU screenshot cameras (centre x, y) of the synthetic level. */
+type PreviewCamera = Camera & { feet?: [number, number]; grade?: AreaGradeId };
+const cams: PreviewCamera[] = realLevel
+  ? [...FOREST_FEET, ...extraAt].map(([n, fx, fy]) => feetCamera(n, fx, fy))
+  : [
+    { name: 'glade', cx: 1100, cy: 1700, grade: 'glade' },
+    { name: 'gully', cx: 2700, cy: 1750, grade: 'gully' },
+    { name: 'rootwell', cx: 4300, cy: 1100, grade: 'rootwell' },
+    { name: 'canopy', cx: 6000, cy: 800, grade: 'canopy' },
+    { name: 'shrine', cx: 8800, cy: 1750, grade: 'shrine' },
+  ];
 
 // Fill (screens, core / band) and draw calls per kit layer, worst of the preview cameras.
 // Uniform density is assumed inside each chunk mesh, as in ParallaxStackView's estimate.
@@ -141,8 +192,38 @@ function blur(src: Float32Array, w: number, h: number, radius: number, passes = 
   return a;
 }
 
-/** Bloom (half-res glow twins, 4 blur levels averaged as the dual-filter chain does) + the area grade. */
-function post(img: Frame, gradeId: AreaGradeId): Uint8Array {
+/** Stand-ins for the hero (a glowing spirit capsule at the feet) and the orbs, so framing and scale read. */
+function entitiesOverlay(lv: LevelData): (img: Frame) => void {
+  const spirit = hexToRgb(PALETTE.spiritGlow);
+  const warm = hexToRgb(PALETTE.warmAccent);
+  const blob = (img: Frame, x: number, y: number, rx: number, ry: number, rgb: RGB, a: number, glowR: number, glow: number): void => {
+    const [cx, cy] = img.toPx(x, y);
+    const R = Math.max(rx, ry, glowR) / img.scale + 2;
+    for (let py = Math.max(0, Math.floor(cy - R)); py < Math.min(img.h, Math.ceil(cy + R)); py++) {
+      for (let px = Math.max(0, Math.floor(cx - R)); px < Math.min(img.w, Math.ceil(cx + R)); px++) {
+        const dx = (px + 0.5 - cx) * img.scale;
+        const dy = (py + 0.5 - cy) * img.scale;
+        const e = Math.hypot(dx / rx, dy / ry);
+        const i = py * img.w + px;
+        const k = Math.min(1, Math.max(0, (1 - e) * 4)) * a;
+        if (k > 0) img.blend(i, rgb[0] * k, rgb[1] * k, rgb[2] * k, k);
+        const g = Math.max(0, 1 - Math.hypot(dx, dy) / glowR);
+        if (g > 0) img.addGlow(i, rgb[0] * g * g * glow, rgb[1] * g * g * glow, rgb[2] * g * g * glow);
+      }
+    }
+  };
+  return (img) => {
+    for (const o of lv.orbs) blob(img, o.x, o.y, 9, 9, warm, 1, 34, 0.9);
+    const feet = (img.cam as Camera & { feet?: [number, number] }).feet;
+    if (feet) {
+      blob(img, feet[0], feet[1] - 29, 14, 29, spirit, 0.95, 70, 0.8);
+      blob(img, feet[0], feet[1] - 50, 11, 11, spirit, 1, 40, 0.6);
+    }
+  };
+}
+
+/** Bloom (half-res glow twins, 4 blur levels averaged as the dual-filter chain does) + the blended area grade. */
+function post(img: Frame, cam: PreviewCamera): Uint8Array {
   const hw = Math.floor(img.w / 2);
   const hh = Math.floor(img.h / 2);
   const half = new Float32Array(hw * hh * 3);
@@ -157,7 +238,9 @@ function post(img: Frame, gradeId: AreaGradeId): Uint8Array {
   }
   const scale = hw / 640;
   const levels = [half, ...[2, 4, 9, 18].map((r) => blur(half, hw, hh, Math.max(1, Math.round(r * scale))))];
-  const grade = AREA_GRADE_TABLE[gradeId];
+  const grade = cam.grade
+    ? AREA_GRADE_TABLE[cam.grade]
+    : blendGrades(createGradeParams(), level.gradeZones, cam.cx, cam.cy, AREA_GRADE_TABLE, DEFAULT_GRADE);
   const fog = hexToRgb(PALETTE.fogDeep);
   const out = new Uint8Array(img.w * img.h * 4);
   const px: RGB = [0, 0, 0];
@@ -191,7 +274,7 @@ function post(img: Frame, gradeId: AreaGradeId): Uint8Array {
 for (const cam of cams) {
   if (only.length && !only.includes(cam.name)) continue;
   const f = renderScene(scene, cam, W, Math.round((W * 9) / 16), viewW, VIEW_H, TIME);
-  const img = post(f, cam.grade);
+  const img = post(f, cam);
   if (crop) {
     const [cx, cy, cw, chh] = crop as [number, number, number, number];
     const out = new Uint8Array(cw * chh * 4);

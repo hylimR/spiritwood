@@ -1,5 +1,5 @@
 import type { GameWorld } from '../../src/sim/world.ts';
-import type { Bot } from './bot.ts';
+import { BotError, type Bot } from './bot.ts';
 
 /** Tile → world x/y of the tile's left/top edge. */
 const X = (tx: number): number => tx * 48;
@@ -15,6 +15,11 @@ export interface Segment {
 }
 
 const cpActive = (i: number) => (w: GameWorld): boolean => w.checkpoints[i]?.active === true;
+
+/** The route expects the player to have just landed at feet y (a specific floor, not a lower one). */
+function landedOn(bot: Bot, y: number): void {
+  if (bot.p.y !== y) throw new BotError(bot, `expected to land at y ${y}`);
+}
 
 /**
  * The scripted route through Forest_Night (tools/level/forest.map.txt). Positions are tile columns /
@@ -89,13 +94,17 @@ export const FOREST_ROUTE: readonly Segment[] = [
     run(bot) {
       bot.leap(X(147) - 20, 1, { double: true, dash: true }); // gap B: 14 tiles, 2 up
       bot.runTo(X(166));
-      bot.land(1);
-      bot.hold(1, (w) => w.player.y >= Y(28) && w.player.grounded, 600);
-      bot.dropThrough();
-      bot.land(0);
-      bot.dropThrough();
-      bot.land(0);
-      bot.hold(1, (w) => w.completed, 600);
+      bot.land(1); // down onto the plateau
+      // Zig-zag down the Moonwell: off the plateau onto the lantern ledge, off its tip onto the branch
+      // by the east wall, back west off the branch onto the middle branch, west again down to the knoll
+      // side of the clearing, then east through the lanterns to the shrine.
+      bot.hold(1, (w) => w.player.grounded && w.player.y >= Y(28), 600);
+      landedOn(bot, Y(28));
+      bot.hold(-1, (w) => w.player.grounded && w.player.y >= Y(34), 600);
+      landedOn(bot, Y(34));
+      bot.hold(-1, (w) => w.player.grounded && w.player.y >= Y(44), 600);
+      landedOn(bot, Y(44));
+      bot.hold(1, (w) => w.completed, 900);
     },
   },
 ];

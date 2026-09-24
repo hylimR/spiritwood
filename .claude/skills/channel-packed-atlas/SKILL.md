@@ -7,8 +7,8 @@ description: Channel-packed material atlas plus tight hull meshes for layered 2D
 
 With this technique, one texture and one shader program draw every silhouette in a layered 2D scene. In Spiritwood,
 79 procedural elements in a 2048×2048 atlas (22.4 MB with mips) feed 10 parallax layers (8 depth-tested, 2 blended
-foreground frames; 43 static meshes), plus decor and its glow twins. Before the art pass (not re-measured since; the mesh
-count is unchanged), the debug overlay counted 58–85 draw calls for a whole High-quality frame (a software-renderer capture, so there are no GPU timings).
+foreground frames; 43 static meshes), plus decor and its glow twins. The debug overlay counts 74–87 draw calls for a whole
+High-quality frame across eight gameplay views (a software-renderer capture, so there are no GPU timings).
 
 ## When to use
 

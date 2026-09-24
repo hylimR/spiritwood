@@ -1,26 +1,64 @@
 import { DEPTH_TERRAIN } from '../../config.ts';
 import { GLSL_DITHER, GLSL_FRAGMENT_HEADER, GLSL_NOISE, GLSL_VERSION, GLSL_VERTEX_TRANSFORM } from '../shaders/common.ts';
+import { MOON_DIR } from './terrainLight.ts';
 import {
-  MOSS_BASE_COLOR, MOSS_GLOW_COLOR, SPILL_FLORA, SPILL_THORN, SPILL_WARM, TERRAIN_DEEP_COLOR, TERRAIN_EDGE_COLOR, TERRAIN_RIM_COLOR,
-  TERRAIN_RIM_REACH, TERRAIN_SPILL_REACH, TERRAIN_STONE_GAIN, TERRAIN_VEIN_GAIN,
+  MOSS_BASE_COLOR, MOSS_GLOW_COLOR, SPILL_FLORA, SPILL_THORN, SPILL_WARM, TERRAIN_BAND_SWING, TERRAIN_BAND_TINT, TERRAIN_CORE_COLOR,
+  TERRAIN_CREVICE_DARK, TERRAIN_DEEP_COLOR, TERRAIN_DEEP_REACH, TERRAIN_EDGE_COLOR, TERRAIN_GLINT_CELL, TERRAIN_GLINT_DENSITY,
+  TERRAIN_GLINT_MINERAL, TERRAIN_GLINT_MOSS, TERRAIN_PEBBLE_GAIN, TERRAIN_RIM_COLOR, TERRAIN_RIM_REACH, TERRAIN_ROOT_GAIN,
+  TERRAIN_SEAM_DARK, TERRAIN_SPILL_REACH, TERRAIN_STONE_BEVEL, TERRAIN_STONE_CELL, TERRAIN_STONE_GAIN, TERRAIN_STONE_SHARE,
+  TERRAIN_VEIN_GAIN,
 } from './terrainShading.ts';
 
+const v2 = (c: readonly number[]): string => `vec2(${c.map((x) => x.toFixed(4)).join(', ')})`;
 const v3 = (c: readonly number[]): string => `vec3(${c.map((x) => x.toFixed(4)).join(', ')})`;
 const f = (v: number): string => (Number.isInteger(v) ? `${v}.0` : `${v}`);
 
-/** Shared core colour (terrainShading.ts shadeTerrainCore): depth ramp, strata, moonlit rim zone, spill. */
+/**
+ * Shared core colour (terrainShading.ts shadeTerrainCore): rim-zone ramp and deep-interior drift, broad
+ * strata bands and seams, fine strata, mottling, pebbles, rootlets, roots, embedded stones, glints, the
+ * moonlit rim zone and baked spill. 8 value-noise lookups and 2 hashes per fragment.
+ */
 const CORE_COLOR = /* glsl */ `
 vec3 terrainColor(float depth, vec2 world, float lit, vec3 spill) {
   float t = pow(clamp(depth / uShadeDepth, 0.0, 1.0), 0.7);
+  float k = clamp((depth - uShadeDepth) / ${f(TERRAIN_DEEP_REACH)}, 0.0, 1.0);
   float warp = sw_vnoise(world * 0.0045) * 70.0;
   float strata = sw_vnoise(vec2(world.x * 0.0022, (world.y + warp) * 0.026));
   float mottle = sw_vnoise(world * 0.019 + 13.1);
+  float band = sw_vnoise(vec2(world.x * 0.0011 + 3.1, (world.y + warp * 1.5) * 0.0072 + 7.3));
+  float seam = 1.0 - smoothstep(0.0, 0.016, abs(band - 0.5));
   vec2 rw = vec2(world.x * 0.866 - world.y * 0.5, world.x * 0.5 + world.y * 0.866);
   float sn = 0.6 * sw_vnoise(vec2(rw.x * 0.06 + 5.3, rw.y * 0.07 + 1.9)) + 0.4 * sw_vnoise(vec2(rw.y * 0.11 + 2.1, rw.x * 0.12 + 8.4));
-  float stone = smoothstep(0.64, 0.72, sn);
+  float pebble = smoothstep(0.64, 0.72, sn);
   float vein = 1.0 - smoothstep(0.0, 0.03, abs(sw_vnoise(vec2(rw.y * 0.011 + 7.7, rw.x * 0.017 + 3.1)) - 0.5));
-  vec3 c = mix(${v3(TERRAIN_EDGE_COLOR)}, ${v3(TERRAIN_DEEP_COLOR)}, t) * (1.0 + 0.55 * (strata - 0.5) + 0.3 * (mottle - 0.5))
-    * (1.0 + ${f(TERRAIN_STONE_GAIN)} * stone + ${f(TERRAIN_VEIN_GAIN)} * vein * (1.0 - t));
+  float root = (1.0 - smoothstep(0.0, 0.022, abs(sw_vnoise(vec2(rw.x * 0.0095 + 1.3, rw.y * 0.0032 + 4.9)) - 0.5)))
+    * smoothstep(0.3, 0.62, band);
+  vec2 q = rw / ${f(TERRAIN_STONE_CELL)};
+  vec2 qi = floor(q);
+  float hs = sw_hash21(qi + vec2(41.7, 12.9));
+  float su = fract(hs * 7.3);
+  float sr = (0.11 + 0.23 * su * su) * ${f(TERRAIN_STONE_CELL)};
+  vec2 sq = (q - qi) * ${f(TERRAIN_STONE_CELL)} - (sr + (${f(TERRAIN_STONE_CELL)} - 2.0 * sr) * fract(hs * vec2(31.1, 57.7)));
+  float asp = 0.62 + 0.38 * fract(hs * 91.3);
+  vec2 se = vec2(sq.x, sq.y / asp);
+  float sd = length(se) / sr * (1.0 + 0.5 * (sn - 0.5) + 0.4 * (mottle - 0.5));
+  float has = 1.0 - step(${f(TERRAIN_STONE_SHARE)}, hs);
+  float body = has * (1.0 - smoothstep(0.9, 1.0, sd));
+  vec2 sn2 = vec2(se.x, se.y / asp);
+  float facing = dot(vec2(0.866 * sn2.x + 0.5 * sn2.y, -0.5 * sn2.x + 0.866 * sn2.y), ${v2(MOON_DIR)}) / (length(sn2) + 1e-6);
+  float crevice = has * smoothstep(0.98, 1.05, sd) * (1.0 - smoothstep(1.05, 1.2, sd)) * (0.2 + 0.8 * smoothstep(-0.2, 0.7, -facing));
+  float lum = (1.0 + 0.55 * (1.0 - 0.45 * k) * (strata - 0.5) + 0.3 * (mottle - 0.5))
+    * (${f(1 - TERRAIN_BAND_SWING / 2)} + ${f(TERRAIN_BAND_SWING)} * band) * (1.0 - ${f(TERRAIN_SEAM_DARK)} * seam)
+    * (1.0 - ${f(TERRAIN_CREVICE_DARK)} * crevice);
+  float detail = 1.0 + ${f(TERRAIN_PEBBLE_GAIN)} * pebble + ${f(TERRAIN_VEIN_GAIN)} * vein * (1.0 - 0.6 * t)
+    + ${f(TERRAIN_ROOT_GAIN)} * root + ${f(TERRAIN_STONE_GAIN)} * body + ${f(TERRAIN_STONE_BEVEL)} * body * min(sd, 1.0) * facing;
+  vec3 tint = mix(vec3(1.0), ${v3(TERRAIN_BAND_TINT)}, smoothstep(0.35, 0.65, band));
+  vec3 c = mix(${v3(TERRAIN_EDGE_COLOR)}, mix(${v3(TERRAIN_DEEP_COLOR)}, ${v3(TERRAIN_CORE_COLOR)}, k), t) * tint * (lum * detail);
+  vec2 gc = floor(world / ${f(TERRAIN_GLINT_CELL)});
+  float gh = sw_hash21(gc + vec2(17.3, 5.1));
+  vec2 gp = (gc + 0.2 + 0.6 * fract(gh * vec2(13.7, 71.3))) * ${f(TERRAIN_GLINT_CELL)};
+  float glint = step(${f(1 - TERRAIN_GLINT_DENSITY)}, gh) * (1.0 - smoothstep(0.6, 2.8, length(world - gp)));
+  c += mix(${v3(TERRAIN_GLINT_MOSS)}, ${v3(TERRAIN_GLINT_MINERAL)}, step(0.5, fract(gh * 431.7))) * glint;
   c += ${v3(TERRAIN_RIM_COLOR)} * (lit * exp(-depth / ${f(TERRAIN_RIM_REACH)}));
   c += (${v3(SPILL_WARM)} * spill.x + ${v3(SPILL_FLORA)} * spill.y + ${v3(SPILL_THORN)} * spill.z) * exp(-depth / ${f(TERRAIN_SPILL_REACH)});
   return c;

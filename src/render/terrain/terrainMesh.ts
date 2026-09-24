@@ -2,13 +2,15 @@ import type { LevelData } from '../../contracts/level.ts';
 import type { Extent } from '../util/camera.ts';
 import { TerrainField, type TerrainFieldOptions } from './terrainField.ts';
 import { MOON_DIR, packSpill, TerrainLights } from './terrainLight.ts';
+import { TERRAIN_DEEP_REACH } from './terrainShading.ts';
 
 /**
  * Terrain meshing (ARCHITECTURE.md §5.5), pure: marching squares over the terrain field on a
  * `cell`-unit grid offset by half a cell from the tile grid (tile corners fall on cell centres, so
  * rounded corners are sampled well), producing per-chunk core triangles with a depth-inside
- * attribute, closed contours with outward normals and an up-facing factor, and per-chunk edge strips
- * (AA feather + moss rim on up-facing edges). Vertices carry baked light: how squarely the nearest
+ * attribute (the field distance near surfaces, a distance transform deeper in, up to
+ * `shadeDepth + TERRAIN_DEEP_REACH`), closed contours with outward normals and an up-facing factor,
+ * and per-chunk edge strips (AA feather + moss rim on up-facing edges). Vertices carry baked light: how squarely the nearest
  * surface faces the moon, and lantern / flora / thorn spill.
  */
 export interface TerrainMeshOptions {
@@ -17,7 +19,7 @@ export interface TerrainMeshOptions {
   chunkTiles: number;
   /** Geometry extends this far beyond the level (u), for screen shake. */
   margin: number;
-  /** Depth-inside attribute clamp (u): the core shading gradient spans this range. */
+  /** Rim-zone depth (u): the core ramps from the edge colour to the deep colour over this range. */
   shadeDepth: number;
   /** Moss strip reach into the ground and out of it (u). */
   mossIn: number;
@@ -43,7 +45,10 @@ export const DEFAULT_TERRAIN: TerrainMeshOptions = {
  * aSpill (unorm8x4 packed in one float slot: warm, flora, thorn, 0).
  */
 export const EDGE_STRIDE_FLOATS = 9;
-/** Core vertex: aPosition (2), aDist (depth inside, u), aLit (moon-facing 0..1), aSpill (packed, as above). */
+/**
+ * Core vertex: aPosition (2), aDist (depth inside, u, up to shadeDepth + TERRAIN_DEEP_REACH), aLit
+ * (moon-facing 0..1), aSpill (packed, as above).
+ */
 export const CORE_STRIDE_FLOATS = 5;
 export const EDGE_KIND_AA = 0;
 export const EDGE_KIND_MOSS = 1;
@@ -243,7 +248,8 @@ export function buildTerrainMesh(
     return b;
   };
 
-  const clampDepth = (v: number): number => Math.min(o.shadeDepth, Math.max(0, -v));
+  const depthCap = o.shadeDepth + TERRAIN_DEEP_REACH;
+  const depthIn = interiorDepth(f, nx, ny, C, maxD, depthCap);
   // Vertex keys: corners 2·s (even), crossings 2·edgeId + 1 (odd).
   const coreVertex = (b: ChunkBuild, key: number, x: number, y: number, depth: number): number => {
     let v = b.coreMap.get(key);
@@ -292,7 +298,7 @@ export function buildTerrainMesh(
     const y = gy0 + j * C;
     polyX.push(x);
     polyY.push(y);
-    polyV.push(coreVertex(b, 2 * s, x, y, clampDepth(f[s] as number)));
+    polyV.push(coreVertex(b, 2 * s, x, y, depthIn[s] as number));
   };
   const addCross = (b: ChunkBuild, id: number): void => {
     crossing(id);
@@ -472,6 +478,57 @@ export function buildTerrainMesh(
     });
   }
   return { chunks, contours, field, gx0, gy0, nx, ny };
+}
+
+/**
+ * Depth inside the terrain (u) on the sample grid, capped at `cap`: exactly −f where the field is
+ * below its clamp (`maxD`), and beyond it a two-pass chamfer distance (3×3 plus knight moves, within a
+ * few percent of Euclidean) seeded from that band. The forced outer ring seeds nothing, so ground
+ * that continues past the level edge keeps deepening instead of meeting a phantom surface.
+ */
+export function interiorDepth(f: Float32Array, nx: number, ny: number, cell: number, maxD: number, cap: number): Float32Array {
+  const d = new Float32Array(nx * ny);
+  const free = new Uint8Array(nx * ny);
+  const sat = maxD - 0.5;
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      const s = j * nx + i;
+      const v = f[s] as number;
+      if (i === 0 || j === 0 || i === nx - 1 || j === ny - 1) {
+        d[s] = Infinity;
+        free[s] = 1;
+      } else if (v >= 0) d[s] = 0;
+      else if (-v < sat) d[s] = -v;
+      else {
+        d[s] = Infinity;
+        free[s] = 1;
+      }
+    }
+  }
+  const a = cell;
+  const b = cell * Math.SQRT2;
+  const c = cell * Math.sqrt(5);
+  // Forward mask (neighbours already visited in row-major order) and its mirror for the backward pass.
+  const DI = [-1, -1, 0, 1, -2, 2, -1, 1];
+  const DJ = [0, -1, -1, -1, -1, -1, -2, -2];
+  const W = [a, b, a, b, c, c, c, c];
+  const relax = (i: number, j: number, sign: number): void => {
+    const s = j * nx + i;
+    if (!free[s]) return;
+    let best = d[s] as number;
+    for (let k = 0; k < 8; k++) {
+      const ii = i + sign * (DI[k] as number);
+      const jj = j + sign * (DJ[k] as number);
+      if (ii < 0 || jj < 0 || ii >= nx || jj >= ny) continue;
+      const v = (d[jj * nx + ii] as number) + (W[k] as number);
+      if (v < best) best = v;
+    }
+    d[s] = best;
+  };
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) relax(i, j, 1);
+  for (let j = ny - 1; j >= 0; j--) for (let i = nx - 1; i >= 0; i--) relax(i, j, -1);
+  for (let s = 0; s < d.length; s++) d[s] = Math.min(cap, d[s] as number);
+  return d;
 }
 
 function pushQuad(

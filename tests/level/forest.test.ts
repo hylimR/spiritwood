@@ -7,6 +7,7 @@ import { parseLdtk } from '../../src/level/loader.ts';
 import { validateLevel } from '../../src/level/validate.ts';
 import { DEFAULT_WORLD_TUNING } from '../../src/sim/tuning.ts';
 import { buildLevel, LDTK_PATH, MAP_PATH } from '../../tools/level/build-level.ts';
+import { massViews } from '../../tools/level/masses.ts';
 import { LDTK_153_KEYS } from './ldtk-keys.ts';
 
 const fileText = readFileSync(LDTK_PATH, 'utf8');
@@ -182,6 +183,31 @@ describe('public/levels/forest.ldtk', () => {
     expect(lanterns.length).toBeLessThanOrEqual(6);
     for (const l of lanterns) expect(zoneOf(level, l.x)).toBe('shrine');
     expect(level.decorHints.filter((d) => d.kind === 'flora').length).toBeGreaterThanOrEqual(2);
+  });
+
+  test('no gameplay view is dominated by a dead mass (solid interior deeper than 3 tiles)', () => {
+    // From every standable tile, the settled camera view: at most a sliver of it may be deep interior.
+    const views = massViews(level, 3);
+    expect(views.length).toBeGreaterThan(150);
+    const worst = views[0];
+    expect(worst?.deep ?? 1, `worst view at feet (${worst?.fx}, ${worst?.fy})`).toBeLessThan(0.08);
+  });
+
+  test('the Moonwell descends in open air: lantern ledge, the wall branch, the middle branch, the clearing', () => {
+    const T = TILE;
+    const tile = (tx: number, ty: number): TileKind => tileAt(level, tx, ty);
+    // The branch by the east wall is anchored to it; the middle branch floats west of it.
+    expect(tile(194, 28)).toBe(TileKind.OneWay);
+    expect(tile(195, 28)).toBe(TileKind.Solid);
+    expect(tile(179, 34)).toBe(TileKind.OneWay);
+    expect(tile(185, 34)).toBe(TileKind.OneWay);
+    // Open air between the ledge and the clearing floor, west of the well (the old solid cliff).
+    let open = 0;
+    for (let ty = 26; ty < 44; ty++) for (let tx = 166; tx < 184; tx++) if (tile(tx, ty) !== TileKind.Solid) open++;
+    expect(open / (18 * 18)).toBeGreaterThan(0.85);
+    // The clearing floor is one walkable run from the knoll to the east wall, with no drop to the kill plane.
+    for (let tx = 165; tx < 199; tx++) expect(tile(tx, 44)).toBe(TileKind.Solid);
+    expect(level.goal && level.goal.y + level.goal.h).toBe(44 * T);
   });
 
   test('the level frame: solid left/right borders, open sky on top', () => {

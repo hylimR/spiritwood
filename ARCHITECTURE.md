@@ -436,7 +436,8 @@ The level is one LDtk level, "Forest_Night", `200 × 50` tiles (9600 × 2400 u, 
   `grade: AreaGrade`, `blend`), `Lantern`, `Flora`.
 - **Workflow:** edit `tools/level/forest.map.txt` (format documented at its top), then `npm run level`.
   `node tools/level/build-level.ts --check` and `tests/level/forest.test.ts` fail when the committed
-  `.ldtk` is stale. `node tools/level/preview-level.ts out.png` renders a map preview.
+  `.ldtk` is stale. `node tools/level/preview-level.ts out.png` renders a map preview, and
+  `node tools/level/masses.ts` lists the gameplay views with the most dead rock.
 - **ASCII:** `src/level/ascii.ts` (`levelFromAscii`, `ASCII_TILES`) is the one ASCII legend, shared by
   tests, `CollisionGrid.fromAscii` and `tools/level`.
 
@@ -466,6 +467,9 @@ Coyote time (≈ 51 u) and the collider width widen the crossable gaps. The air 
 - `tests/sim/reach.test.ts` asserts each gate: the intended move succeeds and the next-weaker move
   fails.
 - `tests/sim/playthrough.test.ts` replays scripted inputs through every area of `forest.ldtk`.
+- No dead masses: from any standable tile, with the camera framed as the sim frames it, solid rock
+  more than 3 tiles from open air covers < 8 % of the view (`forest.test.ts`). Scenery-only rock is
+  ≤ 5–6 tiles thick; carve bigger masses into ledges, alcoves and windows onto the forest.
 
 Five areas, left to right, each with a colour grade:
 
@@ -500,7 +504,12 @@ With the full High budget there are 10 kit layers plus sky and fog:
 - **Terrain** (WORLD): an SDF of the solid tiles (rounded corners r = 10 u, fbm-displaced ≤ 4 u, with
   flat tops kept flat). It is marching-squared on a 12 u sub-grid into chunked meshes: an opaque core,
   a 2-pixel AA edge strip, and a **moss rim** strip on up-facing edges (emissive, twinned into glow).
-  The core shader shades by distance-to-surface plus world-space noise.
+  The core shader shades by depth below the surface (the SDF near surfaces, extended by a distance
+  transform up to `shadeDepth + TERRAIN_DEEP_REACH` so thick masses keep varying) plus world-space
+  noise. Interiors are earth, not a void: a moonlit rim zone ramps into a lifted indigo/teal-black that
+  drifts slightly more indigo with depth, carrying structure that reads at gameplay zoom (strata bands
+  and seams, roots, lumpy embedded stones with far-side contact shadows, pebbles, rootlets, faint
+  glints). Interior p95 stays below `fogDeep` so terrain always separates from the background.
 - **Decor** (WORLD): seeded placement from the grid. Grass tufts on floors (front and back, with sway),
   vines from ceilings (sway), glowing flora and mushrooms, `Flora`/`Lantern` hint entities, and thorn
   brambles on hazard tiles (dark stems with `#FF4D6D` glowing tips).
@@ -601,7 +610,7 @@ High features with pixel-ratio cap 1 and dynamic resolution.
 | Texture memory per area | High ≤ 96 MB, Medium ≤ 64 MB, Low ≤ 48 MB. This covers atlases and streamed plates, **excluding** render targets (≈ 40 MB at 1080p: scene RGBA8 8.3 + D24S8 8.3, glow chain ≈ 4–6, canvas backbuffer 8.3; the pipeline creates the WebGL2 context itself with `depth: false, stencil: false` to avoid another 8.3) |
 | Allocation | **Zero allocations per frame in our hot paths**: sim step, view `update`, particles, pipeline render. Preallocate, pool, and use index loops; no closures, spreads, `for…of`, `map/filter` or string building per frame. The debug overlay formats text at ≤ 4 Hz. Pixi's own small per-`renderer.render()` allocations are accepted, so keep `renderer.render()` calls ≤ ~10 per frame. Reusing one render-options object freezes the root transform (Pixi writes `options.transform`), so roots stay at identity and scale lives on a child container. `clearColor` is a preallocated `number[4]`. |
 | Batching | Kit layers: 1 draw per chunk per pass, meshes built with `BufferUsage.STATIC` and Uint16 indices (≤ 65535 vertices per chunk mesh). Particles: 1 draw per `ParticleContainer`, from fixed-capacity pools filled before the first render; dead particles are hidden with scale 0 and never added or removed per frame. Hero: 1 draw (one atlas) plus halo. Custom-shader entities are merged per kind. |
-| Draw calls (estimate at High) | kit ≈ 10 layers × ≤ 2 chunks × 2 = ≤ 40 (typically ≈ 28); sky 1; fog 2; foreground ≈ 4; terrain ≈ 3 per visible chunk ≈ 12; decor ≈ 6; shafts ≤ 3; entities ≈ 5; hero 3; particles ≈ 6; glow twins ≈ 10; bloom 2·passes; composite 1. Total ≈ 90–110 |
+| Draw calls (estimate at High) | kit ≈ 10 layers × ≤ 2 chunks × 2 = ≤ 40 (typically ≈ 28); sky 1; fog 2; foreground ≈ 4; terrain ≈ 3 per visible chunk ≈ 12; decor ≈ 6; shafts ≤ 3; entities ≈ 5; hero 3; particles ≈ 6; glow twins ≈ 10; bloom 2·passes; composite 1. Total ≈ 90–110 (measured: 74–87 across eight gameplay views) |
 | Transparent full-screen layers | Must be cheap shaders: at most one texture fetch or a small analytic noise, and no dependent loops. |
 | Frame pacing (acceptance) | `lateFramePct` < 1% over the bench. Frame-time percentiles are reported, but they include fps-cap cadence jitter. |
 
