@@ -13,6 +13,9 @@ npm run build                                 # vite build → dist/
 npm run level                                 # regenerate public/levels/forest.ldtk from the ASCII map
 npm run plates                                # bake the demo painted plates (sharp + ktx2-encoder)
 npm run artifact -- <outDir>                  # single-file Claude artifact page (PixiJS from CDN, data inlined)
+npm run art                                   # bake art/plates/*.png into plate layers + manifest (M2)
+npm run art:export -- <area>                  # paint-over templates of an area's procedural layers (M2)
+npm run audio:render                          # render every synthesized sound offline to WAV (M2)
 ```
 
 ## Machine safety (hard rules)

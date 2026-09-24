@@ -24,7 +24,8 @@ function grade(exposure: number, lift = 0): GradeParams {
 }
 
 const TABLE: Record<AreaGradeId, GradeParams> = {
-  glade: grade(1), gully: grade(0.5, 0.1), rootwell: grade(0.8), canopy: grade(1.2), shrine: grade(1.4, 0.2),
+  glade: grade(1), gully: grade(0.5, 0.1), rootwell: grade(0.8), canopy: grade(1.2), veil: grade(0.9, 0.05),
+  shrine: grade(1.4, 0.2),
 };
 const FALLBACK = grade(2);
 

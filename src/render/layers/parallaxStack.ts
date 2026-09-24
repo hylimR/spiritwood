@@ -157,7 +157,7 @@ export class ParallaxStackView implements RenderView {
     if (!ctx) return;
     const cam = frame.camera;
     const vis = this.vis;
-    const time = frame.time % 3600;
+    const time = frame.worldTime % 3600;
     let fill = 0;
     for (let l = 0; l < this.layers.length; l++) {
       const rt = this.layers[l] as LayerRuntime;

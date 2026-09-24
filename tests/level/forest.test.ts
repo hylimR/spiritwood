@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
 import { TILE } from '../../src/config.ts';
-import { AREA_GRADES, TileKind, type LevelData } from '../../src/contracts/level.ts';
+import { AREA_GRADES, TileKind, type CrawlerDef, type LevelData } from '../../src/contracts/level.ts';
 import { tileAt } from '../../src/core/tiles.ts';
 import { parseLdtk } from '../../src/level/loader.ts';
 import { validateLevel } from '../../src/level/validate.ts';
@@ -165,7 +165,7 @@ describe('public/levels/forest.ldtk', () => {
     expect(level.lightShafts.filter((s) => zoneOf(level, s.x) === 'canopy')).toHaveLength(2);
 
     expect(level.enemies).toHaveLength(1);
-    const e = level.enemies[0];
+    const e = level.enemies[0] as CrawlerDef | undefined;
     const span = (e?.patrolMaxX ?? 0) - (e?.patrolMinX ?? 0) + DEFAULT_WORLD_TUNING.enemyWidth;
     expect(span / TILE).toBeGreaterThanOrEqual(9);
     expect(span / TILE).toBeLessThanOrEqual(12);

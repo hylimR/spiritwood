@@ -1,10 +1,11 @@
 import { SIM_DT } from '../config.ts';
 import type { Bounds, Facing } from '../contracts/common.ts';
-import { TileKind, type EnemyDef } from '../contracts/level.ts';
-import { SimEventType, type EnemyMode, type EnemyView } from '../contracts/sim.ts';
+import { TileKind, type CrawlerDef } from '../contracts/level.ts';
+import { SimEventType, type EnemyMode } from '../contracts/sim.ts';
 import type { SimEventQueue } from '../core/events.ts';
 import type { CollisionGrid } from '../level/grid.ts';
 import { createSweepResult, sweepX } from './physics.ts';
+import type { SimEnemy } from './simEnemy.ts';
 import { DEFAULT_WORLD_TUNING, type WorldTuning } from './tuning.ts';
 
 /**
@@ -12,8 +13,9 @@ import { DEFAULT_WORLD_TUNING, type WorldTuning } from './tuning.ts';
  * ledges. Stomped → 'stunned' for stunTicks (harmless, emits EnemyStomped), then re-forms at its
  * current spot (EnemyReformed).
  */
-export class Gloomcrawler implements EnemyView {
+export class Gloomcrawler implements SimEnemy {
   readonly id: number;
+  readonly kind = 'gloomcrawler' as const;
   x = 0;
   y = 0;
   prevX = 0;
@@ -26,14 +28,14 @@ export class Gloomcrawler implements EnemyView {
   modeTicks = 0;
   modeDuration = 0;
 
-  private readonly def: EnemyDef;
+  private readonly def: CrawlerDef;
   private readonly grid: CollisionGrid;
   private readonly tuning: WorldTuning;
   private readonly sweep = createSweepResult();
   /** While stunned, re-forming waits as long as this box (the player) overlaps the enemy. */
   private blocker: Bounds | null = null;
 
-  constructor(def: EnemyDef, grid: CollisionGrid, tuning: WorldTuning = DEFAULT_WORLD_TUNING) {
+  constructor(def: CrawlerDef, grid: CollisionGrid, tuning: WorldTuning = DEFAULT_WORLD_TUNING) {
     this.id = def.id;
     this.def = def;
     this.grid = grid;

@@ -202,6 +202,12 @@ export interface WorldTuning {
   enemyWidth: number;
   enemyHeight: number;
   enemyDefaultSpeed: number;
+  /** Thorn Spitter defaults for LDtk fields left unset (§5.3). Range is muzzle → player centre, u. */
+  spitterDefaultRange: number;
+  spitterDefaultPeriod: number;
+  spitterDefaultFlightTicks: number;
+  /** Fixed-aim seed launch speed, u/s. */
+  spitterDefaultSpeed: number;
 }
 
 export const DEFAULT_WORLD_TUNING: Readonly<WorldTuning> = Object.freeze({
@@ -219,4 +225,8 @@ export const DEFAULT_WORLD_TUNING: Readonly<WorldTuning> = Object.freeze({
   enemyWidth: 64,
   enemyHeight: 44,
   enemyDefaultSpeed: 90,
+  spitterDefaultRange: 720,
+  spitterDefaultPeriod: 150,
+  spitterDefaultFlightTicks: 60,
+  spitterDefaultSpeed: 900,
 });

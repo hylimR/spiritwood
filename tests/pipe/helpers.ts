@@ -42,7 +42,8 @@ export function createTestContext(level: LevelData): RenderContext & { textures:
 
 export function createFrame(sim: FakeSim, ctx: RenderContext): FrameInfo {
   return {
-    time: 0, dt: 1 / 60, alpha: 1, frame: 0, camera: computeCameraFrame(createCameraFrame(), sim.camera, 1),
+    time: 0, dt: 1 / 60, worldTime: 0, worldDt: 1 / 60, timeScale: 1, alpha: 1, frame: 0,
+    camera: computeCameraFrame(createCameraFrame(), sim.camera, 1),
     sim, quality: ctx.quality, renderScale: 1, pxPerUnit: 1,
   };
 }

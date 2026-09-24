@@ -365,6 +365,8 @@ function entityInstances(level: LevelData): JsonObject[] {
   const E = spec(LDTK_ENTITY.Enemy);
   const half = DEFAULT_WORLD_TUNING.enemyWidth / 2;
   for (const e of level.enemies) {
+    // TODO(M2 SIM): write Spitter entities.
+    if (e.kind !== 'gloomcrawler') continue;
     const left = e.patrolMinX - half;
     const width = e.patrolMaxX + half - left;
     if (e.x !== left + width / 2) throw new Error(`enemy ${e.id}: LDtk spawns enemies at the patrol rect centre`);

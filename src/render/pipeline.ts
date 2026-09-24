@@ -161,8 +161,8 @@ export class RenderPipeline {
     this.draws = new DrawCounter(gl);
 
     this.frame = {
-      time: 0, dt: 0, alpha: 1, frame: 0, camera: createCameraFrame(), sim: null as unknown as SimView,
-      quality: this._quality, renderScale: 1, pxPerUnit: 1,
+      time: 0, dt: 0, worldTime: 0, worldDt: 0, timeScale: 1, alpha: 1, frame: 0, camera: createCameraFrame(),
+      sim: null as unknown as SimView, quality: this._quality, renderScale: 1, pxPerUnit: 1,
     };
     this._ctx = {
       renderer, scene: this.scene, glow: this.glow, level: options.level, manifest: options.manifest,
@@ -296,6 +296,10 @@ export class RenderPipeline {
     const f = this.frame;
     f.time = this.time;
     f.dt = rdt;
+    // TODO(M2 PIPE): ease timeScale toward TIME_SCALE_FROZEN while sim.frozen (FrameInfo.worldTime).
+    f.timeScale = 1;
+    f.worldDt = rdt;
+    f.worldTime += rdt;
     f.alpha = alpha;
     f.frame = this.frameIndex;
     f.sim = sim;

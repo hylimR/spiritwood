@@ -43,7 +43,8 @@ function setup(density = 1): { view: ParticlesView; ctx: RenderContext; sim: Fak
   sim.camera.x = sim.camera.prevX = 1000;
   sim.camera.y = sim.camera.prevY = 500;
   const frame: FrameInfo = {
-    time: 0, dt: 1 / 60, alpha: 1, frame: 0, camera: computeCameraFrame(createCameraFrame(), sim.camera, 1), sim, quality: ctx.quality,
+    time: 0, dt: 1 / 60, worldTime: 0, worldDt: 1 / 60, timeScale: 1, alpha: 1, frame: 0,
+    camera: computeCameraFrame(createCameraFrame(), sim.camera, 1), sim, quality: ctx.quality,
     renderScale: 1, pxPerUnit: 1,
   };
   return { view, ctx, sim, frame };

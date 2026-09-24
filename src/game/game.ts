@@ -1,7 +1,8 @@
-import { GAME_TITLE, SIM_DT } from '../config.ts';
+import { GAME_TITLE, MAX_RENDER_DT, SIM_DT } from '../config.ts';
 import { createInputFrame, type InputFrame } from '../contracts/input.ts';
 import type { UserSettings } from '../contracts/quality.ts';
 import { AudioSystem } from '../audio/audio.ts';
+import type { AudioFrame, AudioVolumes } from '../contracts/audio.ts';
 import type { FetchFn } from '../assets/embedded.ts';
 import { loadManifest } from '../assets/manifest.ts';
 import { FixedStepLoop } from '../core/loop.ts';
@@ -40,6 +41,16 @@ function applyChanges(base: UserSettings, prev: UserSettings, next: UserSettings
   if (next.fpsCap !== prev.fpsCap) out.fpsCap = next.fpsCap;
   if (next.dynamicResolution !== prev.dynamicResolution) out.dynamicResolution = next.dynamicResolution;
   if (next.debugOverlay !== prev.debugOverlay) out.debugOverlay = next.debugOverlay;
+  if (next.masterVolume !== prev.masterVolume) out.masterVolume = next.masterVolume;
+  if (next.musicVolume !== prev.musicVolume) out.musicVolume = next.musicVolume;
+  if (next.sfxVolume !== prev.sfxVolume) out.sfxVolume = next.sfxVolume;
+  return out;
+}
+
+function volumesOf(s: UserSettings, out: AudioVolumes): AudioVolumes {
+  out.master = s.masterVolume;
+  out.music = s.musicVolume;
+  out.sfx = s.sfxVolume;
   return out;
 }
 
@@ -61,6 +72,8 @@ export class Game {
   private readonly overlay: DebugOverlay;
   private readonly frameTimer = new FrameTimer();
   private readonly audio = new AudioSystem();
+  private readonly audioVolumes: AudioVolumes = { master: 1, music: 1, sfx: 1 };
+  private readonly audioFrame: AudioFrame;
   private readonly tickInput: InputFrame = createInputFrame();
   private readonly emptyInput: InputFrame = createInputFrame();
   private readonly benchPos: BenchWaypoint = { x: 0, y: 0 };
@@ -93,6 +106,8 @@ export class Game {
     this.hud = new Hud(opts.uiRoot);
     this.overlay = new DebugOverlay(opts.uiRoot);
     this.overlay.setVisible(settings.debugOverlay);
+    this.audioFrame = { dt: 0, camX: 0, camY: 0, viewW: 0, viewH: 0, sim: world, paused: false };
+    this.audio.setVolumes(volumesOf(settings, this.audioVolumes));
     this.menu = new SettingsMenu(
       opts.uiRoot,
       settings,
@@ -240,6 +255,15 @@ export class Game {
     const events = this.world.events;
     for (let i = 0; i < events.count; i++) this.audio.onSimEvent(events.get(i));
     events.clear();
+    const cam = this.world.camera;
+    const af = this.audioFrame;
+    af.dt = Math.min(frameDt, MAX_RENDER_DT);
+    af.camX = cam.prevX + (cam.x - cam.prevX) * alpha;
+    af.camY = cam.prevY + (cam.y - cam.prevY) * alpha;
+    af.viewW = cam.viewW;
+    af.viewH = cam.viewH;
+    af.paused = this.menu.isOpen;
+    this.audio.update(af);
 
     if (this.world.completed && !this.completeShown) {
       this.completeShown = true;
@@ -280,6 +304,7 @@ export class Game {
     this.loop.setFpsCap(this.pipeline.quality.fpsCap);
     this.overlay.setVisible(next.debugOverlay);
     this.menu.setSettings(next);
+    this.audio.setVolumes(volumesOf(next, this.audioVolumes));
   }
 
   private closeMenu(): void {

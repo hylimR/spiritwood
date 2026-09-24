@@ -10,6 +10,7 @@ import type { GradeParams } from '../contracts/render.ts';
  * gully    colder and a little desaturated, a touch more contrast and vignette (tension).
  * rootwell deeper blue and darker, the strongest vignette (enclosed).
  * canopy   brighter moonlit cyan, open and airy, more bloom.
+ * veil     Thornveil: cool mauve dusk with rose-lit accents (the Thorn Spitters), slightly tense.
  * shrine   warm amber lift/gain, hopeful, bloom up.
  */
 export const DEFAULT_GRADE: GradeParams = {
@@ -33,6 +34,10 @@ export const AREA_GRADE_TABLE: Record<AreaGradeId, GradeParams> = {
   canopy: {
     exposure: 1.08, contrast: 1, saturation: 1.02, temperature: -0.1,
     lift: [0.01, 0.018, 0.026], gamma: [1.03, 1.03, 1.02], gain: [0.99, 1.04, 1.06], vignette: 0.2, bloomIntensity: 1.25,
+  },
+  veil: {
+    exposure: 1, contrast: 1.07, saturation: 0.96, temperature: -0.12,
+    lift: [0.014, 0.006, 0.022], gamma: [1, 0.99, 1.02], gain: [1.02, 0.97, 1.04], vignette: 0.38, bloomIntensity: 1.1,
   },
   shrine: {
     exposure: 1.05, contrast: 1.03, saturation: 1.06, temperature: 0.2,

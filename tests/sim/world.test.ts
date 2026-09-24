@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { KILL_MARGIN, SIM_DT } from '../../src/config.ts';
 import type { InputFrame } from '../../src/contracts/input.ts';
+import type { CrawlerDef } from '../../src/contracts/level.ts';
 import { DeathCause, SimEventType } from '../../src/contracts/sim.ts';
 import { levelFromAscii } from '../../src/level/ascii.ts';
 import { DEFAULT_TUNING, DEFAULT_WORLD_TUNING } from '../../src/sim/tuning.ts';
@@ -300,7 +301,7 @@ describe('enemies', () => {
   test('patrol turns at the range ends', () => {
     const rig = new WorldRig(rows);
     const e = rig.world.enemies[0];
-    const def = rig.world.level.enemies[0];
+    const def = rig.world.level.enemies[0] as CrawlerDef | undefined;
     if (!e || !def) throw new Error('fixture');
     let minX = e.x;
     let maxX = e.x;
@@ -340,8 +341,8 @@ describe('enemies', () => {
   test('an enemy with nowhere to walk stands guard instead of turning every tick', () => {
     // A single `E` is narrower than the crawler (patrolMinX = patrolMaxX), and a speed-0 crawler.
     const level = levelFromAscii(new MapBuilder(40, 14).put(3, 12, 'P').put(20, 12, 'E').fill(28, 12, 33, 12, 'E').rows());
-    const narrow = level.enemies[0];
-    const still = level.enemies[1];
+    const narrow = level.enemies[0] as CrawlerDef | undefined;
+    const still = level.enemies[1] as CrawlerDef | undefined;
     if (!narrow || !still) throw new Error('fixture');
     expect(narrow.patrolMinX).toBe(narrow.patrolMaxX);
     still.speed = 0;
@@ -350,7 +351,7 @@ describe('enemies', () => {
     rig.run(120);
     for (let i = 0; i < rig.world.enemies.length; i++) {
       const e = rig.world.enemies[i];
-      const def = level.enemies[i];
+      const def = level.enemies[i] as CrawlerDef | undefined;
       expect(e?.x).toBe(def?.x);
       expect(e?.vx).toBe(0);
       expect(e?.facing).toBe(1);
@@ -427,7 +428,7 @@ describe('enemies', () => {
     const rig = new WorldRig(rows);
     const w = rig.world;
     const e = w.enemies[0];
-    const def = w.level.enemies[0];
+    const def = w.level.enemies[0] as CrawlerDef | undefined;
     if (!e || !def) throw new Error('fixture');
     rig.run(100);
     expect(e.x).not.toBe(def.x);

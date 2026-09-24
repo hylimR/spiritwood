@@ -109,6 +109,8 @@ export function renderLevel(level: LevelData, scale: number, trace: readonly (re
   for (const cp of level.checkpoints) frame(c, X(cp.x), Y(cp.y), X(cp.x + cp.w), Y(cp.y + cp.h), PALETTE.floraGlow);
   if (level.goal) rect(c, X(level.goal.x), Y(level.goal.y), X(level.goal.x + level.goal.w), Y(level.goal.y + level.goal.h), PALETTE.warmAccent, 0.8);
   for (const e of level.enemies) {
+    // TODO(M2 SIM): draw Thorn Spitters.
+    if (e.kind !== 'gloomcrawler') continue;
     rect(c, X(e.patrolMinX - 32), Y(e.y) - 2, X(e.patrolMaxX + 32), Y(e.y), PALETTE.thorns);
     rect(c, X(e.x - 32), Y(e.y - 44), X(e.x + 32), Y(e.y), PALETTE.thorns, 0.7);
   }

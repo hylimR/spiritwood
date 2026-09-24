@@ -760,6 +760,11 @@
 						"color": 12580607
 					},
 					{
+						"id": "veil",
+						"tileRect": null,
+						"color": 0
+					},
+					{
 						"id": "shrine",
 						"tileRect": null,
 						"color": 16757850

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { TileKind, type LevelData } from '../../src/contracts/level.ts';
+import { TileKind, type CrawlerDef, type LevelData } from '../../src/contracts/level.ts';
 import { hashString } from '../../src/core/rng.ts';
 import { levelFromAscii } from '../../src/level/ascii.ts';
 import { LDTK_DEFAULTS, LevelParseError, loadLevel, parseLdtk } from '../../src/level/loader.ts';
@@ -83,7 +83,7 @@ describe('parseLdtk', () => {
     const raw = entities(p).find((x) => x['__identifier'] === 'Enemy') as Obj;
     raw['fieldInstances'] = [];
     raw['width'] = 40;
-    const narrow = parseLdtk(p).enemies[0];
+    const narrow = parseLdtk(p).enemies[0] as CrawlerDef | undefined;
     expect(narrow?.speed).toBe(DEFAULT_WORLD_TUNING.enemyDefaultSpeed);
     expect(narrow?.patrolMinX).toBe(narrow?.patrolMaxX);
     expect(narrow?.x).toBe(narrow?.patrolMinX);

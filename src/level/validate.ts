@@ -117,6 +117,8 @@ export function validateLevel(level: LevelData, tuning: PlayerTuning = DEFAULT_T
   const ew = DEFAULT_WORLD_TUNING.enemyWidth;
   const eh = DEFAULT_WORLD_TUNING.enemyHeight;
   for (const e of level.enemies) {
+    // TODO(M2 SIM): validate Thorn Spitters (rooted on a floor tile, not inside Solid, sane fields).
+    if (e.kind !== 'gloomcrawler') continue;
     if (e.patrolMinX > e.patrolMaxX) error(`enemy ${e.id} has an empty patrol range`);
     if (e.x < e.patrolMinX || e.x > e.patrolMaxX) error(`enemy ${e.id} spawns outside its patrol range`);
     if (e.y % t !== 0) {

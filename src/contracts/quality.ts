@@ -36,6 +36,10 @@ export interface UserSettings {
   fpsCap: 60 | 0;
   dynamicResolution: boolean;
   debugOverlay: boolean;
+  /** Linear gains 0..1 (§5.9); the menu steps them by 0.1. */
+  masterVolume: number;
+  musicVolume: number;
+  sfxVolume: number;
 }
 
 /** GPU facts used by auto quality. */

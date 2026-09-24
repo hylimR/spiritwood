@@ -1,5 +1,5 @@
 import { TILE } from '../config.ts';
-import { TileKind, type LevelData } from '../contracts/level.ts';
+import { TileKind, type LevelData, type SpitterDef } from '../contracts/level.ts';
 import { hashString } from '../core/rng.ts';
 import { DEFAULT_WORLD_TUNING } from '../sim/tuning.ts';
 
@@ -21,8 +21,11 @@ export interface AsciiLevelOptions {
  * Empty): `P` playerStart at the tile's bottom-centre; `o` orb at the tile centre, value 1; `C`
  * checkpoint 1×2 tiles whose bottom aligns with the glyph tile's bottom; `E` enemy — a horizontal run
  * of `E` is the patrol rect (EnemyDef rules), feet on the run's bottom edge; `G` goal 2×2 tiles whose
- * bottom-left is the first `G` tile's bottom-left. Rows may differ in length (padded with Empty).
- * Without `P`, the player starts at the top-left tile.
+ * bottom-left is the first `G` tile's bottom-left; `S` Thorn Spitter aimed at the player and `U` one
+ * firing straight up (fixed aim), both with WorldTuning defaults and feet at the tile's bottom-centre;
+ * `A` ability shrine (Spirit Launch), 1×2 tiles like a checkpoint. Enemy ids follow LevelData.enemies
+ * order: crawlers first, then spitters, each in row-major order. Rows may differ in length (padded with
+ * Empty). Without `P`, the player starts at the top-left tile.
  */
 export function levelFromAscii(rows: readonly string[], opts: AsciiLevelOptions = {}): LevelData {
   const T = opts.tileSize ?? TILE;
@@ -43,13 +46,16 @@ export function levelFromAscii(rows: readonly string[], opts: AsciiLevelOptions 
     orbs: [],
     checkpoints: [],
     enemies: [],
+    abilityShrines: [],
     goal: null,
     lightShafts: [],
     gradeZones: [],
     decorHints: [],
     seed: opts.seed ?? hashString(id),
   };
-  const halfEnemy = DEFAULT_WORLD_TUNING.enemyWidth / 2;
+  const wt = DEFAULT_WORLD_TUNING;
+  const halfEnemy = wt.enemyWidth / 2;
+  const spitters: SpitterDef[] = [];
   for (let ty = 0; ty < heightTiles; ty++) {
     const row = rows[ty] as string;
     for (let tx = 0; tx < row.length; tx++) {
@@ -89,14 +95,36 @@ export function levelFromAscii(rows: readonly string[], opts: AsciiLevelOptions 
             y: bottom,
             patrolMinX: min,
             patrolMaxX: max,
-            speed: DEFAULT_WORLD_TUNING.enemyDefaultSpeed,
+            speed: wt.enemyDefaultSpeed,
           });
           break;
         }
+        case 'S':
+        case 'U':
+          spitters.push({
+            id: 0,
+            kind: 'thornSpitter',
+            x: tx * T + T / 2,
+            y: bottom,
+            aim: ch === 'S' ? 'player' : 'fixed',
+            fixedVx: 0,
+            fixedVy: ch === 'S' ? 0 : -wt.spitterDefaultSpeed,
+            range: wt.spitterDefaultRange,
+            period: wt.spitterDefaultPeriod,
+            phase: 0,
+            flightTicks: wt.spitterDefaultFlightTicks,
+          });
+          break;
+        case 'A':
+          level.abilityShrines.push({
+            id: level.abilityShrines.length, x: tx * T, y: bottom - 2 * T, w: T, h: 2 * T, ability: 'launch',
+          });
+          break;
         default:
           break;
       }
     }
   }
+  for (const s of spitters) level.enemies.push({ ...s, id: level.enemies.length });
   return level;
 }

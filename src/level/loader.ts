@@ -244,6 +244,7 @@ export function parseLdtk(project: unknown, levelIdentifier?: string): LevelData
     orbs: [],
     checkpoints: [],
     enemies: [],
+    abilityShrines: [],
     goal: null,
     lightShafts: [],
     gradeZones: [],

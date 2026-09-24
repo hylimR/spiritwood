@@ -1,8 +1,11 @@
-import { KILL_MARGIN, HAZARD_INSET, SIM_DT, VIEW_H } from '../config.ts';
+import { KILL_MARGIN, HAZARD_INSET, MAX_PROJECTILES, SIM_DT, VIEW_H } from '../config.ts';
 import type { Bounds } from '../contracts/common.ts';
 import type { InputFrame } from '../contracts/input.ts';
 import type { CheckpointDef, GoalDef, LevelData, OrbDef } from '../contracts/level.ts';
-import { DeathCause, SimEventType, type CheckpointView, type GoalView, type OrbView, type SimView } from '../contracts/sim.ts';
+import {
+  DeathCause, SimEventType, type CheckpointView, type GoalView, type LaunchTargetKind, type LaunchView, type OrbView,
+  type ProjectileOwner, type ProjectileView, type SimView,
+} from '../contracts/sim.ts';
 import { SimEventQueue } from '../core/events.ts';
 import { clamp01 } from '../core/math.ts';
 import { CollisionGrid } from '../level/grid.ts';
@@ -10,6 +13,8 @@ import { CameraController } from './camera.ts';
 import { Gloomcrawler } from './enemy.ts';
 import { overlapsThorns } from './physics.ts';
 import { PlayerController } from './player.ts';
+import type { SimEnemy } from './simEnemy.ts';
+import { ThornSpitter } from './spitter.ts';
 import {
   DEFAULT_CAMERA_TUNING, DEFAULT_TUNING, DEFAULT_WORLD_TUNING, type CameraTuning, type PlayerTuning, type WorldTuning,
 } from './tuning.ts';
@@ -77,6 +82,44 @@ export class CheckpointState implements CheckpointView {
   }
 }
 
+/** Mutable seed state behind ProjectileView (one fixed pool slot). */
+export class ProjectileState implements ProjectileView {
+  readonly id: number;
+  active = false;
+  owner: ProjectileOwner = 'hostile';
+  x = 0;
+  y = 0;
+  prevX = 0;
+  prevY = 0;
+  vx = 0;
+  vy = 0;
+  radius = 12;
+  spawnTick = -1;
+  sourceId = -1;
+
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+
+/** Mutable Spirit Launch state behind LaunchView (M2 stub: SIM implements §5.1.1). */
+export class LaunchState implements LaunchView {
+  unlocked = false;
+  candidateKind: LaunchTargetKind = 'none';
+  candidateId = -1;
+  candidateX = 0;
+  candidateY = 0;
+  targetKind: LaunchTargetKind = 'none';
+  targetId = -1;
+  targetX = 0;
+  targetY = 0;
+  aimX = 0;
+  aimY = -1;
+  aimTicks = 0;
+  aimMaxTicks = 0;
+  range = 0;
+}
+
 /** Mutable goal state behind GoalView. */
 export class GoalState implements GoalView {
   readonly x: number;
@@ -103,7 +146,7 @@ function overlapsBounds(a: Bounds, b: Bounds): boolean {
 
 function isNeutral(input: InputFrame): boolean {
   return input.moveX === 0 && input.moveY === 0 && !input.jumpHeld && !input.jumpPressed
-    && !input.dashHeld && !input.dashPressed;
+    && !input.dashHeld && !input.dashPressed && !input.launchHeld && !input.launchPressed;
 }
 
 /**
@@ -119,7 +162,10 @@ export class GameWorld implements SimView {
   readonly player: PlayerController;
   readonly camera: CameraController;
   readonly events: SimEventQueue;
-  readonly enemies: Gloomcrawler[] = [];
+  readonly enemies: SimEnemy[] = [];
+  readonly projectiles: ProjectileState[] = [];
+  readonly launch = new LaunchState();
+  frozen = false;
   readonly orbs: OrbState[] = [];
   readonly checkpoints: CheckpointState[] = [];
   goal: GoalState | null = null;
@@ -164,10 +210,11 @@ export class GameWorld implements SimView {
 
     const wt = this.worldTuning;
     for (const def of level.enemies) {
-      const enemy = new Gloomcrawler(def, this.grid, wt);
+      const enemy: SimEnemy = def.kind === 'gloomcrawler' ? new Gloomcrawler(def, this.grid, wt) : new ThornSpitter(def, wt);
       enemy.setReformBlocker(this.blockerBox);
       this.enemies.push(enemy);
     }
+    for (let i = 0; i < MAX_PROJECTILES; i++) this.projectiles.push(new ProjectileState(i));
     for (const def of level.orbs) this.orbs.push(new OrbState(def, wt.orbCollectRadius));
     for (const def of level.checkpoints) this.checkpoints.push(new CheckpointState(def));
     this.goal = level.goal ? new GoalState(level.goal) : null;
@@ -205,7 +252,7 @@ export class GameWorld implements SimView {
     }
 
     // 3. Enemies.
-    for (let i = 0; i < this.enemies.length; i++) (this.enemies[i] as Gloomcrawler).step(tick, events);
+    for (let i = 0; i < this.enemies.length; i++) (this.enemies[i] as SimEnemy).step(tick, events);
 
     // 4. Hazards.
     if (player.alive) this.checkHazards(tick);
@@ -259,7 +306,7 @@ export class GameWorld implements SimView {
       c.active = false;
       c.activatedTick = -1;
     }
-    for (let i = 0; i < this.enemies.length; i++) (this.enemies[i] as Gloomcrawler).reset();
+    for (let i = 0; i < this.enemies.length; i++) (this.enemies[i] as SimEnemy).reset();
     if (this.goal) this.goal.reached = false;
     this.activeCheckpoint = -1;
     this.orbsCollected = 0;
@@ -315,7 +362,7 @@ export class GameWorld implements SimView {
     const falling = p.vy > 0;
     let stomped = false;
     for (let i = 0; i < this.enemies.length; i++) {
-      const e = this.enemies[i] as Gloomcrawler;
+      const e = this.enemies[i] as SimEnemy;
       if (!e.harmful || !overlapsBounds(box, e.getBounds(this.enemyBox))) continue;
       if (falling && p.prevY <= e.prevY - e.height + wt.stompTolerance) {
         e.stomp(tick, this.events);
@@ -419,7 +466,7 @@ export class GameWorld implements SimView {
   private respawnPlayer(tick: number): void {
     const at = this.respawnPoint(this.spawn);
     this.player.reset(at.x, at.y, tick);
-    for (let i = 0; i < this.enemies.length; i++) (this.enemies[i] as Gloomcrawler).reset();
+    for (let i = 0; i < this.enemies.length; i++) (this.enemies[i] as SimEnemy).reset();
     for (let i = 0; i < this.orbs.length; i++) {
       const o = this.orbs[i] as OrbState;
       if (!o.collected) o.respawn();

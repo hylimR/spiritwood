@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { MIN_ASPECT, VIEW_H } from '../../src/config.ts';
-import type { LevelData } from '../../src/contracts/level.ts';
+import type { CrawlerDef, LevelData } from '../../src/contracts/level.ts';
 import { levelFromAscii } from '../../src/level/ascii.ts';
 import { validateLevel } from '../../src/level/validate.ts';
 
@@ -114,7 +114,7 @@ describe('validateLevel', () => {
   });
 
   test('enemy patrol failures: no floor, blocked, off the grid, empty or missed range', () => {
-    const enemy = (patch: Partial<LevelData['enemies'][number]>): LevelData['enemies'][number] => ({
+    const enemy = (patch: Partial<CrawlerDef>): CrawlerDef => ({
       id: 0, kind: 'gloomcrawler', x: 10 * T, y: 29 * T, patrolMinX: 8 * T, patrolMaxX: 12 * T, speed: 90, ...patch,
     });
     const gap = good();

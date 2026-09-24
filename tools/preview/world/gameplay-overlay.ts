@@ -165,7 +165,8 @@ export function particlesOverlay(scene: Scene, seconds = 6): (img: Frame) => voi
     sim.camera.y = sim.camera.prevY = img.cam.cy;
     sim.player.visible = false;
     const frame: FrameInfo = {
-      time: img.time, dt: 1 / 30, alpha: 1, frame: 0, camera: computeCameraFrame(createCameraFrame(), sim.camera, 1), sim, quality: ctx.quality,
+      time: img.time, dt: 1 / 30, worldTime: img.time, worldDt: 1 / 30, timeScale: 1, alpha: 1, frame: 0,
+      camera: computeCameraFrame(createCameraFrame(), sim.camera, 1), sim, quality: ctx.quality,
       renderScale: 1, pxPerUnit: 1,
     };
     for (let i = 0; i < seconds * 30; i++) {

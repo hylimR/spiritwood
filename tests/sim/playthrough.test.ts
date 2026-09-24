@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
-import type { LevelData } from '../../src/contracts/level.ts';
+import type { CrawlerDef, LevelData } from '../../src/contracts/level.ts';
 import { SimEventType } from '../../src/contracts/sim.ts';
 import { parseLdtk } from '../../src/level/loader.ts';
 import { LDTK_PATH } from '../../tools/level/build-level.ts';
@@ -77,7 +77,7 @@ describe('playthrough: forest.ldtk is completable with the real controller', () 
       const enemy = w.enemies[0];
       if (!enemy) throw new Error('fixture');
       w.teleport(X(132.5), Y(14));
-      expect(w.player.x + w.player.width / 2).toBeLessThan((level.enemies[0]?.patrolMinX ?? 0) - enemy.width / 2);
+      expect(w.player.x + w.player.width / 2).toBeLessThan(((level.enemies[0] as CrawlerDef | undefined)?.patrolMinX ?? 0) - enemy.width / 2);
       try {
         bot.hold(0, () => enemy.facing > 0 && enemy.x >= X(trigger), 1200);
         bot.arc(1, { until: () => enemy.mode === 'stunned' });

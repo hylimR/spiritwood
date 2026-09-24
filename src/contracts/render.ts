@@ -55,6 +55,15 @@ export interface FrameInfo {
   time: number;
   /** Render dt, seconds, clamped to MAX_RENDER_DT. */
   dt: number;
+  /**
+   * World animation clock (particles, sway, shimmer, twinkle, rig secondary motion): advances by
+   * `worldDt` = dt·timeScale. timeScale eases toward TIME_SCALE_FROZEN while `sim.frozen` (Spirit Launch
+   * aim) and back to 1 after, so the world visibly slows to a crawl. UI and post keep `time`/`dt`.
+   * Upload `worldTime % 3600` to shaders.
+   */
+  worldTime: number;
+  worldDt: number;
+  timeScale: number;
   /** Sim interpolation factor 0..1. */
   alpha: number;
   frame: number;

@@ -49,7 +49,7 @@ describe('invariants under random input (forest.ldtk)', () => {
         for (let k = 0; k < w.enemies.length; k++) {
           const e = w.enemies[k];
           const def = level.enemies[k];
-          if (e && def && (e.x < def.patrolMinX || e.x > def.patrolMaxX)) failures.push(`${at}: enemy ${k} left its patrol range`);
+          if (e && def && def.kind === 'gloomcrawler' && (e.x < def.patrolMinX || e.x > def.patrolMaxX)) failures.push(`${at}: enemy ${k} left its patrol range`);
         }
         let collected = 0;
         for (const o of w.orbs) if (o.collected) collected++;

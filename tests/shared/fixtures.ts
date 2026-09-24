@@ -1,8 +1,9 @@
 import type { LevelData } from '../../src/contracts/level.ts';
 import type {
-  CameraView, CheckpointView, EnemyView, GoalView, OrbView, PlayerView, SimEvent, SimEventQueueView, SimView,
+  CameraView, CheckpointView, EnemyView, GoalView, LaunchView, OrbView, PlayerView, ProjectileView, SimEvent,
+  SimEventQueueView, SimView,
 } from '../../src/contracts/sim.ts';
-import { VIEW_H } from '../../src/config.ts';
+import { MAX_PROJECTILES, VIEW_H } from '../../src/config.ts';
 import { DEFAULT_TUNING, DEFAULT_WORLD_TUNING } from '../../src/sim/tuning.ts';
 
 export { levelFromAscii } from '../../src/level/ascii.ts';
@@ -12,6 +13,10 @@ type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 export interface FakeSim extends SimView {
   player: Mutable<PlayerView>;
   camera: Mutable<CameraView>;
+  enemies: Mutable<EnemyView>[];
+  projectiles: Mutable<ProjectileView>[];
+  launch: Mutable<LaunchView>;
+  frozen: boolean;
   events: FakeEventQueue;
   tick: number;
   fade: number;
@@ -39,7 +44,8 @@ export class FakeEventQueue implements SimEventQueueView {
 
 /**
  * A static, mutable SimView over `level` for render-side tests (WORLD/PIPE never depend on SIM's
- * implementation): player idle at playerStart, camera centred on it, entities at their spawns.
+ * implementation): player idle at playerStart, camera centred on it, entities at their spawns, the
+ * projectile pool empty (all slots inactive) and Spirit Launch locked.
  */
 export function createFakeSimView(level: LevelData, viewW = VIEW_H * (16 / 9), viewH = VIEW_H): FakeSim {
   const p = level.playerStart;
@@ -60,14 +66,27 @@ export function createFakeSimView(level: LevelData, viewW = VIEW_H * (16 / 9), v
   const checkpoints: CheckpointView[] = level.checkpoints.map((c) => ({
     id: c.id, x: c.x, y: c.y, w: c.w, h: c.h, active: false, activatedTick: -1,
   }));
-  const enemies: EnemyView[] = level.enemies.map((e) => ({
-    id: e.id, x: e.x, y: e.y, prevX: e.x, prevY: e.y, vx: e.speed, facing: 1,
-    width: DEFAULT_WORLD_TUNING.enemyWidth, height: DEFAULT_WORLD_TUNING.enemyHeight,
-    mode: 'patrol', modeTicks: 0, modeDuration: 0,
+  const enemies: Mutable<EnemyView>[] = level.enemies.map((e) => ({
+    id: e.id, kind: e.kind, x: e.x, y: e.y, prevX: e.x, prevY: e.y, vx: e.kind === 'gloomcrawler' ? e.speed : 0,
+    facing: 1, width: DEFAULT_WORLD_TUNING.enemyWidth, height: DEFAULT_WORLD_TUNING.enemyHeight,
+    mode: e.kind === 'gloomcrawler' ? 'patrol' : 'idle', modeTicks: 0, modeDuration: 0,
   }));
+  const projectiles: Mutable<ProjectileView>[] = [];
+  for (let i = 0; i < MAX_PROJECTILES; i++) {
+    projectiles.push({
+      id: i, active: false, owner: 'hostile', x: 0, y: 0, prevX: 0, prevY: 0, vx: 0, vy: 0, radius: 12,
+      spawnTick: -1, sourceId: -1,
+    });
+  }
+  const launch: Mutable<LaunchView> = {
+    unlocked: false, candidateKind: 'none', candidateId: -1, candidateX: 0, candidateY: 0,
+    targetKind: 'none', targetId: -1, targetX: 0, targetY: 0, aimX: 0, aimY: -1, aimTicks: 0, aimMaxTicks: 0,
+    range: 0,
+  };
   const goal: GoalView | null = level.goal ? { ...level.goal, reached: false } : null;
   return {
-    tick: 0, level, player, orbs, checkpoints, enemies, goal, camera, events: new FakeEventQueue(),
-    orbsCollected: 0, orbsTotal: level.orbs.length, fade: 0, prevFade: 0, elapsed: 0, completed: false,
+    tick: 0, level, player, orbs, checkpoints, enemies, projectiles, launch, frozen: false, goal, camera,
+    events: new FakeEventQueue(), orbsCollected: 0, orbsTotal: level.orbs.length, fade: 0, prevFade: 0, elapsed: 0,
+    completed: false,
   };
 }
