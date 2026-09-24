@@ -876,6 +876,13 @@ With the full High budget there are 10 kit layers plus sky and fog:
 - **Thorn Spitter:** a rooted bulb plant about 1.3 tiles tall with thorny leaves. Its bulb swells and
   glows `thorns` rose over the windup, recoils on the shot, droops and dims while stunned, and re-forms
   with a small bloom. SDF parts are baked into the entity atlas: one merged draw plus a glow twin.
+  - **Anchor spitters** (fixed aim) read differently from player-aimed ones at a glance: players must
+    know which plants hunt them and which are rhythm sources.
+    - An anchor is a taller, upright seed-pod stalk: a closed, ring-segmented pod pointing along its
+      fixed aim, with a slower rhythmic glow synced to its cycle.
+    - A player-aimed spitter keeps the bulb that leans toward the player.
+    - Both keep the thorny leaves and the rose `thorns` palette, because both kill on contact, and so
+      does every hostile seed.
 - **Seeds:** hostile = a rose ember with small thorns; reflected = a spirit-blue wisp. Each has a short
   ribbon trail (≤ 8 points). All seeds and trails share one draw, plus one glow-twin draw. That holds
   only if:
