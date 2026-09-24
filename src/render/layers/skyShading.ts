@@ -2,12 +2,37 @@ import type { SkyLayerDef } from '../../contracts/assets.ts';
 import { hexToRgb, parseHexColor, type RGB } from '../../core/color.ts';
 
 /**
- * Sky model shared by `sky.glsl.ts` (per fragment) and CPU previews: a 4-stop vertical gradient,
- * slow high mist, a moon with a two-lobe halo and sparse twinkling stars in the upper sky.
+ * Sky model shared by `sky.glsl.ts` (per fragment) and CPU previews: a 4-stop vertical gradient, a
+ * luminous horizon mist band behind the far treelines (it drifts slightly with the camera, like a
+ * very distant layer), faint high cloud streaks, a moon with a corona that lifts the sky around it,
+ * and sparse twinkling stars in the upper sky.
  */
 export const SKY_STOPS = 4;
 /** Star grid cell in view units. */
 export const STAR_CELL = 38;
+
+/** Horizon mist band: centre (view fraction at the level's mid height), parallax with camera y, widths, colour. */
+export const SKY_HORIZON = Object.freeze({
+  t: 0.6,
+  parallax: 0.06,
+  /** Gaussian half-widths above / below the centre (view fractions). */
+  up: 0.13,
+  down: 0.3,
+  color: [0.05, 0.115, 0.15] as RGB,
+  /** Noise modulation of the band: colour × (base + amp·noise). */
+  base: 0.72,
+  amp: 0.56,
+});
+
+/** Faint high cloud streaks (view-fraction band, colour). */
+export const SKY_CLOUDS = Object.freeze({ t0: 0.06, t1: 0.26, t2: 0.4, t3: 0.62, color: [0.03, 0.05, 0.075] as RGB });
+
+/** Moon corona lobes (× halo × moon colour): tight corona, mid glow and the broad sky lift. */
+export const MOON_GLOW = Object.freeze({
+  corona: 0.3, coronaFall: 2.4,
+  mid: 0.085, midFall: 0.55,
+  broad: 0.05, broadFall: 0.13,
+});
 
 export interface SkyParams {
   /** Stop positions (t, 0..1) and colours, padded to SKY_STOPS by repeating the last stop. */
@@ -42,6 +67,11 @@ export function skyParams(def: SkyLayerDef): SkyParams {
   };
 }
 
+/** View-space y of the horizon band centre for camera centre y `camY` in a level `levelH` tall. */
+export function skyHorizonY(viewH: number, camY: number, levelH: number): number {
+  return viewH * SKY_HORIZON.t - (camY - levelH / 2) * SKY_HORIZON.parallax;
+}
+
 function fract(x: number): number {
   return x - Math.floor(x);
 }
@@ -56,10 +86,13 @@ export function hash21(x: number, y: number): number {
   return fract(px * py);
 }
 
-/** Sky colour (straight RGB, opaque) at view-space (vx, vy). `mistNoise(x, y)` ≈ fbm in [0, 1]. */
+/**
+ * Sky colour (straight RGB, opaque) at view-space (vx, vy). `noise(x, y)` mirrors GLSL `sw_vnoise`
+ * (value noise in [0, 1]); tests may pass a constant.
+ */
 export function shadeSky(
-  out: Float32Array | number[], vx: number, vy: number, viewW: number, viewH: number, time: number, p: SkyParams,
-  mistNoise: (x: number, y: number) => number,
+  out: Float32Array | number[], vx: number, vy: number, viewW: number, viewH: number, horizonY: number, time: number, p: SkyParams,
+  noise: (x: number, y: number) => number,
 ): void {
   const t = vy / viewH;
   let i = 0;
@@ -71,32 +104,50 @@ export function shadeSky(
   let g = (p.stopColor[i * 3 + 1] as number) + ((p.stopColor[i * 3 + 4] as number) - (p.stopColor[i * 3 + 1] as number)) * u;
   let b = (p.stopColor[i * 3 + 2] as number) + ((p.stopColor[i * 3 + 5] as number) - (p.stopColor[i * 3 + 2] as number)) * u;
 
-  // High mist: drifting fbm band in the middle sky.
-  const band = smooth(0.12, 0.42, t) * (1 - smooth(0.55, 0.9, t));
-  const m = mistNoise(vx * 0.0016 + time * 0.004, vy * 0.0055) * band;
-  r += 0.045 * m;
-  g += 0.085 * m;
-  b += 0.105 * m;
+  // Horizon mist: an asymmetric glowing band, broken up by slow drifting noise.
+  const qx = vx * 0.0021 + time * 0.006;
+  const qy = vy * 0.0068;
+  const m = noise(qx, qy) * 0.62 + noise(qx * 2.7 + 5.1, qy * 2.3 + 1.7) * 0.38;
+  const dh = (vy - horizonY) / viewH;
+  const w = dh < 0 ? SKY_HORIZON.up : SKY_HORIZON.down;
+  const hb = Math.exp(-(dh * dh) / (w * w)) * (SKY_HORIZON.base + SKY_HORIZON.amp * m);
+  r += SKY_HORIZON.color[0] * hb;
+  g += SKY_HORIZON.color[1] * hb;
+  b += SKY_HORIZON.color[2] * hb;
 
-  // Moon halo and disc.
+  // High cloud streaks: the same noise, sharpened and stretched.
+  const cb = smooth(SKY_CLOUDS.t0, SKY_CLOUDS.t1, t) * (1 - smooth(SKY_CLOUDS.t2, SKY_CLOUDS.t3, t));
+  const streak = smooth(0.52, 0.85, m) * cb;
+  r += SKY_CLOUDS.color[0] * streak;
+  g += SKY_CLOUDS.color[1] * streak;
+  b += SKY_CLOUDS.color[2] * streak;
+
+  // Moon: corona, mid glow and a broad lift of the sky around it; then the mottled disc.
   const mx = p.moonX * viewW;
   const my = p.moonY * viewH;
   const d = Math.sqrt((vx - mx) * (vx - mx) + (vy - my) * (vy - my));
   const dn = d / p.moonRadius;
-  const halo = p.halo * (0.34 * Math.exp(-Math.max(0, dn - 1) * 1.5) + 0.11 * Math.exp(-dn * 0.3));
-  r += p.moonColor[0] * halo * 0.32;
-  g += p.moonColor[1] * halo * 0.32;
-  b += p.moonColor[2] * halo * 0.32;
-  const disc = 1 - smooth(-1.2, 1.2, d - p.moonRadius);
+  const e = Math.max(0, dn - 1);
+  const halo = p.halo * (MOON_GLOW.corona * Math.exp(-e * MOON_GLOW.coronaFall) + MOON_GLOW.mid * Math.exp(-e * MOON_GLOW.midFall)
+    + MOON_GLOW.broad * Math.exp(-dn * MOON_GLOW.broadFall));
+  r += p.moonColor[0] * halo;
+  g += p.moonColor[1] * halo;
+  b += p.moonColor[2] * halo;
+  const disc = 1 - smooth(-1.1, 1.1, d - p.moonRadius);
   if (disc > 0) {
-    const mottled = 0.9 + 0.1 * mistNoise(vx * 0.05 + 3, vy * 0.05 + 7);
-    r += (p.moonColor[0] * mottled - r) * disc;
-    g += (p.moonColor[1] * mottled - g) * disc;
-    b += (p.moonColor[2] * mottled - b) * disc;
+    const rr = Math.min(1, dn);
+    const limb = 1 - 0.16 * rr * rr * rr;
+    const lx = (vx - mx) / p.moonRadius;
+    const ly = (vy - my) / p.moonRadius;
+    const maria = smooth(0.5, 0.78, noise(lx * 1.7 + 3.1, ly * 1.7 + 8.3)) * 0.13 + smooth(0.55, 0.8, noise(lx * 4.1 + 11.0, ly * 4.1 + 2.0)) * 0.06;
+    const k = limb * (1 - maria);
+    r += (p.moonColor[0] * k - r) * disc;
+    g += (p.moonColor[1] * k - g) * disc;
+    b += (p.moonColor[2] * k - b) * disc;
   }
 
-  // Stars: at most one per grid cell, fading out into the haze below 45% of the view.
-  const fade = (1 - smooth(0.22, 0.46, t)) * smooth(2.2, 6, dn);
+  // Stars: at most one per grid cell, fading out into the haze and around the moon.
+  const fade = (1 - smooth(0.2, 0.44, t)) * smooth(2.4, 7, dn);
   if (fade > 0) {
     const cx = Math.floor(vx / STAR_CELL);
     const cy = Math.floor(vy / STAR_CELL);

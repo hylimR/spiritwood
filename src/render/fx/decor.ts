@@ -28,7 +28,7 @@ const DECOR_SWAY = 5;
 /** Decor chunk width (u): full-height columns. */
 const DECOR_CHUNK = 1536;
 /** Emissive strength of the glow twins. */
-const DECOR_GLOW = 0.9;
+export const DECOR_GLOW = 0.9;
 
 interface ChunkRuntime {
   bounds: Extent;

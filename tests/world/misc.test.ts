@@ -10,7 +10,9 @@ import { KIT_STRIDE_FLOATS } from '../../src/render/layers/kitMesh.ts';
 import { selectFogBands } from '../../src/render/layers/fog.ts';
 import { selectLayers } from '../../src/render/layers/parallaxStack.ts';
 import { plateMeshData } from '../../src/render/layers/plates.ts';
-import { hash21, shadeSky, skyParams } from '../../src/render/layers/skyShading.ts';
+import { hash21, MOON_GLOW, shadeSky, SKY_HORIZON, skyHorizonY, skyParams } from '../../src/render/layers/skyShading.ts';
+import { fogBandParams, shadeFog } from '../../src/render/layers/fogShading.ts';
+import { SHAFT_LOOK, shadeShaft, shaftProfile } from '../../src/render/fx/shaftShading.ts';
 
 const manifest = parseManifest(JSON.parse(readFileSync(new URL('../../public/layers/forest.manifest.json', import.meta.url), 'utf8')));
 
@@ -157,21 +159,42 @@ describe('sky model', () => {
   if (sky?.kind !== 'sky') throw new Error('manifest has no sky');
   const p = skyParams(sky);
   const out = [0, 0, 0];
-  const noMist = (): number => 0;
+  const flat = (): number => 0;
+  /** A horizon far off-screen isolates the gradient. */
+  const NO_HORIZON = -1e6;
 
   test('gradient runs from the top stop to the bottom stop', () => {
-    shadeSky(out, 1800, 0, 1920, 1080, 0, p, noMist);
+    shadeSky(out, 1800, 0, 1920, 1080, NO_HORIZON, 0, p, flat);
     expect(out[2]).toBeCloseTo(p.stopColor[2] as number, 2);
-    shadeSky(out, 1800, 1080, 1920, 1080, 0, p, noMist);
+    shadeSky(out, 1800, 1080, 1920, 1080, NO_HORIZON, 0, p, flat);
     expect(out[2]).toBeCloseTo(p.stopColor[11] as number, 2);
   });
 
-  test('the moon disc is moonlight-coloured and brighter than the sky around it', () => {
-    shadeSky(out, p.moonX * 1920, p.moonY * 1080, 1920, 1080, 0, p, noMist);
+  test('a luminous horizon band sits behind the far treelines and drifts slowly with the camera', () => {
+    const h = skyHorizonY(1080, 1200, 2400);
+    expect(h).toBeCloseTo(1080 * SKY_HORIZON.t, 6);
+    // Camera higher up → horizon lower on screen, by a small parallax.
+    expect(skyHorizonY(1080, 600, 2400)).toBeCloseTo(h + 600 * SKY_HORIZON.parallax, 6);
+    const lum = (y: number, horizon: number): number => {
+      shadeSky(out, 1800, y, 1920, 1080, horizon, 0, p, flat);
+      return 0.2126 * (out[0] as number) + 0.7152 * (out[1] as number) + 0.0722 * (out[2] as number);
+    };
+    expect(lum(h, h)).toBeGreaterThan(lum(h, NO_HORIZON) + 0.05);
+    expect(lum(h, h)).toBeGreaterThan(lum(h - 400, h));
+  });
+
+  test('the moon disc is moonlight-coloured, and its glow lifts the sky around it', () => {
+    const mx = p.moonX * 1920;
+    const my = p.moonY * 1080;
+    shadeSky(out, mx, my, 1920, 1080, NO_HORIZON, 0, p, flat);
     expect(out[0]).toBeGreaterThan(0.9 * p.moonColor[0] - 1e-6);
     const disc = out[0] as number;
-    shadeSky(out, p.moonX * 1920 + p.moonRadius * 4, p.moonY * 1080, 1920, 1080, 0, p, noMist);
+    shadeSky(out, mx + p.moonRadius * 4, my, 1920, 1080, NO_HORIZON, 0, p, flat);
+    const near = out[2] as number;
     expect(out[0]).toBeLessThan(disc);
+    shadeSky(out, mx + p.moonRadius * 16, my, 1920, 1080, NO_HORIZON, 0, p, flat);
+    expect(near).toBeGreaterThan((out[2] as number) + 0.01);
+    expect(MOON_GLOW.broad).toBeGreaterThan(0);
   });
 
   test('hash21 matches the GLSL definition', () => {
@@ -182,5 +205,50 @@ describe('sky model', () => {
     px += d;
     py += d;
     expect(hash21(3, 4)).toBeCloseTo(fract(px * py), 10);
+  });
+});
+
+describe('fog band model', () => {
+  const def = manifest.layers.find((l): l is FogLayerDef => l.kind === 'fog');
+  if (!def) throw new Error('manifest has no fog band');
+  const p = fogBandParams(def);
+  const out = [0, 0, 0, 0];
+
+  test('fades to nothing at both band edges and stays within its density', () => {
+    for (const noise of [(): number => 0, (): number => 1, (): number => 0.5]) {
+      shadeFog(out, 100, def.y - def.height, 0, p, noise);
+      expect(out[3]).toBe(0);
+      shadeFog(out, 100, def.y + def.height, 0, p, noise);
+      expect(out[3]).toBe(0);
+      for (let v = -1; v <= 1; v += 0.1) {
+        shadeFog(out, 100, def.y + v * def.height, 0, p, noise);
+        expect(out[3]).toBeLessThanOrEqual(def.density + 1e-9);
+        expect(out[3]).toBeGreaterThanOrEqual(0);
+      }
+    }
+  });
+
+  test('dense at the base, eroded into wisps toward the top', () => {
+    const noise = (): number => 0.45;
+    shadeFog(out, 0, def.y + 0.3 * def.height, 0, p, noise);
+    const base = out[3] as number;
+    shadeFog(out, 0, def.y - 0.8 * def.height, 0, p, noise);
+    expect(base).toBeGreaterThan(out[3] as number);
+  });
+});
+
+describe('light shaft shading', () => {
+  test('zero outside the shaft, brightest in the upper middle, reaching the floor softly', () => {
+    const n = (): number => 0.6;
+    expect(shadeShaft(-0.01, 0.3, 1, 1, 0, n)).toBe(0);
+    expect(shadeShaft(0.5, 1.01, 1, 1, 0, n)).toBe(0);
+    expect(shaftProfile(0, 0.3)).toBe(0);
+    expect(shaftProfile(0.5, 0)).toBe(0);
+    expect(shaftProfile(0.5, 1)).toBe(0);
+    const mid = shadeShaft(0.5, 0.2, 1, 1, 0, n);
+    const low = shadeShaft(0.5, 0.8, 1, 1, 0, n);
+    expect(mid).toBeGreaterThan(low);
+    expect(low).toBeGreaterThan(0);
+    expect(mid).toBeLessThanOrEqual(SHAFT_LOOK.strength * 1.3);
   });
 });

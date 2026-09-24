@@ -19,23 +19,23 @@ export const DEFAULT_GRADE: GradeParams = {
 
 export const AREA_GRADE_TABLE: Record<AreaGradeId, GradeParams> = {
   glade: {
-    exposure: 1, contrast: 1.04, saturation: 1.02, temperature: -0.08,
-    lift: [0.004, 0.012, 0.02], gamma: [1, 1, 1], gain: [0.98, 1.02, 1.03], vignette: 0.3, bloomIntensity: 1,
+    exposure: 1, contrast: 1.04, saturation: 1.04, temperature: -0.06,
+    lift: [0.004, 0.014, 0.018], gamma: [1, 1, 1], gain: [0.97, 1.03, 1.02], vignette: 0.3, bloomIntensity: 1,
   },
   gully: {
-    exposure: 0.96, contrast: 1.1, saturation: 0.86, temperature: -0.22,
-    lift: [0, 0.008, 0.022], gamma: [0.98, 1, 1.02], gain: [0.95, 1, 1.05], vignette: 0.4, bloomIntensity: 0.9,
+    exposure: 1.02, contrast: 1.09, saturation: 0.86, temperature: -0.28,
+    lift: [0, 0.006, 0.024], gamma: [0.98, 1, 1.03], gain: [0.93, 0.99, 1.06], vignette: 0.42, bloomIntensity: 0.9,
   },
   rootwell: {
-    exposure: 0.88, contrast: 1.07, saturation: 0.92, temperature: -0.3,
-    lift: [0, 0.006, 0.03], gamma: [0.96, 0.98, 1.04], gain: [0.9, 0.97, 1.08], vignette: 0.52, bloomIntensity: 1.05,
+    exposure: 0.95, contrast: 1.06, saturation: 0.92, temperature: -0.24,
+    lift: [0, 0.008, 0.03], gamma: [0.97, 0.99, 1.04], gain: [0.9, 0.98, 1.07], vignette: 0.52, bloomIntensity: 1.05,
   },
   canopy: {
-    exposure: 1.08, contrast: 1.02, saturation: 1.05, temperature: -0.12,
-    lift: [0.006, 0.016, 0.024], gamma: [1.02, 1.02, 1.02], gain: [0.98, 1.04, 1.06], vignette: 0.22, bloomIntensity: 1.25,
+    exposure: 1.08, contrast: 1, saturation: 1.02, temperature: -0.1,
+    lift: [0.01, 0.018, 0.026], gamma: [1.03, 1.03, 1.02], gain: [0.99, 1.04, 1.06], vignette: 0.2, bloomIntensity: 1.25,
   },
   shrine: {
-    exposure: 1.05, contrast: 1.03, saturation: 1.04, temperature: 0.14,
-    lift: [0.026, 0.01, 0.009], gamma: [1.04, 0.99, 0.98], gain: [1.08, 0.985, 0.94], vignette: 0.26, bloomIntensity: 1.3,
+    exposure: 1.05, contrast: 1.03, saturation: 1.06, temperature: 0.2,
+    lift: [0.03, 0.014, 0.008], gamma: [1.05, 1, 0.97], gain: [1.1, 1, 0.92], vignette: 0.26, bloomIntensity: 1.3,
   },
 };

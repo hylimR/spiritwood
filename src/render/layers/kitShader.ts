@@ -20,6 +20,7 @@ export function createKitLayerUniforms(p: KitShadeParams) {
     uSway: { value: 0, type: 'f32' },
     uTint: { value: vec3(p.tint), type: 'vec3<f32>' },
     uFogColor: { value: vec3(p.fogColor), type: 'vec3<f32>' },
+    uMistColor: { value: vec3(p.mistColor ?? p.fogColor), type: 'vec3<f32>' },
     uRimColor: { value: vec3(p.rimColor), type: 'vec3<f32>' },
     uFog: { value: p.fog, type: 'f32' },
     uDesat: { value: p.desaturate, type: 'f32' },

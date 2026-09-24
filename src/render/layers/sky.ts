@@ -4,7 +4,7 @@ import type { RenderStats } from '../../contracts/debug.ts';
 import type { FrameInfo, RenderContext, RenderView } from '../../contracts/render.ts';
 import { createSkyState } from '../util/states.ts';
 import { SKY_FRAGMENT, SKY_VERTEX } from './sky.glsl.ts';
-import { skyParams, SKY_STOPS } from './skyShading.ts';
+import { skyHorizonY, skyParams, SKY_STOPS } from './skyShading.ts';
 
 /** Share of the screen the sky still shades after early-Z rejects opaque-covered pixels (typical view). */
 const SKY_FILL_ESTIMATE = 0.6;
@@ -15,6 +15,7 @@ function createSkyUniforms(def: SkyLayerDef) {
   return new UniformGroup({
     uViewSize: { value: new Float32Array([1920, 1080]), type: 'vec2<f32>' },
     uTime: { value: 0, type: 'f32' },
+    uHorizonY: { value: 648, type: 'f32' },
     uStopT: { value: p.stopT.slice(0, SKY_STOPS), type: 'vec4<f32>' },
     uStop0: { value: stop(0), type: 'vec3<f32>' },
     uStop1: { value: stop(1), type: 'vec3<f32>' },
@@ -38,6 +39,8 @@ export class SkyView implements RenderView {
   private positions: Buffer | null = null;
   private moonX = 0;
   private moonY = 0;
+  private viewH = 1080;
+  private levelH = 0;
   private stats: RenderStats | null = null;
 
   init(ctx: RenderContext): void {
@@ -47,6 +50,7 @@ export class SkyView implements RenderView {
     if (!def) return;
     this.moonX = def.moon.x;
     this.moonY = def.moon.y;
+    this.levelH = ctx.level.pxHeight;
     this.uniforms = createSkyUniforms(def);
     this.positions = new Buffer({ data: new Float32Array(8), usage: BufferUsage.VERTEX | BufferUsage.COPY_DST, label: 'sky-positions' });
     const geometry = new Geometry({
@@ -73,11 +77,14 @@ export class SkyView implements RenderView {
     u.uViewSize[1] = viewH;
     u.uMoon[0] = this.moonX * viewW;
     u.uMoon[1] = this.moonY * viewH;
+    this.viewH = viewH;
   }
 
   update(frame: FrameInfo): void {
     if (!this.uniforms || !this.stats) return;
-    this.uniforms.uniforms.uTime = frame.time % 3600;
+    const u = this.uniforms.uniforms;
+    u.uTime = frame.time % 3600;
+    u.uHorizonY = skyHorizonY(this.viewH, frame.camera.cy, this.levelH);
     this.stats.fillScreens += SKY_FILL_ESTIMATE;
   }
 

@@ -1,5 +1,6 @@
 import { PALETTE } from '../../config.ts';
 import type { KitLayerDef, PlateLayerDef } from '../../contracts/assets.ts';
+import type { LevelData } from '../../contracts/level.ts';
 import type { QualityLevel } from '../../contracts/quality.ts';
 import { hexToRgb, parseHexColor } from '../../core/color.ts';
 import type { KitMeta } from '../gen/kit.ts';
@@ -34,9 +35,11 @@ export interface PreparedKitLayer {
 }
 
 export function kitShadeParams(def: KitLayerDef, recipe: Recipe, placement: LayerPlacement): KitShadeParams {
+  const fogColor = hexToRgb(parseHexColor(def.fogColor));
   return {
     tint: hexToRgb(parseHexColor(def.tint)),
-    fogColor: hexToRgb(parseHexColor(def.fogColor)),
+    fogColor,
+    mistColor: [fogColor[0] + recipe.mistLift[0], fogColor[1] + recipe.mistLift[1], fogColor[2] + recipe.mistLift[2]],
     fog: def.fog,
     desaturate: def.desaturate,
     rim: def.rim,
@@ -64,10 +67,20 @@ export function plateShadeParams(def: PlateLayerDef): KitShadeParams {
   };
 }
 
-export function prepareKitLayer(def: KitLayerDef, kit: KitMeta, levelW: number, levelH: number): PreparedKitLayer {
+/** World x of the places the forest opens up around: the goal and every lantern. */
+export function clearingHints(level: Pick<LevelData, 'goal' | 'decorHints'>): number[] {
+  const out: number[] = [];
+  if (level.goal) out.push(level.goal.x + level.goal.w / 2);
+  for (const h of level.decorHints) if (h.kind === 'lantern') out.push(h.x);
+  return out;
+}
+
+export function prepareKitLayer(
+  def: KitLayerDef, kit: KitMeta, levelW: number, levelH: number, clearings: readonly number[] = [],
+): PreparedKitLayer {
   const recipe = RECIPES[def.recipe];
   if (!recipe) throw new Error(`Layer ${def.id}: unknown recipe ${def.recipe}`);
-  const placement = placeLayer(def, recipe, kit.byCategory, levelW, levelH);
+  const placement = placeLayer(def, recipe, kit.byCategory, levelW, levelH, clearings);
   const fx = def.parallax[0];
   const depthTested = fx <= 1;
   const swayAmp = recipe.swayAmp * def.sway;

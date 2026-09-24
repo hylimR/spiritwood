@@ -8,7 +8,7 @@ import { depthForInstance } from '../../src/render/util/camera.ts';
 function element(over: Partial<KitElement> = {}): KitElement {
   return {
     index: 0, category: 'grass', variant: 0, x: 100, y: 200, w: 40, h: 60, unitsPerTexel: 2, anchorX: 20, anchorY: 60,
-    sway: 'none', swayScale: 0, emissive: false, cut: 'none', stretchFrom: 60,
+    sway: 'none', swayScale: 0, emissive: false, cut: 'none', stretchFrom: 60, columnX: 20,
     core: [10, 10, 30, 50], soft: [0, 0, 40, 10, 0, 50, 40, 60], coreArea: 800, softArea: 800,
     ...over,
   };

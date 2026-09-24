@@ -44,6 +44,7 @@ in vec4 vTint;
 uniform sampler2D uTexture;
 uniform vec3 uTint;
 uniform vec3 uFogColor;
+uniform vec3 uMistColor;
 uniform vec3 uRimColor;
 uniform float uFog;
 uniform float uDesat;
@@ -66,9 +67,9 @@ vec4 sampleClamped(vec2 uv) {
   return textureLod(uTexture, uv, lod);
 }
 
-float fogAmount() {
+float mistAmount() {
   float t = clamp((vLayerY - uMistY) / max(uMistDepth, 1e-3), 0.0, 1.0);
-  return min(1.0, uFog + (1.0 - uFog) * t * t * uMist);
+  return min(1.0, t * t * uMist);
 }
 
 void main() {
@@ -80,7 +81,7 @@ void main() {
     vec3 c = uStraight > 0.5 ? t.rgb : t.rgb / max(a, 1e-4);
     c *= uTint;
     c = mix(c, vec3(sw_luma(c)), uDesat);
-    c = mix(c, uFogColor, fogAmount()) + dither;
+    c = mix(mix(c, uFogColor, uFog), uMistColor, mistAmount()) + dither;
     finalColor = uMode > 2.5 ? vec4(c, 1.0) : vec4(c * a, a);
     return;
   }
@@ -88,8 +89,9 @@ void main() {
   float k = (0.5 + ch.r) * (0.8 + 0.4 * vTint.a);
   vec3 c = uTint * k + uRimColor * (ch.g * uRim * ${f(KIT_RIM_SCALE)});
   c = mix(c, vec3(sw_luma(c)), uDesat);
-  float fog = fogAmount();
-  c = mix(c, uFogColor, fog);
+  float m = mistAmount();
+  c = mix(mix(c, uFogColor, uFog), uMistColor, m);
+  float fog = uFog + (1.0 - uFog) * m;
   vec3 g = vTint.rgb * uGlow;
   float e = ch.b * (1.0 - fog * 0.6) * step(1e-4, uGlow);
   c = mix(c, g * 1.25, e);

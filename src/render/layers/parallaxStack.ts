@@ -9,7 +9,7 @@ import { PROCEDURAL_KIT, type WorldAssets } from './assets.ts';
 import { createKitGeometry, type WorldMesh } from './geometry.ts';
 import { createKitLayerUniforms, createKitShader, type KitLayerUniforms } from './kitShader.ts';
 import { KIT_MODE } from './kitShading.ts';
-import { meetsQuality, plateShadeParams, prepareKitLayer } from './layerModel.ts';
+import { clearingHints, meetsQuality, plateShadeParams, prepareKitLayer } from './layerModel.ts';
 import { PlateLayer } from './plates.ts';
 
 interface ChunkRuntime {
@@ -90,6 +90,7 @@ export class ParallaxStackView implements RenderView {
     this.plateReserve = ctx.textures.totalBytes;
     const coreState = createOpaqueState();
     const bandState = createTransparentState();
+    const clearings = clearingHints(ctx.level);
     const fgState = State.for2d();
 
     for (const def of defs) {
@@ -112,7 +113,7 @@ export class ParallaxStackView implements RenderView {
           console.warn(`[world] layer ${def.id}: only the procedural '${PROCEDURAL_KIT}' atlas is supported in M1; skipped`);
           continue;
         }
-        const prepared = prepareKitLayer(def, kit, W, H);
+        const prepared = prepareKitLayer(def, kit, W, H, clearings);
         const uniforms = createKitLayerUniforms(prepared.params);
         const coreShader = createKitShader(texture.source, uniforms, KIT_MODE.Core);
         const bandShader = createKitShader(texture.source, uniforms, KIT_MODE.Band);

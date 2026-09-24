@@ -78,7 +78,11 @@ describe('placeDecor', () => {
     expect(d.back.some((i) => i.el.category === 'floraBig')).toBe(true);
     const lantern = d.back.find((i) => i.el.category === 'lantern') as DecorInstance;
     expect(lantern.glow).toBe(PALETTE.warmAccent);
-    expect(d.halos).toHaveLength(2);
+    // One pool per hint, plus faint rose pools along the thorn run.
+    expect(d.halos.filter((h) => h.color !== PALETTE.thorns)).toHaveLength(2);
+    const thorn = d.halos.filter((h) => h.color === PALETTE.thorns);
+    expect(thorn.length).toBeGreaterThan(0);
+    for (const h of thorn) expect(h.alpha).toBeLessThan(0.2);
   });
 
   test('floors carry grass (dense enough to read), front layer holds only small plants', () => {

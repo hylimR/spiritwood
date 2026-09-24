@@ -8,6 +8,7 @@ import { SKY_FRAGMENT, SKY_VERTEX } from '../../src/render/layers/sky.glsl.ts';
 import {
   TERRAIN_CORE_FRAGMENT, TERRAIN_CORE_VERTEX, TERRAIN_EDGE_FRAGMENT, TERRAIN_EDGE_VERTEX,
 } from '../../src/render/terrain/terrain.glsl.ts';
+import { TERRAIN_CORE_ATTRS, TERRAIN_EDGE_ATTRS } from '../../src/render/terrain/terrainView.ts';
 
 /**
  * No GPU in tests, so this is a static lint of every WORLD shader: GLSL ES 3.00 headers, no WebGL1
@@ -19,8 +20,8 @@ const PROGRAMS: Record<string, { vertex: string; fragment: string; attributes: s
   sky: { vertex: SKY_VERTEX, fragment: SKY_FRAGMENT, attributes: ['aPosition'] },
   fog: { vertex: FOG_VERTEX, fragment: FOG_FRAGMENT, attributes: ['aPosition'] },
   shafts: { vertex: SHAFT_VERTEX, fragment: SHAFT_FRAGMENT, attributes: ['aPosition', 'aShaft', 'aSeed'] },
-  terrainCore: { vertex: TERRAIN_CORE_VERTEX, fragment: TERRAIN_CORE_FRAGMENT, attributes: ['aPosition', 'aDist'] },
-  terrainEdge: { vertex: TERRAIN_EDGE_VERTEX, fragment: TERRAIN_EDGE_FRAGMENT, attributes: ['aPosition', 'aNormal', 'aEdge'] },
+  terrainCore: { vertex: TERRAIN_CORE_VERTEX, fragment: TERRAIN_CORE_FRAGMENT, attributes: TERRAIN_CORE_ATTRS.map((a) => a.name) },
+  terrainEdge: { vertex: TERRAIN_EDGE_VERTEX, fragment: TERRAIN_EDGE_FRAGMENT, attributes: TERRAIN_EDGE_ATTRS.map((a) => a.name) },
 };
 
 // GLSL ES 3.00 §3.8: keywords reserved for future use (a compile error if used as identifiers).

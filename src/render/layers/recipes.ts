@@ -21,6 +21,19 @@ export interface RecipeStream {
   y: [number, number];
   /** Horizontal flip allowed (default true). */
   flip?: boolean;
+  /**
+   * Clearings: a smooth 1D noise over x (one value per `scale` layer units) skips instances where it
+   * falls below `below` (0..1), so the stream opens into glades instead of an even wall.
+   */
+  gaps?: { scale: number; below: number };
+  /**
+   * Crowns hung on the stretched column of each top-cut element this stream places (probability
+   * `chance`), centred at a fraction in `span` of the way from the element's stretch row up to the
+   * layer top, drawn right after their trunk.
+   */
+  attach?: { category: KitCategory; chance: number; span: [number, number] };
+  /** Keep this stream out of the clearings around gameplay hints (the goal, lanterns). */
+  clearAtHints?: boolean;
 }
 
 export interface Recipe {
@@ -34,25 +47,31 @@ export interface Recipe {
   mistDepth: number;
   /** Sway amplitude in layer units at full layer sway (per 100 u of element height). */
   swayAmp: number;
+  /** Added to the layer's fog colour to give the colour of the mist rising from its base. */
+  mistLift: readonly [number, number, number];
 }
 
 const TREELINE: Recipe = {
   id: 'farTreeline',
   streams: [
-    { items: [{ category: 'farCanopy', weight: 1, scale: [1.1, 1.5] }], density: 0.2, from: 'baseline', y: [0, 40] },
-    { items: [{ category: 'farTree', weight: 1 }], density: 1, from: 'baseline', y: [-30, 40] },
-    { items: [{ category: 'farCanopy', weight: 1, scale: [0.8, 1.1] }], density: 0.18, from: 'baseline', y: [20, 70] },
+    { items: [{ category: 'farCanopy', weight: 1, scale: [1.0, 1.4] }], density: 0.15, from: 'baseline', y: [10, 50] },
+    { items: [{ category: 'farTree', weight: 1 }], density: 1, from: 'baseline', y: [-20, 30], gaps: { scale: 650, below: 0.32 } },
+    { items: [{ category: 'farCanopy', weight: 1, scale: [0.7, 1.0] }], density: 0.06, from: 'baseline', y: [40, 80] },
   ],
   groundFill: null,
   mist: 1,
-  mistDepth: 220,
+  mistDepth: 260,
   swayAmp: 0,
+  mistLift: [0, 0, 0],
 };
 
 const MID: Recipe = {
   id: 'midForest',
   streams: [
-    { items: [{ category: 'midTrunk', weight: 1 }], density: 1, from: 'baseline', y: [-10, 24] },
+    {
+      items: [{ category: 'midTrunk', weight: 1 }], density: 1.7, from: 'baseline', y: [-10, 24], gaps: { scale: 1150, below: 0.3 },
+      attach: { category: 'midCrown', chance: 0.55, span: [0.18, 0.62] }, clearAtHints: true,
+    },
     { items: [{ category: 'groundEdge', weight: 1, scale: [0.9, 1.2] }], density: 0, tile: 0.72, from: 'baseline', y: [-6, 10] },
     {
       items: [
@@ -61,21 +80,25 @@ const MID: Recipe = {
         { category: 'rock', weight: 1, scale: [0.8, 1.2] },
         { category: 'glowFlower', weight: 0.8, scale: [0.9, 1.2] },
       ],
-      density: 2.4, from: 'baseline', y: [4, 26],
+      density: 3, from: 'baseline', y: [4, 26], gaps: { scale: 500, below: 0.25 },
     },
-    { items: [{ category: 'canopyTop', weight: 1, scale: [0.9, 1.3] }], density: 0.35, from: 'top', y: [-44, -16] },
-    { items: [{ category: 'vine', weight: 1, scale: [0.8, 1.3] }], density: 0.7, from: 'top', y: [60, 320] },
+    { items: [{ category: 'canopyTop', weight: 1, scale: [0.9, 1.3] }], density: 0.55, from: 'top', y: [-44, -16], gaps: { scale: 800, below: 0.25 } },
+    { items: [{ category: 'vine', weight: 1, scale: [0.8, 1.3] }], density: 0.6, from: 'top', y: [60, 320] },
   ],
   groundFill: 40,
-  mist: 0.85,
-  mistDepth: 320,
+  mist: 0.9,
+  mistDepth: 360,
   swayAmp: 4,
+  mistLift: [0.0, 0.035, 0.03],
 };
 
 const NEAR: Recipe = {
   id: 'nearForest',
   streams: [
-    { items: [{ category: 'nearTrunk', weight: 1 }], density: 1, from: 'baseline', y: [-10, 24] },
+    {
+      items: [{ category: 'nearTrunk', weight: 1 }], density: 1, from: 'baseline', y: [-10, 24], gaps: { scale: 1000, below: 0.3 },
+      clearAtHints: true,
+    },
     { items: [{ category: 'groundEdge', weight: 1, scale: [1, 1.3] }], density: 0, tile: 0.72, from: 'baseline', y: [-6, 12] },
     {
       items: [
@@ -86,15 +109,16 @@ const NEAR: Recipe = {
         { category: 'midBush', weight: 0.8, scale: [0.7, 0.9] },
         { category: 'glowFlower', weight: 0.8, scale: [1.1, 1.4] },
       ],
-      density: 2.2, from: 'baseline', y: [4, 24],
+      density: 2.6, from: 'baseline', y: [4, 24], gaps: { scale: 600, below: 0.25 },
     },
-    { items: [{ category: 'canopyTop', weight: 1, scale: [1, 1.4] }], density: 0.45, from: 'top', y: [-44, -16] },
+    { items: [{ category: 'canopyTop', weight: 1, scale: [1, 1.4] }], density: 0.45, from: 'top', y: [-44, -16], gaps: { scale: 900, below: 0.3 } },
     { items: [{ category: 'vine', weight: 1, scale: [1, 1.5] }], density: 0.6, from: 'top', y: [40, 300] },
   ],
   groundFill: 44,
-  mist: 0.7,
-  mistDepth: 380,
+  mist: 0.75,
+  mistDepth: 400,
   swayAmp: 4,
+  mistLift: [0.0, 0.025, 0.025],
 };
 
 const FRAME: Recipe = {
@@ -108,6 +132,7 @@ const FRAME: Recipe = {
   mist: 0,
   mistDepth: 1,
   swayAmp: 3,
+  mistLift: [0, 0, 0],
 };
 
 export const RECIPES: Readonly<Record<string, Recipe>> = Object.freeze({

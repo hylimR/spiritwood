@@ -3,6 +3,8 @@ import { PALETTE } from '../../config.ts';
 import type { QualitySettings } from '../../contracts/quality.ts';
 import type { FrameInfo, RenderContext, RenderView } from '../../contracts/render.ts';
 import { SimEventType, type SimEvent } from '../../contracts/sim.ts';
+import { TileKind, type LevelData } from '../../contracts/level.ts';
+import { tileAt } from '../../core/tiles.ts';
 import { Rng } from '../../core/rng.ts';
 import type { ParticleFrame } from '../gen/particleAtlas.ts';
 import type { WorldAssets } from '../layers/assets.ts';
@@ -44,6 +46,31 @@ const DUST = toBgr(0x6d8fa0);
 const DARK = toBgr(0x0a1220);
 const LEAF = toBgr(0x122232);
 
+const ATT_FLORA = 0;
+const ATT_LANTERN = 1;
+const ATT_GROUND = 2;
+const ATT_SHAFT = 3;
+
+/**
+ * Firefly homes from the level (pure): big flora and lanterns (weighted by repetition), the foot of
+ * each light shaft, and a sparse sampling of floor surfaces.
+ */
+export function fireflyAttractors(level: LevelData, traps: readonly Trapezoid[]): Float32Array<ArrayBuffer> {
+  const out: number[] = [];
+  for (const h of level.decorHints) {
+    if (h.kind === 'flora') for (let i = 0; i < 3; i++) out.push(h.x, h.y - 70, ATT_FLORA);
+    else for (let i = 0; i < 2; i++) out.push(h.x, h.y - 100, ATT_LANTERN);
+  }
+  for (const t of traps) out.push(t.botX + t.botW / 2, t.y0 + (t.y1 - t.y0) * 0.7, ATT_SHAFT);
+  const T = level.tileSize;
+  for (let ty = 1; ty < level.heightTiles; ty++) {
+    for (let tx = 0; tx < level.widthTiles; tx += 3) {
+      if (tileAt(level, tx, ty) === TileKind.Solid && tileAt(level, tx, ty - 1) === TileKind.Empty) out.push((tx + 0.5) * T, ty * T - 45, ATT_GROUND);
+    }
+  }
+  return Float32Array.from(out);
+}
+
 function smooth(e0: number, e1: number, x: number): number {
   const t = x <= e0 ? 0 : x >= e1 ? 1 : (x - e0) / (e1 - e0);
   return t * t * (3 - 2 * t);
@@ -80,7 +107,8 @@ export class ParticlesView implements RenderView {
   private wispRing: MoteRing | null = null;
   private traps: Trapezoid[] = [];
   private trapBounds: Window[] = [];
-  private lanterns: { x: number; y: number }[] = [];
+  /** Firefly homes: (x, y, kind) triples. */
+  private attractors: Float32Array = new Float32Array(0);
   private readonly win: Window = { x0: 0, y0: 0, x1: 0, y1: 0 };
   private readonly pt = { x: 0, y: 0 };
   private lastSnap = Number.NaN;
@@ -145,7 +173,7 @@ export class ParticlesView implements RenderView {
 
     this.traps = ctx.level.lightShafts.map(shaftTrapezoid);
     this.trapBounds = this.traps.map(trapezoidBounds);
-    this.lanterns = ctx.level.decorHints.filter((h) => h.kind === 'lantern').map((h) => ({ x: h.x, y: h.y }));
+    this.attractors = fireflyAttractors(ctx.level, this.traps);
 
     const tex = frames.dot;
     const mk = (particles: Mote[], additive: boolean, rotation: boolean, parent: Container, alpha = 1): ParticleContainer<Mote> => {
@@ -195,6 +223,10 @@ export class ParticlesView implements RenderView {
     m.bgr = pick < 0.5 ? TEAL : pick < 0.8 ? MOTE_PALE : SPIRIT;
   }
 
+  /**
+   * Fireflies gather with intent: around big glowing flora, lanterns (warm), the foot of light shafts
+   * and just above the ground, each tethered to its home; only a few drift free in the air.
+   */
   private spawnFirefly(m: Mote): void {
     const w = this.win;
     const r = this.rng;
@@ -202,28 +234,40 @@ export class ParticlesView implements RenderView {
     m.phase = r.range(0, 6.283);
     m.spin = r.range(0.7, 1.6);
     m.size = r.range(0.2, 0.36);
-    m.d = r.range(16, 30);
-    m.bgr = TEAL;
-    let near = -1;
-    if (this.lanterns.length > 0 && r.chance(0.35)) {
-      const start = r.int(0, this.lanterns.length - 1);
-      for (let k = 0; k < this.lanterns.length; k++) {
-        const l = this.lanterns[(start + k) % this.lanterns.length] as { x: number; y: number };
-        if (l.x > w.x0 && l.x < w.x1 && l.y > w.y0 && l.y < w.y1) {
-          near = (start + k) % this.lanterns.length;
+    m.d = r.range(14, 26);
+    m.bgr = r.chance(0.8) ? TEAL : MOTE_PALE;
+    const att = this.attractors;
+    const n = att.length / 3;
+    let home = -1;
+    if (n > 0 && r.chance(0.85)) {
+      const start = r.int(0, n - 1);
+      for (let k = 0; k < n; k++) {
+        const j = ((start + k) % n) * 3;
+        const ax = att[j] as number;
+        const ay = att[j + 1] as number;
+        if (ax > w.x0 && ax < w.x1 && ay > w.y0 && ay < w.y1) {
+          home = j;
           break;
         }
       }
     }
-    if (near >= 0) {
-      const l = this.lanterns[near] as { x: number; y: number };
-      m.x = l.x + r.range(-220, 220);
-      m.y = l.y - r.range(20, 200);
-      m.bgr = r.chance(0.7) ? WARM : WARM_WHITE;
-    } else {
+    if (home < 0) {
       m.x = r.range(w.x0, w.x1);
       m.y = r.range(w.y0 + (w.y1 - w.y0) * 0.3, w.y1);
+      m.a = m.x;
+      m.b = m.y;
+      m.c = 260;
+      return;
     }
+    const kind = att[home + 2] as number;
+    const reach = kind === ATT_LANTERN ? 200 : kind === ATT_FLORA ? 130 : kind === ATT_SHAFT ? 160 : 90;
+    m.a = att[home] as number;
+    m.b = att[home + 1] as number;
+    m.c = reach;
+    m.x = Math.min(w.x1, Math.max(w.x0, m.a + r.range(-reach, reach)));
+    m.y = Math.min(w.y1, Math.max(w.y0, m.b + r.range(-reach, reach) * 0.6));
+    if (kind === ATT_LANTERN) m.bgr = r.chance(0.7) ? WARM : WARM_WHITE;
+    else if (kind === ATT_SHAFT) m.bgr = r.chance(0.6) ? SPIRIT : MOTE_PALE;
   }
 
   private spawnDust(m: Mote, spread: boolean): void {
@@ -318,19 +362,24 @@ export class ParticlesView implements RenderView {
       setColor(m, m.alpha * (0.55 + 0.45 * Math.sin(t * 1.7 + m.phase * 3)));
       live++;
     }
+    const w = this.win;
     for (let k = 0; k < this.nFireflies; k++) {
       const m = this.ambient[C.motes + k] as Mote;
       const heading = m.phase + Math.sin(t * 0.5 + m.phase * 2) * 1.8 + Math.sin(t * 1.3 + m.phase) * 0.6;
-      m.x += Math.cos(heading) * m.d * dt;
-      m.y += Math.sin(heading) * m.d * 0.6 * dt;
-      this.wrap(m);
+      // Wander, pulled back toward home once beyond its tether.
+      const hx = m.a - m.x;
+      const hy = m.b - m.y;
+      const hd = Math.sqrt(hx * hx + hy * hy) + 1e-3;
+      const pull = hd > m.c ? Math.min(1, (hd - m.c) / m.c) * m.d * 1.5 / hd : 0;
+      m.x += (Math.cos(heading) * m.d + hx * pull) * dt;
+      m.y += (Math.sin(heading) * m.d * 0.6 + hy * pull) * dt;
+      if (m.x < w.x0 || m.x > w.x1 || m.y < w.y0 || m.y > w.y1) this.spawnFirefly(m);
       const blink = Math.pow(Math.max(0, Math.sin(t * m.spin + m.phase)), 4);
       m.scaleX = m.scaleY = m.size * (0.75 + 0.35 * blink);
       setColor(m, 0.1 + 0.9 * blink);
       live++;
     }
     const d0 = C.motes + C.fireflies;
-    const w = this.win;
     for (let k = 0; k < this.nDust; k++) {
       const m = this.ambient[d0 + k] as Mote;
       if (m.a < 0) {

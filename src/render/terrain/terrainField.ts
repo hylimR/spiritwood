@@ -3,16 +3,25 @@ import { tileAt } from '../../core/tiles.ts';
 import { NoiseTable } from '../gen/noiseTable.ts';
 
 /**
- * Signed distance field of the level's Solid tiles (world units, negative inside): convex corners
- * rounded with `cornerRadius`, concave corners kept sharp, plus fbm edge displacement that is damped
- * on up-facing surfaces so floors stay flat enough for feet. Lookups beyond the level repeat the
- * edge tiles (clamped `tileAt`), so the level border never shows an artificial edge.
+ * Signed distance field of the level's Solid tiles (world units, negative inside). Convex corners are
+ * rounded with a per-corner radius (modest on top corners so walkable tops stay flat almost to the
+ * edge, generous and irregular underneath); concave corners stay sharp. Displacement depends on the
+ * facing: floors barely move (feet), walls stay within a few units (hands), and undersides — which
+ * the player only bonks — get slow lumps and pendant drips. Lookups beyond the level repeat the edge
+ * tiles (clamped `tileAt`), so the level border never shows an artificial edge.
  */
 export interface TerrainFieldOptions {
+  /** Top convex corner radius range (u) and bottom convex corner radius range (u, ≤ tile/2). */
   cornerRadius: number;
-  /** Max displacement on walls/ceilings and on floors (u). */
+  cornerJitter: number;
+  underRadius: number;
+  underJitter: number;
+  /** Max displacement on walls and on floors (u). */
   dispAmp: number;
   flatAmp: number;
+  /** Undersides: lump amplitude and the length of pendant drips (u). */
+  underAmp: number;
+  dripLen: number;
   /** Noise-table units per world unit. */
   dispFreq: number;
   /** |distance| is clamped to this (u). */
@@ -22,12 +31,22 @@ export interface TerrainFieldOptions {
 
 export const DEFAULT_FIELD: TerrainFieldOptions = {
   cornerRadius: 10,
-  dispAmp: 4,
-  flatAmp: 1.4,
+  cornerJitter: 3,
+  underRadius: 16,
+  underJitter: 8,
+  dispAmp: 3.5,
+  flatAmp: 1.2,
+  underAmp: 9,
+  dripLen: 30,
   dispFreq: 0.75,
   maxDist: 96,
   seed: 1,
 };
+
+/** Walkable tops stay within this many units of the collision surface away from convex corners (tested). */
+export const FLOOR_TOLERANCE = 2;
+/** Walls stay within this many units of the collision surface (tested). */
+export const WALL_TOLERANCE = 4;
 
 const TL = 1;
 const TR = 2;
@@ -78,6 +97,47 @@ export class TerrainField {
     this.noise = new NoiseTable(this.opts.seed ^ 0x7e11a1, 4, 4);
   }
 
+  /** Any solid tile in the columns around x, between `reach` above y and y itself. */
+  private solidAbove(x: number, y: number, reach: number): boolean {
+    const T = this.T;
+    const tx = Math.floor(x / T);
+    const ty1 = Math.floor(y / T);
+    for (let ty = Math.floor((y - reach) / T); ty <= ty1; ty++) {
+      if (this.isSolid(tx - 1, ty) || this.isSolid(tx, ty) || this.isSolid(tx + 1, ty)) return true;
+    }
+    return false;
+  }
+
+  /** Pendant drips under ceilings: sparse pointed bumps on a hashed cell grid (u below the collision). */
+  drip(x: number): number {
+    const W = DRIP_CELL;
+    const c = Math.floor(x / W);
+    let best = 0;
+    for (let i = c - 1; i <= c + 1; i++) {
+      const h1 = hash01(i, 11, this.opts.seed);
+      if (h1 < 0.3) continue;
+      const cx = (i + 0.2 + 0.6 * hash01(i, 23, this.opts.seed)) * W;
+      const half = 13 + 12 * hash01(i, 37, this.opts.seed);
+      const t = 1 - Math.abs(x - cx) / half;
+      if (t <= 0) continue;
+      const len = this.opts.dripLen * (0.35 + 0.65 * hash01(i, 51, this.opts.seed));
+      const v = len * Math.pow(t, 1.6);
+      if (v > best) best = v;
+    }
+    return best;
+  }
+
+  /** Radius of convex corner `bit` (TL 1, TR 2, BL 4, BR 8) of tile (tx, ty): hash-varied per corner. */
+  cornerRadiusAt(tx: number, ty: number, bit: number): number {
+    let h = Math.imul(tx * 73856093 ^ ty * 19349663 ^ bit * 83492791 ^ this.opts.seed, 0x5bd1e995);
+    h ^= h >>> 15;
+    h = Math.imul(h, 0x27d4eb2d);
+    h ^= h >>> 13;
+    const u = (h >>> 0) / 4294967296;
+    const o = this.opts;
+    return bit === TL || bit === TR ? o.cornerRadius + o.cornerJitter * u : Math.min(this.T / 2, o.underRadius + o.underJitter * u);
+  }
+
   /** Solid flag with clamped lookups (tile coords may be outside the level). */
   isSolid(tx: number, ty: number): boolean {
     return this.solid[this.idx(tx, ty)] === 1;
@@ -93,7 +153,6 @@ export class TerrainField {
   /** Rounded-corner SDF without displacement. */
   base(x: number, y: number): number {
     const T = this.T;
-    const r = this.opts.cornerRadius;
     const maxD = this.opts.maxDist;
     const tx = Math.floor(x / T);
     const ty = Math.floor(y / T);
@@ -116,7 +175,8 @@ export class TerrainField {
           const cy = by0 + T / 2;
           const left = x < cx;
           const top = y < cy;
-          const rr = m & (top ? (left ? TL : TR) : (left ? BL : BR)) ? r : 0;
+          const bit = top ? (left ? TL : TR) : (left ? BL : BR);
+          const rr = m & bit ? this.cornerRadiusAt(tx + i, ty + j, bit) : 0;
           const qx = Math.abs(x - cx) - (T / 2 - rr);
           const qy = Math.abs(y - cy) - (T / 2 - rr);
           const ox = qx > 0 ? qx : 0;
@@ -139,27 +199,58 @@ export class TerrainField {
     if (m) {
       const x0 = tx * T;
       const y0 = ty * T;
-      v = Math.max(v, corner(m & TL, x - x0, y - y0, r));
-      v = Math.max(v, corner(m & TR, x0 + T - x, y - y0, r));
-      v = Math.max(v, corner(m & BL, x - x0, y0 + T - y, r));
-      v = Math.max(v, corner(m & BR, x0 + T - x, y0 + T - y, r));
+      if (m & TL) v = Math.max(v, corner(1, x - x0, y - y0, this.cornerRadiusAt(tx, ty, TL)));
+      if (m & TR) v = Math.max(v, corner(1, x0 + T - x, y - y0, this.cornerRadiusAt(tx, ty, TR)));
+      if (m & BL) v = Math.max(v, corner(1, x - x0, y0 + T - y, this.cornerRadiusAt(tx, ty, BL)));
+      if (m & BR) v = Math.max(v, corner(1, x0 + T - x, y0 + T - y, this.cornerRadiusAt(tx, ty, BR)));
     }
     return v;
   }
 
-  /** Final field: rounded SDF + displacement (damped on floors). */
+  /** Final field: rounded SDF + facing-dependent displacement (see the class comment). */
   sample(x: number, y: number): number {
     const d = this.base(x, y);
-    const band = this.opts.dispAmp * 3;
+    const o = this.opts;
+    const band = o.dripLen + o.underAmp + 4;
     if (d > band || d < -band) return d;
-    // Up-facing factor from the vertical gradient: floors have ∂d/∂y ≈ −1.
+    // Beyond the wall/floor displacement only undersides can pull the surface out this far, and they
+    // need a surface above: with no solid tile above-ish within the band the result stays positive.
+    if (d > o.dispAmp + 2 && !this.solidAbove(x, y, band)) return d;
+    // Facing from the vertical gradient: floors have ∂d/∂y ≈ −1, undersides ≈ +1.
     const g = (this.base(x, y + 2) - this.base(x, y - 2)) * 0.25;
-    const up = Math.min(1, Math.max(0, (-g - 0.5) / 0.4));
-    const amp = this.opts.dispAmp + (this.opts.flatAmp - this.opts.dispAmp) * up * up * (3 - 2 * up);
-    const f = this.opts.dispFreq;
-    const n = this.noise.sample(x * f, y * f) * 0.8 + this.noise.sample(x * f * 2.7 + 50, y * f * 2.7 + 20) * 0.2;
-    return d + n * amp;
+    const up = smooth01((-g - 0.5) / 0.4);
+    const down = smooth01((g - 0.35) / 0.45);
+    const f = o.dispFreq;
+    // The table's fbm has an RMS of ~0.2: NORM brings typical values to ±1 (then clamped, keeping bounds).
+    const nz = (this.noise.sample(x * f, y * f) * 0.8 + this.noise.sample(x * f * 2.7 + 50, y * f * 2.7 + 20) * 0.2) * NORM;
+    const n = nz < -1 ? -1 : nz > 1 ? 1 : nz;
+    let v = d + n * (o.dispAmp + (o.flatAmp - o.dispAmp) * up);
+    if (down > 0) {
+      // Undersides: lumps both ways, plus pendant drips that hang below the collision.
+      const l = this.noise.sample(x * 0.6 + 90, y * 0.6 + 40) * NORM;
+      const lump = l < -1 ? -1 : l > 1 ? 1 : l;
+      v += down * (lump * o.underAmp - this.drip(x));
+    }
+    return v;
   }
+}
+
+/** Scales the noise table (RMS ≈ 0.2) to about ±1. */
+const NORM = 2.2;
+/** Drip cell width (u): at most one drip per cell. */
+const DRIP_CELL = 76;
+
+function hash01(i: number, salt: number, seed: number): number {
+  let h = Math.imul(i * 374761393 ^ salt * 668265263 ^ seed, 0x5bd1e995);
+  h ^= h >>> 15;
+  h = Math.imul(h, 0x27d4eb2d);
+  h ^= h >>> 13;
+  return (h >>> 0) / 4294967296;
+}
+
+function smooth01(t: number): number {
+  const u = t < 0 ? 0 : t > 1 ? 1 : t;
+  return u * u * (3 - 2 * u);
 }
 
 /** Rounded quadrant corner: a, b = depth into the tile from the two exposed edges (active only near the corner). */

@@ -3,17 +3,17 @@ import { computeSplitHullHalf, splitRowsAt, subdivideRows, type HullOptions } fr
 import { ELEMENT_MARGIN, ELEMENT_SPECS, KIT_CATEGORIES, type ElementSpec, type KitCategory, type SwayAnchor } from './kitElements.ts';
 import { NoiseTable } from './noiseTable.ts';
 import { packRects, type PackItem } from './pack.ts';
-import { ElementRaster } from './raster.ts';
+import { ElementRaster, Scratch } from './raster.ts';
 
 /** Highest mip level the kit shader samples (it clamps its LOD); gutters and core insets derive from it. */
 export const KIT_MAX_MIP = 1;
 /** Hull settings for every kit element. */
 export const KIT_HULL: HullOptions = {
-  cell: 6,
-  maxSpans: 4,
+  cell: 4,
+  maxSpans: 6,
   coreInset: 1 + (1 << KIT_MAX_MIP),
   pad: 1 << KIT_MAX_MIP,
-  minCore: 8,
+  minCore: 6,
   minGap: 4,
   snap: 2,
 };
@@ -23,7 +23,7 @@ export const SWAY_ROW_STEP = 24;
 export const KIT_GUTTER = 4;
 /** Default atlas size (the manifest's atlas entry is authoritative at runtime). */
 export const KIT_WIDTH = 2048;
-export const KIT_HEIGHT = 1792;
+export const KIT_HEIGHT = 2048;
 
 export interface KitElement {
   index: number;
@@ -43,6 +43,8 @@ export interface KitElement {
   cut: 'none' | 'top' | 'bottom';
   /** Texel row above which a top-cut element stretches (rows below keep the horizontal scale). */
   stretchFrom: number;
+  /** Texel x of the trunk column that leaves a top-cut element (its anchorX when there is none). */
+  columnX: number;
   /** Element-local texel rects [x0, y0, x1, y1, …]: opaque core and soft band (disjoint). */
   core: number[];
   soft: number[];
@@ -71,6 +73,56 @@ interface Job {
 }
 
 /**
+ * Rasterise one element into the atlas and compute its split hull. (Kept out of the generator:
+ * V8 optimises loops in plain functions much sooner, which matters for the single cold run at boot.)
+ */
+function buildElement(
+  job: Job, i: number, index: number, seed: number, noise: NoiseTable, scratch: Scratch, pixels: Uint8Array, width: number,
+): KitElement {
+  const { spec, variant, item } = job;
+  const rng = new Rng((hashString(`${spec.key ?? spec.category}:${variant}`) ^ seed) >>> 0);
+  const r = new ElementRaster(spec.w, spec.h, noise, i + 1, scratch);
+  r.configure(spec.finalize);
+  spec.draw(r, rng, variant);
+  const x = item.x as number;
+  const y = item.y as number;
+  r.finalize(pixels, width, x, y, { edgeFade: ELEMENT_MARGIN, cut: spec.cut, ...spec.finalize });
+  const alphaBytes = scratch.bytes(spec.w * spec.h);
+  copyAlpha(pixels, width, x, y, spec.w, spec.h, alphaBytes);
+  const hull = computeSplitHullHalf(alphaBytes, spec.w, spec.h, KIT_HULL);
+  const sway = spec.sway !== 'none';
+  const stretchFrom = spec.stretchFrom ?? spec.anchorY;
+  const split = (rects: number[]): number[] => (spec.cut === 'top' ? splitRowsAt(rects, stretchFrom) : rects);
+  return {
+    index,
+    category: spec.category,
+    variant,
+    x, y, w: spec.w, h: spec.h,
+    unitsPerTexel: spec.unitsPerTexel,
+    anchorX: spec.anchorX,
+    anchorY: spec.anchorY,
+    sway: spec.sway,
+    swayScale: spec.swayScale,
+    emissive: spec.emissive,
+    cut: spec.cut,
+    stretchFrom,
+    columnX: Number.isNaN(r.columnX) ? spec.anchorX : r.columnX,
+    core: split(sway ? subdivideRows(hull.core, SWAY_ROW_STEP) : hull.core),
+    soft: split(sway ? subdivideRows(hull.soft, SWAY_ROW_STEP) : hull.soft),
+    coreArea: hull.coreArea,
+    softArea: hull.softArea,
+  };
+}
+
+function copyAlpha(pixels: Uint8Array, width: number, x: number, y: number, w: number, h: number, out: Uint8Array): void {
+  for (let row = 0; row < h; row++) {
+    let src = ((y + row) * width + x) * 4 + 3;
+    const o = row * w;
+    for (let col = 0; col < w; col++, src += 4) out[o + col] = pixels[src] as number;
+  }
+}
+
+/**
  * Deterministic kit generation as a step generator: one element per step, so the async variant can
  * yield to the event loop between elements and keep the boot screen responsive.
  */
@@ -84,44 +136,12 @@ function* kitSteps(seed: number, width: number, height: number, specs: readonly 
   const noise = new NoiseTable(seed ^ 0x5eed);
   const elements: KitElement[] = [];
   const byCategory = Object.fromEntries(KIT_CATEGORIES.map((c) => [c, [] as KitElement[]])) as Record<KitCategory, KitElement[]>;
+  const scratch = new Scratch();
   yield;
   for (let i = 0; i < jobs.length; i++) {
-    const { spec, variant, item } = jobs[i] as Job;
-    const rng = new Rng((hashString(`${spec.category}:${variant}`) ^ seed) >>> 0);
-    const r = new ElementRaster(spec.w, spec.h, noise, i + 1);
-    spec.draw(r, rng, variant);
-    const x = item.x as number;
-    const y = item.y as number;
-    r.finalize(pixels, width, x, y, { edgeFade: ELEMENT_MARGIN, cut: spec.cut, ...spec.finalize });
-    const alphaBytes = new Uint8Array(spec.w * spec.h);
-    for (let row = 0; row < spec.h; row++) {
-      let src = ((y + row) * width + x) * 4 + 3;
-      for (let col = 0; col < spec.w; col++, src += 4) alphaBytes[row * spec.w + col] = pixels[src] as number;
-    }
-    const hull = computeSplitHullHalf(alphaBytes, spec.w, spec.h, KIT_HULL);
-    const sway = spec.sway !== 'none';
-    const stretchFrom = spec.stretchFrom ?? spec.anchorY;
-    const split = (rects: number[]): number[] => (spec.cut === 'top' ? splitRowsAt(rects, stretchFrom) : rects);
-    const el: KitElement = {
-      index: elements.length,
-      category: spec.category,
-      variant,
-      x, y, w: spec.w, h: spec.h,
-      unitsPerTexel: spec.unitsPerTexel,
-      anchorX: spec.anchorX,
-      anchorY: spec.anchorY,
-      sway: spec.sway,
-      swayScale: spec.swayScale,
-      emissive: spec.emissive,
-      cut: spec.cut,
-      stretchFrom,
-      core: split(sway ? subdivideRows(hull.core, SWAY_ROW_STEP) : hull.core),
-      soft: split(sway ? subdivideRows(hull.soft, SWAY_ROW_STEP) : hull.soft),
-      coreArea: hull.coreArea,
-      softArea: hull.softArea,
-    };
+    const el = buildElement(jobs[i] as Job, i, elements.length, seed, noise, scratch, pixels, width);
     elements.push(el);
-    byCategory[spec.category].push(el);
+    byCategory[el.category].push(el);
     yield;
   }
   return { width, height, pixels, elements, byCategory, ms: 0 };

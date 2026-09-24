@@ -1,11 +1,15 @@
 import type { Rng } from '../../core/rng.ts';
 import { ElementRaster, Mat, type FinalizeOptions } from './raster.ts';
+import {
+  broadTree, canopyCeiling, clump, coniferTree, LEAFY, midBirchPair, midCrown, nearTrunk, midConiferTrunk, midOakTrunk, midWillowTrunk, slenderTree, snagTree,
+  willowTree,
+} from './trees.ts';
 
 /** Transparent border inside element rects (≥ the hull pad, so mip fringes stay inside the rect). */
 export const ELEMENT_MARGIN = 6;
 
 export const KIT_CATEGORIES = [
-  'farTree', 'farCanopy', 'midTrunk', 'canopyTop', 'midBush', 'groundEdge', 'vine', 'fern', 'glowFlower',
+  'farTree', 'farCanopy', 'midTrunk', 'midCrown', 'canopyTop', 'midBush', 'groundEdge', 'vine', 'fern', 'glowFlower',
   'nearTrunk', 'rootArch', 'mushrooms', 'rock', 'fgBottom', 'fgTop', 'fgVine', 'grass', 'flower', 'shroom',
   'floraBig', 'lantern', 'bramble', 'tendril', 'bridge', 'solid',
 ] as const;
@@ -16,6 +20,8 @@ export type SwayAnchor = 'none' | 'bottom' | 'top';
 
 export interface ElementSpec {
   category: KitCategory;
+  /** Seed key (defaults to the category); distinct specs of one category need distinct keys. */
+  key?: string;
   variants: number;
   w: number;
   h: number;
@@ -44,6 +50,8 @@ export interface ElementSpec {
 
 const M = ELEMENT_MARGIN;
 const P = { x: 0, y: 0 };
+/** Texel density of the (baked-soft) foreground frame elements relative to their 2.2 u/texel design. */
+const FG_K = 2 / 3;
 
 /** Shorten a stroke from (x, y) along `ang` so its tip (plus `pad`) stays inside the element rect. */
 function fitLength(r: ElementRaster, x: number, y: number, ang: number, len: number, pad: number): number {
@@ -54,53 +62,6 @@ function fitLength(r: ElementRaster, x: number, y: number, ang: number, len: num
   if (dx < -1e-6) l = Math.min(l, (M + pad - x) / dx);
   if (dy < -1e-6) l = Math.min(l, (M + pad - y) / dy);
   return Math.max(len * 0.35, l);
-}
-
-/** Tapered limb along a gently bent path. */
-function limb(
-  r: ElementRaster, x0: number, y0: number, x1: number, y1: number, bend: number, r0: number, r1: number, mat: Mat,
-  k = 4, segments = 12,
-): void {
-  const nx = -(y1 - y0);
-  const ny = x1 - x0;
-  const nl = Math.hypot(nx, ny) || 1;
-  r.curve(x0, y0, (x0 + x1) / 2 + (nx / nl) * bend, (y0 + y1) / 2 + (ny / nl) * bend, x1, y1, r0, r1, mat, k, segments);
-}
-
-/** Root flare: roots curving from the trunk base out and down into the ground line. */
-function roots(r: ElementRaster, rng: Rng, cx: number, groundY: number, trunkR: number, spread: number, count: number): void {
-  for (let i = 0; i < count; i++) {
-    const side = i % 2 === 0 ? -1 : 1;
-    const t = (Math.floor(i / 2) + 1) / (Math.ceil(count / 2) + 0.5);
-    const reach = Math.min(spread * (0.45 + 0.55 * t) * rng.range(0.8, 1.15), side < 0 ? cx - M - 8 : r.w - M - 8 - cx);
-    const sx = cx + side * trunkR * rng.range(0.1, 0.5);
-    const sy = groundY - trunkR * rng.range(1.4, 2.6);
-    const ex = cx + side * reach;
-    const ey = groundY + rng.range(0, 4);
-    r.curve(sx, sy, sx + side * reach * 0.35, ey - trunkR * rng.range(0.2, 0.6), ex, ey,
-      trunkR * rng.range(0.42, 0.62), 1.6, Mat.Bark, trunkR * 0.55, 8);
-  }
-}
-
-/**
- * Cloud-like foliage mass: a soft body plus many leaf clumps scattered toward an irregular envelope,
- * so the outline reads as foliage rather than a blob.
- */
-function cloudCrown(
-  r: ElementRaster, rng: Rng, cx: number, cy: number, rx: number, ry: number, clumps: number, clumpR: number, mat: Mat = Mat.Leaf,
-): void {
-  const p1 = rng.range(0, 6.28);
-  const p2 = rng.range(0, 6.28);
-  r.ellipse(cx, cy, rx * 0.6, ry * 0.6, mat, 6);
-  for (let i = 0; i < clumps; i++) {
-    const a = rng.range(0, Math.PI * 2);
-    const env = 1 + 0.22 * Math.sin(3 * a + p1) + 0.12 * Math.sin(5 * a + p2);
-    const d = Math.pow(rng.next(), 0.4) * 0.8;
-    const px = cx + Math.cos(a) * rx * d * env;
-    const py = cy + Math.sin(a) * ry * d * env;
-    const s = clumpR * rng.range(0.6, 1.2) * (1.1 - 0.4 * d);
-    r.ellipse(px, py, s, s * rng.range(0.75, 0.95), mat, 3);
-  }
 }
 
 /** A frond: curved rib with leaflets on both sides shrinking toward the tip. */
@@ -161,217 +122,158 @@ function glowBulb(r: ElementRaster, x: number, y: number, rad: number, halo: num
   if (halo > 0) r.haloAt(x, y, halo, haloStrength);
 }
 
-/** A trunk that rises out of the element's top edge, with a root flare at `ground`. */
-function risingTrunk(r: ElementRaster, rng: Rng, cx: number, ground: number, baseR: number, topR: number, wobble: number): number[] {
-  const segs = 16;
-  const phase = rng.range(0, 10);
-  const lean = rng.range(-1, 1) * Math.min(0.08 * r.h, r.w / 2 - M - topR - wobble * 1.3 - 6);
-  const path: number[] = [];
-  let px = cx;
-  let py = ground + 6;
-  let pr = baseR;
-  path.push(px, py);
-  for (let i = 1; i <= segs; i++) {
-    const t = i / segs;
-    const x = cx + lean * t + Math.sin(t * 3.7 + phase) * wobble + Math.sin(t * 9.3 + phase * 2) * wobble * 0.3;
-    const y = ground + 6 - (ground + 26) * t;
-    const rr = baseR + (topR - baseR) * Math.pow(t, 0.7) + Math.sin(t * 13 + phase) * baseR * 0.05;
-    r.capsule(px, py, x, y, pr, rr, Mat.Bark, 6);
-    px = x;
-    py = y;
-    pr = rr;
-    path.push(px, py);
-  }
-  return path;
-}
-
-/** Point on a polyline path (flat x,y pairs) at fraction t. */
-function pathAt(path: readonly number[], t: number): void {
-  const n = path.length / 2 - 1;
-  const f = Math.min(n - 1e-6, Math.max(0, t * n));
-  const i = Math.floor(f);
-  const u = f - i;
-  P.x = (path[i * 2] as number) + ((path[i * 2 + 2] as number) - (path[i * 2] as number)) * u;
-  P.y = (path[i * 2 + 1] as number) + ((path[i * 2 + 3] as number) - (path[i * 2 + 1] as number)) * u;
-}
-
-/** A spray of small leaves around a twig tip. */
-function sprig(r: ElementRaster, rng: Rng, x: number, y: number, side: number, size: number): void {
-  const n = 7 + Math.round(size / 6);
-  for (let i = 0; i < n; i++) {
-    const a = -Math.PI / 2 + side * rng.range(-0.4, 1.3) + rng.range(-0.5, 0.5);
-    const d = rng.range(0, size * 0.5);
-    const bx = x + Math.cos(a) * d;
-    const by = y + Math.sin(a) * d;
-    r.leaf(bx, by, a + rng.range(-0.6, 0.6) + (rng.chance(0.5) ? 0.6 : -0.6), size * rng.range(0.35, 0.55), size * 0.1, Mat.Leaf);
-  }
-}
-
-/** A side branch with a fork, twigs and leaf clumps, starting at (x, y) on the trunk. */
-function branch(r: ElementRaster, rng: Rng, x: number, y: number, side: number, len: number, rad: number, leafy: boolean): void {
-  // Keep the whole limb (and its sprigs) inside the element rect.
-  const room = side > 0 ? r.w - M - 18 - x : x - M - 18;
-  len = Math.max(20, Math.min(len, room / 0.95));
-  const ex = x + side * len * rng.range(0.65, 0.85);
-  const ey = Math.max(M + 30, y - len * rng.range(0.55, 0.9));
-  const cx = x + side * len * 0.3;
-  const cy = y - len * 0.15;
-  r.curve(x, y + rad, cx, cy, ex, ey, rad, rad * 0.25, Mat.Bark, rad * 0.6, 10);
-  ElementRaster.bezier(x, y + rad, cx, cy, ex, ey, 0.55, P);
-  const fx = P.x;
-  const fy = P.y;
-  const tx = fx + side * len * rng.range(0.1, 0.3);
-  const ty = fy - len * rng.range(0.35, 0.5);
-  r.curve(fx, fy, fx + side * 6, fy - len * 0.2, tx, ty, rad * 0.45, rad * 0.15, Mat.Bark, 2, 6);
-  if (leafy) {
-    sprig(r, rng, ex, ey, side, len * 0.3);
-    sprig(r, rng, tx, ty, side, len * 0.22);
-  }
-  for (let m = 0; m < 3; m++) {
-    ElementRaster.bezier(x, y + rad, cx, cy, ex, ey, rng.range(0.3, 0.85), P);
-    strand(r, rng, P.x, P.y + rad * 0.3, rng.range(len * 0.15, len * 0.45), 4, 1.3, 0.45, 0, Mat.Moss);
-  }
-}
-
 // ---------------------------------------------------------------------------------------------
 
-const FAR_FINAL: FinalizeOptions = { fadeBottom: [0.62, 1], rimWidth: 2, rimStrength: 0.7, dispScale: 1.2 };
+const FAR_FINAL: FinalizeOptions = { fadeBottom: [0.66, 1], rimWidth: 1.6, rimStrength: 0.7, softness: 1.3 };
+
+type TreeFn = (r: ElementRaster, rng: Rng, cx: number, ground: number, s: number) => void;
+
+/** Far trees are stored at this fraction of their 2 u/texel design density (they are the softest layers). */
+const FAR_K = 0.8;
+
+/** A far-layer tree archetype spec (whole tree standing on the anchor, fading into mist at its base). */
+function farArchetype(key: string, fn: TreeFn, w: number, h: number, variants: number): ElementSpec {
+  const tw = Math.round(w * FAR_K);
+  const th = Math.round(h * FAR_K);
+  return {
+    category: 'farTree', key, variants, w: tw, h: th, unitsPerTexel: 2 / FAR_K, anchorX: Math.round(tw / 2), anchorY: th - M,
+    sway: 'none', swayScale: 0, emissive: false, cut: 'none', finalize: FAR_FINAL,
+    draw(r, rng) {
+      fn(r, rng, r.w / 2 + rng.range(-3, 3), r.h - M - 2, FAR_K);
+    },
+  };
+}
+
+/** Near trunks stretch above this texel row (everything organic sits below it). */
+const NEAR_STRETCH = 240;
+
+/** Mid-layer trunk rects: the rows above MID_STRETCH are a plain column that placement stretches. */
+const MID_H = 620;
+const MID_STRETCH = 170;
+
+type TrunkFn = (r: ElementRaster, rng: Rng, cx: number, ground: number, stretchRow: number, s: number) => void;
+
+function midTrunkSpec(key: string, fn: TrunkFn, w: number, variants = 1): ElementSpec {
+  const ground = MID_H - M - 8;
+  return {
+    category: 'midTrunk', key, variants, w, h: MID_H, unitsPerTexel: 2, anchorX: w / 2, anchorY: ground,
+    sway: 'none', swayScale: 0, emissive: false, cut: 'top', stretchFrom: MID_STRETCH,
+    finalize: { rimWidth: 2.2, rimStrength: 1 },
+    draw(r, rng) {
+      fn(r, rng, r.w / 2 + rng.range(-5, 5), ground, MID_STRETCH, 1);
+    },
+  };
+}
 
 export const ELEMENT_SPECS: readonly ElementSpec[] = [
+  farArchetype('farBroad', broadTree, 300, 400, 2),
+  farArchetype('farWillow', willowTree, 280, 400, 2),
+  farArchetype('farSlender', slenderTree, 150, 430, 1),
+  farArchetype('farConifer', coniferTree, 160, 440, 3),
+  farArchetype('farSnag', snagTree, 170, 380, 1),
   {
-    category: 'farTree', variants: 6, w: 160, h: 420, unitsPerTexel: 2, anchorX: 80, anchorY: 420 - M,
-    sway: 'none', swayScale: 0, emissive: false, cut: 'none', finalize: FAR_FINAL,
-    draw(r, rng, v) {
-      const cx = r.w / 2 + rng.range(-5, 5);
-      const base = r.h - M;
-      const top = M + rng.range(2, 24);
-      const kind = v % 3;
-      if (kind === 0) {
-        // Cloud tree: slender trunk under one big irregular crown.
-        const lean = rng.range(-8, 8);
-        const cy = top + r.h * rng.range(0.27, 0.32);
-        limb(r, cx, base, cx + lean, cy, rng.range(-6, 6), 6.5, 3, Mat.Bark);
-        for (let i = 0; i < 3; i++) {
-          const s = i % 2 === 0 ? -1 : 1;
-          limb(r, cx + lean * 0.6, cy + 80, cx + lean + s * rng.range(24, 44), cy - rng.range(0, 40), 4, 3, 1.5, Mat.Bark, 2, 6);
-        }
-        cloudCrown(r, rng, cx + lean, cy, rng.range(60, 70), rng.range(100, 118), 42, 14);
-      } else if (kind === 1) {
-        // Spire: thin trunk with drooping tiers.
-        limb(r, cx, base, cx + rng.range(-4, 4), top, 2, 5, 1.2, Mat.Bark);
-        const tiers = rng.int(13, 17);
-        for (let i = 0; i < tiers; i++) {
-          const t = (i + 0.5) / tiers;
-          const y = top + 6 + t * r.h * 0.68;
-          const hw = 4 + 58 * Math.pow(t, 0.85) * rng.range(0.85, 1.1);
-          for (const s of [-1, 1]) {
-            r.curve(cx, y, cx + s * hw * 0.55, y + 1, cx + s * hw, y + 12 + 14 * t, 4.5 + 3 * t, 1.2, Mat.Leaf, 3, 5);
-          }
-          r.ellipse(cx, y + 5, hw * 0.5, 6 + 5 * t, Mat.Leaf, 4);
-        }
-      } else {
-        // Forked tree: two or three limbs, each ending in its own crown at a different height.
-        const forkY = top + r.h * rng.range(0.38, 0.46);
-        limb(r, cx, base, cx, forkY, rng.range(-5, 5), 7.5, 5, Mat.Bark, 3);
-        const limbs = rng.int(2, 3);
-        for (let i = 0; i < limbs; i++) {
-          const s = limbs === 2 ? (i === 0 ? -1 : 1) : i - 1;
-          const ex = cx + s * rng.range(18, 30);
-          const ey = Math.max(M + 62, forkY - rng.range(70, 130));
-          limb(r, cx, forkY + 8, ex, ey, s * 10, 5, 2.5, Mat.Bark, 3, 8);
-          cloudCrown(r, rng, ex, ey - 6, rng.range(36, 44), rng.range(42, 54), 20, 11);
-        }
-      }
-    },
-  },
-  {
-    category: 'farCanopy', variants: 3, w: 320, h: 160, unitsPerTexel: 2, anchorX: 160, anchorY: 160 - M,
-    sway: 'none', swayScale: 0, emissive: false, cut: 'none', finalize: { ...FAR_FINAL, fadeBottom: [0.72, 1] },
+    category: 'farCanopy', variants: 2, w: 360, h: 150, unitsPerTexel: 2, anchorX: 180, anchorY: 150 - M,
+    sway: 'none', swayScale: 0, emissive: false, cut: 'none', finalize: { ...FAR_FINAL, fadeBottom: [0.55, 1] },
     draw(r, rng) {
+      // A continuous far treeline: fused crowns of different kinds with spires poking through.
       const base = r.h - M;
-      const n = rng.int(5, 7);
-      for (let i = 0; i < n; i++) {
-        const t = (i + 0.5) / n;
-        const x = M + 34 + t * (r.w - 2 * M - 68) + rng.range(-10, 10);
-        const hgt = 60 + Math.sin(t * Math.PI) * 44 * rng.range(0.6, 1.2);
-        cloudCrown(r, rng, x, base - hgt * 0.55, rng.range(34, 46), hgt * 0.6, 12, 11);
+      let x = M + 18;
+      while (x < r.w - M - 18) {
+        const kind = rng.next();
+        if (kind < 0.35) {
+          const h = rng.range(60, 110);
+          const hw = rng.range(10, 16);
+          r.volume(x - 4, base - h * 0.6, h * 0.5, 0.14);
+          for (let t = 0; t < 7; t++) {
+            const u = t / 7;
+            const y = base - h + u * h * 0.9;
+            r.ellipse(x + rng.range(-2, 2), y + 6, 3 + hw * u * rng.range(0.7, 1.2), 3 + 3 * u, Mat.Needle, 2);
+          }
+          r.noVolume();
+          r.capsule(x, base - h, x, base, 1.5, 3, Mat.Bark, 1);
+          x += hw * rng.range(1.1, 1.8);
+        } else {
+          const rx = rng.range(20, 36);
+          const ry = rx * rng.range(0.7, 1.1);
+          const cy = base - ry - rng.range(10, 45);
+          clump(r, rng, x + rx * 0.5, cy, rx, ry, { ...LEAFY, lobes: 5, tufts: 4, holes: 0.3 });
+          x += rx * rng.range(1.0, 1.6);
+        }
       }
-      r.ellipse(r.w / 2, base - 16, r.w * 0.43, 40, Mat.Leaf, 10);
+      r.volume(r.w / 2, base - 30, r.w * 0.5, 0.05, -0.04);
+      r.ellipse(r.w / 2, base - 8, r.w * 0.44, 24, Mat.Leaf, 10);
+      r.noVolume();
+    },
+  },
+  midTrunkSpec('midOak', midOakTrunk, 300, 2),
+  midTrunkSpec('midWillow', midWillowTrunk, 260),
+  midTrunkSpec('midConifer', midConiferTrunk, 220),
+  midTrunkSpec('midBirch', midBirchPair, 170),
+  {
+    category: 'midCrown', variants: 2, w: 360, h: 250, unitsPerTexel: 2, anchorX: 180, anchorY: 125,
+    sway: 'none', swayScale: 0, emissive: false, cut: 'none', finalize: { rimWidth: 2.2, rimStrength: 1 },
+    draw(r, rng) {
+      midCrown(r, rng, 1);
     },
   },
   {
-    category: 'midTrunk', variants: 4, w: 200, h: 660, unitsPerTexel: 2, anchorX: 100, anchorY: 660 - M - 8,
-    sway: 'none', swayScale: 0, emissive: false, cut: 'top', stretchFrom: 660 - M - 8 - 90,
-    finalize: { rimWidth: 2.2, rimStrength: 1 },
-    draw(r, rng, v) {
-      const cx = r.w / 2 + rng.range(-6, 6);
-      const ground = r.h - M - 8;
-      const baseR = rng.range(17, 22);
-      const path = risingTrunk(r, rng, cx, ground, baseR, baseR * rng.range(0.5, 0.62), 10);
-      roots(r, rng, cx, ground, baseR, rng.range(50, 68), 4 + (v % 2));
-      const branches = 1 + (v % 2);
-      for (let i = 0; i < branches; i++) {
-        pathAt(path, rng.range(0.38, 0.62) + i * 0.12);
-        branch(r, rng, P.x, P.y, (i + v) % 2 === 0 ? -1 : 1, rng.range(110, 150), baseR * 0.4, rng.chance(0.8));
-      }
-    },
-  },
-  {
-    category: 'canopyTop', variants: 3, w: 340, h: 230, unitsPerTexel: 2, anchorX: 170, anchorY: 0,
+    category: 'canopyTop', variants: 2, w: 340, h: 230, unitsPerTexel: 2, anchorX: 170, anchorY: 0,
     sway: 'top', swayScale: 0.25, emissive: false, cut: 'top', finalize: { rimWidth: 3, rimStrength: 0.8 },
     draw(r, rng) {
-      const n = rng.int(4, 5);
-      for (let i = 0; i < n; i++) {
-        const t = (i + 0.5) / n;
-        const x = 78 + t * (r.w - 156) + rng.range(-10, 10);
-        const depth = 60 + Math.sin(t * Math.PI) * 60 * rng.range(0.7, 1.2);
-        cloudCrown(r, rng, x, depth * 0.35, rng.range(40, 50), depth * 0.72, 16, 13);
-      }
-      r.ellipse(r.w / 2, -10, r.w * 0.36, 50, Mat.Leaf, 8);
-      for (let i = 0; i < 2; i++) {
-        const s = i === 0 ? -1 : 1;
-        limb(r, r.w / 2 + s * 40, -6, r.w / 2 + s * rng.range(80, 110), rng.range(70, 110), s * 12, 7, 2, Mat.Bark, 3, 8);
-      }
-      const strands = rng.int(3, 5);
-      for (let i = 0; i < strands; i++) {
-        strand(r, rng, rng.range(70, r.w - 70), rng.range(50, 90), rng.range(50, r.h - 110), 6, 2, 0.8, 10, Mat.Leaf);
-      }
+      canopyCeiling(r, rng, 1);
     },
   },
   {
     category: 'midBush', variants: 3, w: 220, h: 110, unitsPerTexel: 2, anchorX: 110, anchorY: 110 - M - 4,
     sway: 'bottom', swayScale: 0.3, emissive: false, cut: 'none', finalize: { rimWidth: 3, rimStrength: 0.9 },
     draw(r, rng) {
+      // A low shrub: heaped clumps with fern fronds and leaf sprays breaking the outline.
       const base = r.h - M - 4;
-      const n = rng.int(4, 6);
-      for (let i = 0; i < n; i++) {
-        const t = (i + 0.5) / n;
-        const x = M + 30 + t * (r.w - 2 * M - 60);
-        const hgt = 30 + Math.sin(t * Math.PI) * 28 * rng.range(0.7, 1.2);
-        cloudCrown(r, rng, x + rng.range(-6, 6), base - hgt * 0.5, rng.range(20, 28), hgt * 0.55, 8, 8);
-      }
+      const n = rng.int(3, 5);
       for (let i = 0; i < 4; i++) {
         const side = i % 2 === 0 ? -1 : 1;
-        frond(r, rng, r.w / 2 + side * rng.range(20, 60), base - 18, -Math.PI / 2 + side * rng.range(0.4, 0.9),
-          rng.range(40, 60), rng.range(6, 14), 9, Mat.Leaf, 1.2);
+        frond(r, rng, r.w / 2 + side * rng.range(24, 64), base - 10, -Math.PI / 2 + side * rng.range(0.5, 1.0),
+          rng.range(40, 58), rng.range(8, 16), 9, Mat.Leaf, 1.2);
       }
+      for (let i = 0; i < n; i++) {
+        const t = (i + 0.5) / n;
+        const x = 50 + t * (r.w - 100) + rng.range(-8, 8);
+        const hgt = 22 + Math.sin(t * Math.PI) * 22 * rng.range(0.8, 1.2);
+        clump(r, rng, x, base - hgt * 0.75, rng.range(20, 28), hgt * 0.7, { ...LEAFY, lobes: 5, tufts: 5, flat: -0.02 });
+      }
+      r.ellipse(r.w / 2, base - 4, r.w * 0.36, 8, Mat.Leaf, 6);
     },
   },
   {
     category: 'groundEdge', variants: 2, w: 480, h: 100, unitsPerTexel: 2, anchorX: 240, anchorY: 36,
     sway: 'none', swayScale: 0, emissive: false, cut: 'bottom', finalize: { rimWidth: 2, rimStrength: 0.7 },
     draw(r, rng) {
-      const n = 7;
-      for (let i = 0; i < n; i++) {
-        const t = (i + 0.5) / n;
-        const x = 70 + t * (r.w - 140) + rng.range(-10, 10);
-        r.ellipse(x, 60 + rng.range(-6, 6), rng.range(40, 52), rng.range(22, 32), Mat.Leaf, 12);
-      }
-      r.capsule(64, 92, r.w - 64, 92, 34, 34, Mat.Stone, 10);
+      // An earth bank whose top edge is broken by low clumps, stones and grass blades.
+      r.volume(r.w / 2, 30, r.w * 0.5, 0.06, -0.02);
+      r.capsule(64, 92, r.w - 64, 92, 36, 36, Mat.Stone, 10);
       r.ellipse(r.w / 2, r.h + 30, r.w * 0.42, 70, Mat.Stone, 10);
-      for (let i = 0; i < 14; i++) {
-        const x = rng.range(70, r.w - 70);
-        r.ellipse(x, rng.range(40, 52), rng.range(8, 14), rng.range(6, 10), Mat.Leaf, 3);
+      r.noVolume();
+      let x = 60;
+      while (x < r.w - 60) {
+        const k = rng.next();
+        if (k < 0.55) {
+          const rx = rng.range(18, 30);
+          clump(r, rng, x, rng.range(44, 56), rx, rx * rng.range(0.55, 0.75), { ...LEAFY, lobes: 5, tufts: 4, flat: -0.03 });
+          x += rx * rng.range(1.1, 1.7);
+        } else if (k < 0.75) {
+          const rx = rng.range(12, 20);
+          r.volume(x - 4, 52, rx, 0.18);
+          r.ellipse(x, 60, rx, rx * 0.6, Mat.Stone, 4);
+          r.noVolume();
+          x += rx * 1.6;
+        } else {
+          for (let g = 0; g < 7; g++) {
+            const gx = x + rng.range(-10, 10);
+            const len = rng.range(10, 22);
+            r.curve(gx, 62, gx + rng.range(-4, 4), 62 - len * 0.6, gx + rng.range(-8, 8), 62 - len, 1.6, 0.4, Mat.Leaf, 0, 4);
+          }
+          x += 24;
+        }
       }
     },
   },
@@ -419,41 +321,11 @@ export const ELEMENT_SPECS: readonly ElementSpec[] = [
     },
   },
   {
-    category: 'nearTrunk', variants: 3, w: 280, h: 900, unitsPerTexel: 1.4, anchorX: 140, anchorY: 900 - M - 10,
-    sway: 'none', swayScale: 0, emissive: true, cut: 'top', stretchFrom: 900 - M - 10 - 150,
+    category: 'nearTrunk', variants: 3, w: 300, h: 900, unitsPerTexel: 1.4, anchorX: 150, anchorY: 900 - M - 10,
+    sway: 'none', swayScale: 0, emissive: true, cut: 'top', stretchFrom: NEAR_STRETCH,
     finalize: { rimWidth: 3, rimStrength: 1.1, detail: 1.1 },
     draw(r, rng, v) {
-      const cx = r.w / 2 + rng.range(-10, 10);
-      const ground = r.h - M - 10;
-      const baseR = rng.range(30, 36);
-      const path = risingTrunk(r, rng, cx, ground, baseR, baseR * rng.range(0.52, 0.62), 18);
-      roots(r, rng, cx, ground, baseR, rng.range(84, 108), 6);
-      const s = rng.chance(0.5) ? -1 : 1;
-      // A root arch sweeping out on one side.
-      const arch = Math.min(116, s < 0 ? cx - M - 12 : r.w - M - 12 - cx);
-      r.curve(cx + s * baseR * 0.4, ground - baseR * 1.8, cx + s * arch * 0.64, ground - 76, cx + s * arch, ground + 2, 9, 3, Mat.Bark, 6, 10);
-      pathAt(path, rng.range(0.45, 0.6));
-      branch(r, rng, P.x, P.y, -s, rng.range(150, 190), baseR * 0.42, true);
-      if (v === 2) {
-        pathAt(path, rng.range(0.7, 0.8));
-        branch(r, rng, P.x, P.y, s, rng.range(110, 140), baseR * 0.34, true);
-      }
-      // Moss cushions on the lit (left) shoulder.
-      for (let m = 0; m < 6; m++) {
-        pathAt(path, rng.range(0.15, 0.85));
-        r.ellipse(P.x - baseR * 0.62, P.y, 7, rng.range(10, 20), Mat.Moss, 3);
-      }
-      if (v !== 1) {
-        // A few small glowing shelf fungi low on the shaded side.
-        pathAt(path, rng.range(0.06, 0.12));
-        const fx = P.x + baseR * 0.78 * s;
-        for (let f = 0; f < 2; f++) {
-          const fy = P.y - f * rng.range(14, 22);
-          r.ellipse(fx + s * 5, fy, 7 - f * 2, 2.6, Mat.Fungus, 1);
-          r.glow(fx + s * 5, fy + 0.5, 5 - f * 1.5, 0.75, 1);
-        }
-        r.haloAt(fx + s * 5, P.y - 8, 22, 0.16);
-      }
+      nearTrunk(r, rng, r.w / 2 + rng.range(-10, 10), r.h - M - 10, NEAR_STRETCH, v);
     },
   },
   {
@@ -510,53 +382,58 @@ export const ELEMENT_SPECS: readonly ElementSpec[] = [
     },
   },
   {
-    category: 'fgBottom', variants: 3, w: 320, h: 190, unitsPerTexel: 2.2, anchorX: 160, anchorY: 190,
-    sway: 'bottom', swayScale: 0.45, emissive: false, cut: 'bottom', finalize: { softness: 9, rimWidth: 0, dispScale: 0.8 },
+    // Foreground framing is baked soft, so it lives at 2/3 of the texel density (FG_K).
+    category: 'fgBottom', variants: 3, w: 214, h: 127, unitsPerTexel: 2.2 / FG_K, anchorX: 107, anchorY: 127,
+    sway: 'bottom', swayScale: 0.45, emissive: false, cut: 'bottom', finalize: { softness: 9 * FG_K, rimWidth: 0, dispScale: 0.8 * FG_K },
     draw(r, rng) {
-      const g = r.h + 6;
+      const k = FG_K;
+      const g = r.h + 6 * k;
       const n = rng.int(5, 7);
       for (let i = 0; i < n; i++) {
-        const x = 70 + ((i + rng.range(-0.3, 0.3)) / Math.max(1, n - 1)) * (r.w - 140);
+        const x = (70 + ((i + rng.range(-0.3, 0.3)) / Math.max(1, n - 1)) * 180) * k;
         const ang = -Math.PI / 2 + rng.range(-0.9, 0.9);
-        const len = fitLength(r, x, g, ang, rng.range(80, 140), 24);
+        const len = fitLength(r, x, g, ang, rng.range(80, 140) * k, 24 * k);
         r.leaf(x, g, ang, len, len * rng.range(0.26, 0.34), Mat.Soft);
       }
       for (let i = 0; i < 2; i++) {
-        const x = rng.range(100, r.w - 100);
+        const x = rng.range(100, 220) * k;
         const ang = -Math.PI / 2 + rng.range(-0.5, 0.5);
-        frond(r, rng, x, g, ang, fitLength(r, x, g, ang, rng.range(100, 140), 50), 40, 28, Mat.Soft, 3);
+        frond(r, rng, x, g, ang, fitLength(r, x, g, ang, rng.range(100, 140) * k, 50 * k), 40 * k, 28 * k, Mat.Soft, 3 * k);
       }
-      r.ellipse(r.w / 2, g + 10, r.w * 0.38, 44, Mat.Soft, 14);
+      r.ellipse(r.w / 2, g + 10 * k, r.w * 0.38, 44 * k, Mat.Soft, 14 * k);
     },
   },
   {
-    category: 'fgTop', variants: 3, w: 320, h: 200, unitsPerTexel: 2.2, anchorX: 160, anchorY: 0,
-    sway: 'top', swayScale: 0.45, emissive: false, cut: 'top', finalize: { softness: 9, rimWidth: 0, dispScale: 0.8 },
+    category: 'fgTop', variants: 3, w: 214, h: 134, unitsPerTexel: 2.2 / FG_K, anchorX: 107, anchorY: 0,
+    sway: 'top', swayScale: 0.45, emissive: false, cut: 'top', finalize: { softness: 9 * FG_K, rimWidth: 0, dispScale: 0.8 * FG_K },
     draw(r, rng) {
-      const s = rng.chance(0.5) ? -1 : 1;
-      const x0 = r.w / 2 - s * rng.range(40, 80);
-      const x1 = r.w / 2 + s * rng.range(90, 120);
-      const y1 = rng.range(50, 80);
-      r.curve(x0, -12, (x0 + x1) / 2, rng.range(30, 50), x1, y1, 15, 6, Mat.Soft, 6, 12);
+      const k = FG_K;
+      const sd = rng.chance(0.5) ? -1 : 1;
+      const x0 = r.w / 2 - sd * rng.range(40, 80) * k;
+      const x1 = r.w / 2 + sd * rng.range(90, 120) * k;
+      const y1 = rng.range(50, 80) * k;
+      const cy = rng.range(30, 50) * k;
+      r.curve(x0, -12 * k, (x0 + x1) / 2, cy, x1, y1, 15 * k, 6 * k, Mat.Soft, 6 * k, 12);
       const n = rng.int(7, 10);
       for (let i = 0; i < n; i++) {
         const t = (i + 0.5) / n;
-        ElementRaster.bezier(x0, -12, (x0 + x1) / 2, 40, x1, y1, t, P);
+        ElementRaster.bezier(x0, -12 * k, (x0 + x1) / 2, 40 * k, x1, y1, t, P);
         const bx = P.x;
         const by = P.y;
         const ang = Math.PI / 2 + rng.range(-0.8, 0.8);
-        const len = fitLength(r, bx, by, ang, rng.range(60, 115), 20);
+        const len = fitLength(r, bx, by, ang, rng.range(60, 115) * k, 20 * k);
         r.leaf(bx, by, ang, len, len * rng.range(0.16, 0.22), Mat.Soft);
       }
-      r.ellipse(x0, -6, 70, 34, Mat.Soft, 10);
-      for (let i = 0; i < 2; i++) strand(r, rng, rng.range(90, r.w - 90), 20, rng.range(80, 140), 10, 3, 1.5, 16, Mat.Soft);
+      r.ellipse(x0, -6 * k, 70 * k, 34 * k, Mat.Soft, 10 * k);
+      for (let i = 0; i < 2; i++) strand(r, rng, rng.range(90, 230) * k, 20 * k, rng.range(80, 140) * k, 10 * k, 3 * k, 1.5 * k, 16 * k, Mat.Soft);
     },
   },
   {
-    category: 'fgVine', variants: 2, w: 48, h: 330, unitsPerTexel: 2.2, anchorX: 24, anchorY: 0,
-    sway: 'top', swayScale: 1, emissive: false, cut: 'top', finalize: { softness: 6, rimWidth: 0, dispScale: 0.5 },
+    category: 'fgVine', variants: 2, w: 32, h: 220, unitsPerTexel: 2.2 / FG_K, anchorX: 16, anchorY: 0,
+    sway: 'top', swayScale: 1, emissive: false, cut: 'top', finalize: { softness: 6 * FG_K, rimWidth: 0, dispScale: 0.5 * FG_K },
     draw(r, rng) {
-      strand(r, rng, r.w / 2, -4, r.h - M - rng.range(10, 60), 8, 3.4, 1.6, 17, Mat.Soft);
+      const k = FG_K;
+      strand(r, rng, r.w / 2, -4 * k, r.h - M - rng.range(10, 60) * k, 8 * k, 3.4 * k, 1.6 * k, 17 * k, Mat.Soft);
     },
   },
   {

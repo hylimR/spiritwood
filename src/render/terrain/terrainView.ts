@@ -9,14 +9,17 @@ import {
 } from './terrain.glsl.ts';
 import { buildTerrainMesh, CORE_STRIDE_FLOATS, DEFAULT_TERRAIN, EDGE_STRIDE_FLOATS, type TerrainChunk } from './terrainMesh.ts';
 
-const CORE_ATTRS: readonly AttributeSpec[] = [
+export const TERRAIN_CORE_ATTRS: readonly AttributeSpec[] = [
   { name: 'aPosition', format: 'float32x2', offset: 0 },
   { name: 'aDist', format: 'float32', offset: 8 },
+  { name: 'aLit', format: 'float32', offset: 12 },
+  { name: 'aSpill', format: 'unorm8x4', offset: 16 },
 ];
-const EDGE_ATTRS: readonly AttributeSpec[] = [
+export const TERRAIN_EDGE_ATTRS: readonly AttributeSpec[] = [
   { name: 'aPosition', format: 'float32x2', offset: 0 },
   { name: 'aNormal', format: 'float32x2', offset: 8 },
   { name: 'aEdge', format: 'float32x4', offset: 16 },
+  { name: 'aSpill', format: 'unorm8x4', offset: 32 },
 ];
 /** AA feather half-width in device pixels. */
 export const AA_PX = 1.25;
@@ -99,15 +102,15 @@ export class TerrainView implements RenderView {
       const meshes: WorldMesh[] = [];
       const label = `terrain:${ch.col},${ch.row}`;
       if (ch.coreIndices.length > 0) {
-        const g = interleavedGeometry(ch.core, ch.coreIndices, CORE_STRIDE_FLOATS * 4, CORE_ATTRS, `${label}:core`);
+        const g = interleavedGeometry(ch.core, ch.coreIndices, CORE_STRIDE_FLOATS * 4, TERRAIN_CORE_ATTRS, `${label}:core`);
         meshes.push(this.core.addChild(new Mesh({ geometry: g, shader: coreShader, state: opaque })));
       }
       if (ch.edgeIndices.length > 0) {
-        const g = interleavedGeometry(ch.edge, ch.edgeIndices, EDGE_STRIDE_FLOATS * 4, EDGE_ATTRS, `${label}:edge`);
+        const g = interleavedGeometry(ch.edge, ch.edgeIndices, EDGE_STRIDE_FLOATS * 4, TERRAIN_EDGE_ATTRS, `${label}:edge`);
         meshes.push(this.edges.addChild(new Mesh({ geometry: g, shader: edgeShader })));
         if (ch.mossIndices.length > 0) {
           const shared = g.getBuffer('aPosition');
-          const gm = interleavedGeometry(ch.edge, ch.mossIndices, EDGE_STRIDE_FLOATS * 4, EDGE_ATTRS, `${label}:moss`, shared);
+          const gm = interleavedGeometry(ch.edge, ch.mossIndices, EDGE_STRIDE_FLOATS * 4, TERRAIN_EDGE_ATTRS, `${label}:moss`, shared);
           const twin = new Mesh({ geometry: gm, shader: glowShader });
           twin.blendMode = 'add';
           meshes.push(this.glow.addChild(twin));

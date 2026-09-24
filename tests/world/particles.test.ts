@@ -5,7 +5,10 @@ import type { RenderStats } from '../../src/contracts/debug.ts';
 import type { QualitySettings } from '../../src/contracts/quality.ts';
 import { GLOW_SLOTS, SCENE_SLOTS, type FrameInfo, type GlowSlots, type RenderContext, type SceneSlots } from '../../src/contracts/render.ts';
 import { SimEventType, type SimEvent } from '../../src/contracts/sim.ts';
-import { PARTICLE_CAPACITY, ParticlesView } from '../../src/render/fx/particles.ts';
+import { fireflyAttractors, PARTICLE_CAPACITY, ParticlesView } from '../../src/render/fx/particles.ts';
+import { shaftTrapezoid } from '../../src/render/fx/shaftGeometry.ts';
+import { PALETTE } from '../../src/config.ts';
+import { toBgr } from '../../src/render/fx/particlePool.ts';
 import { PARTICLE_FRAMES, type ParticleFrame } from '../../src/render/gen/particleAtlas.ts';
 import { WorldAssets } from '../../src/render/layers/assets.ts';
 import { computeCameraFrame, createCameraFrame } from '../../src/render/util/camera.ts';
@@ -152,4 +155,23 @@ describe('ParticlesView', () => {
     step(view, frame, 6);
     expect(view.liveBursts).toBeGreaterThan(idle);
   });
+
+  test('fireflies gather with intent: warm ones near lanterns, all tethered near their homes', () => {
+    const { view, ctx, frame } = setup();
+    const att = fireflyAttractors(ctx.level, ctx.level.lightShafts.map(shaftTrapezoid));
+    // Lantern (twice), the shaft foot, and ground samples along the floor.
+    expect(att.length / 3).toBeGreaterThan(10);
+    step(view, frame, 240);
+    const amb = containers(ctx)[0] as ParticleContainer;
+    const C = PARTICLE_CAPACITY;
+    const flies = amb.particleChildren.slice(C.motes, C.motes + C.fireflies);
+    const warm = toBgr(PALETTE.warmAccent);
+    const lantern = ctx.level.decorHints[0] as { x: number; y: number };
+    const nearLantern = flies.filter((p) => ((p.color & 0xffffff) === warm) && Math.hypot(p.x - lantern.x, p.y - lantern.y) < 420);
+    expect(nearLantern.length).toBeGreaterThan(0);
+    // Ground-homed fireflies hover low: most fireflies are in the lower part of the view.
+    const low = flies.filter((p) => p.scaleX !== 0 && p.y > 19 * 48 - 400).length;
+    expect(low).toBeGreaterThan(flies.length * 0.5);
+  });
 });
+

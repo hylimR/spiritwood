@@ -5,6 +5,7 @@ import type { FrameInfo, RenderContext, RenderView } from '../../contracts/rende
 import { hexToRgb, parseHexColor } from '../../core/color.ts';
 import { GLSL_DITHER, GLSL_FRAGMENT_HEADER, GLSL_NOISE, GLSL_VERSION, GLSL_VERTEX_TRANSFORM } from '../shaders/common.ts';
 import { applyParallax, visibleLayerRect, type Extent } from '../util/camera.ts';
+import { FOG_SHAPE } from './fogShading.ts';
 import { meetsQuality } from './layerModel.ts';
 import { coverageExtent } from './placement.ts';
 
@@ -19,7 +20,9 @@ void main() {
 }
 `;
 
-/** A cheap transparent band: two value-noise lookups, no loops (§6 full-screen layer rule). */
+const f = (v: number): string => (Number.isInteger(v) ? `${v}.0` : `${v}`);
+
+/** A cheap transparent band (fogShading.ts): two value-noise lookups, no loops (§6 full-screen layer rule). */
 export const FOG_FRAGMENT = /* glsl */ `${GLSL_FRAGMENT_HEADER}
 in vec2 vLayer;
 uniform vec3 uFogColor;
@@ -34,12 +37,14 @@ ${GLSL_DITHER}
 
 void main() {
   float v = (vLayer.y - uY) / uHeight;
-  float prof = max(0.0, 1.0 - v * v);
-  prof *= prof;
-  vec2 p = vec2((vLayer.x + uTime * uSpeed) * 0.0062, vLayer.y * 0.0175);
-  float n = sw_vnoise(p) * 0.65 + sw_vnoise(p * 2.3 + vec2(uTime * 0.021, 5.2)) * 0.35;
-  float a = uDensity * prof * clamp(n * 1.5 - 0.2, 0.0, 1.0);
-  finalColor = vec4((uFogColor + sw_dither(gl_FragCoord.xy)) * a, a);
+  vec2 p = vec2((vLayer.x + uTime * uSpeed) * ${f(FOG_SHAPE.fx)}, vLayer.y * ${f(FOG_SHAPE.fy)});
+  float n = sw_vnoise(p) * 0.6 + sw_vnoise(p * vec2(2.6, 2.1) + vec2(uTime * 0.03, 5.2)) * 0.4;
+  float top = 1.0 - smoothstep(-0.95, 0.35, v);
+  float thr = mix(${f(FOG_SHAPE.thrBase)}, ${f(FOG_SHAPE.thrTop)}, top);
+  float a = uDensity * smoothstep(thr - ${f(FOG_SHAPE.soft * 0.5)}, thr + ${f(FOG_SHAPE.soft * 0.5)}, n)
+    * smoothstep(-1.0, -0.7, v) * (1.0 - smoothstep(0.55, 1.0, v));
+  vec3 c = uFogColor * (1.0 + ${f(FOG_SHAPE.crest)} * top);
+  finalColor = vec4((c + sw_dither(gl_FragCoord.xy)) * a, a);
 }
 `;
 

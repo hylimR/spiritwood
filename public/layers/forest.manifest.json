@@ -3,85 +3,84 @@
   "area": "forest",
   "textureBudgetMB": { "high": 96, "medium": 64, "low": 48 },
   "atlases": [
-    { "id": "forest-kit", "source": { "procedural": "forest-kit" }, "width": 2048, "height": 1792 }
+    { "id": "forest-kit", "source": { "procedural": "forest-kit" }, "width": 2048, "height": 2048 }
   ],
   "layers": [
     {
-      "id": "sky", "kind": "sky", "parallax": [0, 0], "minQuality": "low",
-      "tint": "#ffffff", "fog": 0, "fogColor": "#1f4a63", "desaturate": 0,
-      "gradient": [[0, "#040a16"], [0.45, "#0b1d30"], [0.78, "#163a52"], [1, "#1f4a63"]],
-      "moon": { "x": 0.24, "y": 0.2, "radius": 44, "color": "#d8f3ff", "halo": 1 },
-      "starDensity": 0.55
+      "id": "sky", "kind": "sky", "parallax": [0, 0], "minQuality": "low", "tint": "#ffffff", "fog": 0,
+      "fogColor": "#1f4a63", "desaturate": 0,
+      "gradient": [[0, "#030817"], [0.32, "#091a33"], [0.64, "#163a57"], [1, "#12324b"]],
+      "moon": {"x": 0.27, "y": 0.15, "radius": 40, "color": "#d8f3ff", "halo": 1}, "starDensity": 0.6
     },
     {
       "id": "L1-farthest-treeline", "kind": "kit", "parallax": [0.08, 0.08], "minQuality": "high",
-      "tint": "#16304a", "fog": 0.74, "fogColor": "#1f4a63", "desaturate": 0.4,
-      "atlas": "forest-kit", "recipe": "farTreeline", "seed": 101, "density": 14, "scale": [0.36, 0.56],
-      "baseline": 0.6, "rim": 0.12, "glow": 0, "sway": 0, "chunkWidth": 4096
+      "tint": "#1a2a50", "fog": 0.7, "fogColor": "#2c4c78", "desaturate": 0.25, "atlas": "forest-kit",
+      "recipe": "farTreeline", "seed": 101, "density": 9, "scale": [0.36, 0.52], "baseline": 0.62,
+      "rim": 0.1, "glow": 0, "sway": 0, "chunkWidth": 4096
     },
     {
       "id": "L2-far-treeline", "kind": "kit", "parallax": [0.16, 0.16], "minQuality": "low",
-      "tint": "#122840", "fog": 0.64, "fogColor": "#1f4a63", "desaturate": 0.35,
-      "atlas": "forest-kit", "recipe": "farTreeline", "seed": 202, "density": 11, "scale": [0.44, 0.66],
-      "baseline": 0.64, "rim": 0.16, "glow": 0, "sway": 0, "chunkWidth": 4096
+      "tint": "#152445", "fog": 0.6, "fogColor": "#274470", "desaturate": 0.2, "atlas": "forest-kit",
+      "recipe": "farTreeline", "seed": 202, "density": 7, "scale": [0.44, 0.62], "baseline": 0.66,
+      "rim": 0.15, "glow": 0, "sway": 0, "chunkWidth": 4096
     },
     {
       "id": "L3-misty-trunks", "kind": "kit", "parallax": [0.28, 0.28], "minQuality": "medium",
-      "tint": "#0f2236", "fog": 0.55, "fogColor": "#1d4660", "desaturate": 0.3,
-      "atlas": "forest-kit", "recipe": "farTreeline", "seed": 303, "density": 8, "scale": [0.55, 0.8],
-      "baseline": 0.68, "rim": 0.2, "glow": 0, "sway": 0, "chunkWidth": 4096
+      "tint": "#10203a", "fog": 0.5, "fogColor": "#213d63", "desaturate": 0.15, "atlas": "forest-kit",
+      "recipe": "farTreeline", "seed": 303, "density": 5.5, "scale": [0.52, 0.74], "baseline": 0.7,
+      "rim": 0.2, "glow": 0, "sway": 0, "chunkWidth": 4096
     },
     {
-      "id": "L4-mid-forest", "kind": "kit", "parallax": [0.4, 0.4], "minQuality": "low",
-      "tint": "#0d1d2e", "fog": 0.45, "fogColor": "#1b4058", "desaturate": 0.22,
-      "atlas": "forest-kit", "recipe": "midForest", "seed": 404, "density": 1.0, "scale": [0.62, 0.8],
-      "baseline": 0.8, "rim": 0.32, "glow": 0.45, "sway": 0.5, "chunkWidth": 3072
+      "id": "L4-mid-forest", "kind": "kit", "parallax": [0.4, 0.4], "minQuality": "low", "tint": "#0c1a2e",
+      "fog": 0.4, "fogColor": "#1b3a55", "desaturate": 0.12, "atlas": "forest-kit", "recipe": "midForest",
+      "seed": 404, "density": 0.9, "scale": [0.62, 0.8], "baseline": 0.8, "rim": 0.3, "glow": 0.45,
+      "sway": 0.5, "chunkWidth": 3072
     },
     {
       "id": "L5-mid-forest", "kind": "kit", "parallax": [0.52, 0.52], "minQuality": "high",
-      "tint": "#0b1a29", "fog": 0.35, "fogColor": "#193c53", "desaturate": 0.16,
-      "atlas": "forest-kit", "recipe": "midForest", "seed": 505, "density": 0.8, "scale": [0.72, 0.9],
-      "baseline": 0.82, "rim": 0.38, "glow": 0.55, "sway": 0.55, "chunkWidth": 3072
+      "tint": "#0a1627", "fog": 0.3, "fogColor": "#173450", "desaturate": 0.08, "atlas": "forest-kit",
+      "recipe": "midForest", "seed": 505, "density": 0.75, "scale": [0.72, 0.9], "baseline": 0.82,
+      "rim": 0.4, "glow": 0.55, "sway": 0.55, "chunkWidth": 3072
     },
     {
-      "id": "L6-mid-forest", "kind": "kit", "parallax": [0.66, 0.66], "minQuality": "low",
-      "tint": "#0a1724", "fog": 0.25, "fogColor": "#17374d", "desaturate": 0.1,
-      "atlas": "forest-kit", "recipe": "midForest", "seed": 606, "density": 0.62, "scale": [0.85, 1.05],
-      "baseline": 0.84, "rim": 0.45, "glow": 0.65, "sway": 0.6, "chunkWidth": 3072
+      "id": "L6-mid-forest", "kind": "kit", "parallax": [0.66, 0.66], "minQuality": "low", "tint": "#09131f",
+      "fog": 0.2, "fogColor": "#142d45", "desaturate": 0.04, "atlas": "forest-kit", "recipe": "midForest",
+      "seed": 606, "density": 0.62, "scale": [0.85, 1.05], "baseline": 0.84, "rim": 0.5, "glow": 0.65,
+      "sway": 0.6, "chunkWidth": 3072
     },
     {
-      "id": "L7-near-trunks", "kind": "kit", "parallax": [0.8, 0.8], "minQuality": "low",
-      "tint": "#08131f", "fog": 0.15, "fogColor": "#153247", "desaturate": 0.05,
-      "atlas": "forest-kit", "recipe": "nearForest", "seed": 707, "density": 0.42, "scale": [0.85, 1.0],
-      "baseline": 0.86, "rim": 0.6, "glow": 0.8, "sway": 0.6, "chunkWidth": 3072
+      "id": "L7-near-trunks", "kind": "kit", "parallax": [0.8, 0.8], "minQuality": "low", "tint": "#07101a",
+      "fog": 0.1, "fogColor": "#11273b", "desaturate": 0, "atlas": "forest-kit", "recipe": "nearForest",
+      "seed": 707, "density": 0.45, "scale": [0.85, 1.0], "baseline": 0.86, "rim": 0.7, "glow": 0.8,
+      "sway": 0.6, "chunkWidth": 3072
     },
     {
-      "id": "L8-near-trunks", "kind": "kit", "parallax": [0.9, 0.9], "minQuality": "low",
-      "tint": "#07101a", "fog": 0.07, "fogColor": "#132d40", "desaturate": 0,
-      "atlas": "forest-kit", "recipe": "nearForest", "seed": 808, "density": 0.34, "scale": [0.95, 1.12],
-      "baseline": 0.88, "rim": 0.7, "glow": 0.9, "sway": 0.65, "chunkWidth": 3072
+      "id": "L8-near-trunks", "kind": "kit", "parallax": [0.9, 0.9], "minQuality": "low", "tint": "#050c15",
+      "fog": 0.04, "fogColor": "#0f2234", "desaturate": 0, "atlas": "forest-kit", "recipe": "nearForest",
+      "seed": 808, "density": 0.36, "scale": [0.95, 1.12], "baseline": 0.88, "rim": 0.85, "glow": 0.9,
+      "sway": 0.65, "chunkWidth": 3072
     },
     {
-      "id": "fog-low", "kind": "fog", "parallax": [1.08, 0], "minQuality": "low",
-      "tint": "#ffffff", "fog": 0, "fogColor": "#5f93aa", "desaturate": 0,
-      "y": 400, "height": 170, "density": 0.2, "speed": 14
+      "id": "fog-low", "kind": "fog", "parallax": [1.08, 0], "minQuality": "low", "tint": "#ffffff",
+      "fog": 0, "fogColor": "#4d8ea3", "desaturate": 0, "y": 460, "height": 150, "density": 0.22,
+      "speed": 14
     },
     {
-      "id": "fog-near", "kind": "fog", "parallax": [1.22, 0], "minQuality": "medium",
-      "tint": "#ffffff", "fog": 0, "fogColor": "#7fb4c7", "desaturate": 0,
-      "y": 470, "height": 110, "density": 0.16, "speed": 26
+      "id": "fog-near", "kind": "fog", "parallax": [1.22, 0], "minQuality": "medium", "tint": "#ffffff",
+      "fog": 0, "fogColor": "#6fa9ba", "desaturate": 0, "y": 500, "height": 100, "density": 0.16,
+      "speed": 26
     },
     {
-      "id": "F1-frame", "kind": "kit", "parallax": [1.25, 0], "minQuality": "low",
-      "tint": "#03060b", "fog": 0, "fogColor": "#03060b", "desaturate": 0,
-      "atlas": "forest-kit", "recipe": "frame", "seed": 901, "density": 0.9, "scale": [0.42, 0.6],
-      "baseline": 0.5, "rim": 0, "glow": 0, "sway": 0.5, "chunkWidth": 4096
+      "id": "F1-frame", "kind": "kit", "parallax": [1.25, 0], "minQuality": "low", "tint": "#03060b",
+      "fog": 0, "fogColor": "#03060b", "desaturate": 0, "atlas": "forest-kit", "recipe": "frame",
+      "seed": 901, "density": 0.9, "scale": [0.42, 0.6], "baseline": 0.5, "rim": 0, "glow": 0, "sway": 0.5,
+      "chunkWidth": 4096
     },
     {
-      "id": "F2-frame", "kind": "kit", "parallax": [1.55, 0], "minQuality": "medium",
-      "tint": "#020408", "fog": 0, "fogColor": "#020408", "desaturate": 0,
-      "atlas": "forest-kit", "recipe": "frame", "seed": 902, "density": 0.55, "scale": [0.5, 0.72],
-      "baseline": 0.5, "rim": 0, "glow": 0, "sway": 0.5, "chunkWidth": 4096
+      "id": "F2-frame", "kind": "kit", "parallax": [1.55, 0], "minQuality": "medium", "tint": "#020408",
+      "fog": 0, "fogColor": "#020408", "desaturate": 0, "atlas": "forest-kit", "recipe": "frame",
+      "seed": 902, "density": 0.55, "scale": [0.5, 0.72], "baseline": 0.5, "rim": 0, "glow": 0, "sway": 0.5,
+      "chunkWidth": 4096
     }
   ]
 }

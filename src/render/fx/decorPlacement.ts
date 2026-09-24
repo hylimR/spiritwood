@@ -34,6 +34,10 @@ export interface DecorPlacement {
 /** Lantern body centre relative to the element anchor (texels = units at scale 1), per variant. */
 const LANTERN_BODY: readonly (readonly [number, number])[] = [[34, -88], [0, -112]];
 
+/** Rose light pools along thorn runs: one per this many tiles, radius (u). */
+const THORN_POOL_EVERY = 4;
+const THORN_POOL_RADIUS = 100;
+
 /** How far decor sinks into the surface it stands on (u), hiding the base under the moss rim. */
 export const DECOR_SINK = 3;
 /** Grounded decor on floor tiles next to a drop stays this far from the tile's open side (u). */
@@ -96,6 +100,13 @@ export function placeDecor(level: LevelData, kit: Pick<KitMeta, 'byCategory'>): 
       } else if (kind === TileKind.Thorns) {
         const onFloor = solid(level, tx, ty + 1) || !solid(level, tx, ty - 1);
         const glow = PALETTE.thorns;
+        // A faint rose light pool every few thorn tiles along a run.
+        if ((tx + ty) % THORN_POOL_EVERY === 0) {
+          halos.push({
+            x: (tx + 0.5) * T, y: (onFloor ? ty + 0.6 : ty + 0.4) * T, radius: THORN_POOL_RADIUS, color: PALETTE.thorns, alpha: 0.13,
+            phase: rng.range(0, 6.28), flicker: 0.08,
+          });
+        }
         if (onFloor) {
           const base = (ty + 1) * T + DECOR_SINK;
           add(back, 'bramble', tx * T + rng.range(8, T - 8), base, rng.range(0.75, 1.0), glow);

@@ -1,13 +1,15 @@
 import type { LevelData } from '../../contracts/level.ts';
 import type { Extent } from '../util/camera.ts';
 import { TerrainField, type TerrainFieldOptions } from './terrainField.ts';
+import { MOON_DIR, packSpill, TerrainLights } from './terrainLight.ts';
 
 /**
  * Terrain meshing (ARCHITECTURE.md §5.5), pure: marching squares over the terrain field on a
  * `cell`-unit grid offset by half a cell from the tile grid (tile corners fall on cell centres, so
  * rounded corners are sampled well), producing per-chunk core triangles with a depth-inside
  * attribute, closed contours with outward normals and an up-facing factor, and per-chunk edge strips
- * (AA feather + moss rim on up-facing edges).
+ * (AA feather + moss rim on up-facing edges). Vertices carry baked light: how squarely the nearest
+ * surface faces the moon, and lantern / flora / thorn spill.
  */
 export interface TerrainMeshOptions {
   cell: number;
@@ -29,16 +31,20 @@ export const DEFAULT_TERRAIN: TerrainMeshOptions = {
   cell: 12,
   chunkTiles: 16,
   margin: 48,
-  shadeDepth: 60,
+  shadeDepth: 90,
   mossIn: 9,
-  mossOut: 3,
-  mossMinUp: 0.3,
+  mossOut: 6,
+  mossMinUp: 0.12,
   field: {},
 };
 
-/** Edge vertex: aPosition (2), aNormal (2), aEdge (side −1..1, kind 0 AA / 1 moss, up 0..1, 0). */
-export const EDGE_STRIDE_FLOATS = 8;
-export const CORE_STRIDE_FLOATS = 3;
+/**
+ * Edge vertex: aPosition (2), aNormal (2), aEdge (side −1..1, kind 0 AA / 1 moss, up 0..1, 0),
+ * aSpill (unorm8x4 packed in one float slot: warm, flora, thorn, 0).
+ */
+export const EDGE_STRIDE_FLOATS = 9;
+/** Core vertex: aPosition (2), aDist (depth inside, u), aLit (moon-facing 0..1), aSpill (packed, as above). */
+export const CORE_STRIDE_FLOATS = 5;
 export const EDGE_KIND_AA = 0;
 export const EDGE_KIND_MOSS = 1;
 
@@ -46,7 +52,7 @@ export interface TerrainChunk {
   col: number;
   row: number;
   bounds: Extent;
-  /** Interleaved aPosition (2) + aDist (1: depth inside, u). */
+  /** Interleaved core vertices (CORE_STRIDE_FLOATS). */
   core: Float32Array;
   coreIndices: Uint16Array;
   coreArea: number;
@@ -86,17 +92,26 @@ const SEGMENTS: readonly (readonly number[])[] = [
 
 class Growable {
   data: Float32Array;
+  bits: Uint32Array;
   length = 0;
   constructor(cap: number) {
     this.data = new Float32Array(cap);
+    this.bits = new Uint32Array(this.data.buffer);
+  }
+  private grow(): void {
+    const next = new Float32Array(this.data.length * 2);
+    next.set(this.data);
+    this.data = next;
+    this.bits = new Uint32Array(next.buffer);
   }
   push(v: number): void {
-    if (this.length === this.data.length) {
-      const next = new Float32Array(this.data.length * 2);
-      next.set(this.data);
-      this.data = next;
-    }
+    if (this.length === this.data.length) this.grow();
     this.data[this.length++] = v;
+  }
+  /** Push raw bits (packed unorm8x4) without a float round trip. */
+  pushBits(v: number): void {
+    if (this.length === this.data.length) this.grow();
+    this.bits[this.length++] = v;
   }
   view(): Float32Array {
     return this.data.slice(0, this.length);
@@ -125,11 +140,23 @@ function grow(b: Extent, x: number, y: number): void {
 
 /** Build the terrain mesh for a level. Deterministic for a given level and options. */
 export function buildTerrainMesh(
-  level: Pick<LevelData, 'widthTiles' | 'heightTiles' | 'tiles' | 'tileSize' | 'pxWidth' | 'pxHeight' | 'seed'>,
+  level: Pick<LevelData, 'widthTiles' | 'heightTiles' | 'tiles' | 'tileSize' | 'pxWidth' | 'pxHeight' | 'seed'> & Partial<Pick<LevelData, 'decorHints'>>,
   options: Partial<TerrainMeshOptions> = {},
 ): TerrainMesh {
   const o: TerrainMeshOptions = { ...DEFAULT_TERRAIN, ...options };
   const field = new TerrainField(level, { seed: level.seed, ...o.field });
+  const lights = new TerrainLights(level);
+  const spillOut = [0, 0, 0];
+  const spillAt = (x: number, y: number): number => {
+    lights.sample(x, y, spillOut);
+    return packSpill(spillOut[0] as number, spillOut[1] as number, spillOut[2] as number);
+  };
+  /** Moon-facing factor of the nearest surface, from the (undisplaced) field gradient. */
+  const litFrom = (gx: number, gy: number): number => {
+    const l = Math.hypot(gx, gy);
+    if (l < 1e-6) return 0;
+    return Math.max(0, (gx * MOON_DIR[0] + gy * MOON_DIR[1]) / l);
+  };
   const C = o.cell;
   const half = C / 2;
   // Sample points sit at half-cell offsets from tile lines: gx0 ≡ C/2 (mod C).
@@ -171,7 +198,7 @@ export function buildTerrainMesh(
     // Refine on the edge line (regula falsi with a bisection guard) against the exact field.
     const onRing = i === 0 || j === 0 || i2 === nx - 1 || j2 === ny - 1;
     if (!onRing) {
-      for (let k = 0; k < 4; k++) {
+      for (let k = 0; k < 8; k++) {
         const ft = field.sample(ax + (bx - ax) * t, ay + (by - ay) * t);
         if (Math.abs(ft) < 1e-3) break;
         if (ft < 0 === flo < 0) {
@@ -225,6 +252,20 @@ export function buildTerrainMesh(
       b.core.push(x);
       b.core.push(y);
       b.core.push(depth);
+      if ((key & 1) === 0) {
+        // Grid corner: central differences on the sampled grid (cheap, and follows the displaced surface).
+        const g = key >> 1;
+        const gi = g % nx;
+        const gj = (g - gi) / nx;
+        const l = f[gi > 0 ? g - 1 : g] as number;
+        const rr = f[gi < nx - 1 ? g + 1 : g] as number;
+        const u = f[gj > 0 ? g - nx : g] as number;
+        const d = f[gj < ny - 1 ? g + nx : g] as number;
+        b.core.push(litFrom(rr - l, d - u));
+      } else {
+        b.core.push(litFrom(field.base(x + 3, y) - field.base(x - 3, y), field.base(x, y + 3) - field.base(x, y - 3)));
+      }
+      b.core.pushBits(spillAt(x, y));
       b.coreMap.set(key, v);
       grow(b.bounds, x, y);
     }
@@ -396,9 +437,11 @@ export function buildTerrainMesh(
       const n1y = normals[k1 * 2 + 1] as number;
       const u0 = up[k] as number;
       const u1 = up[k1] as number;
-      pushQuad(b, b.edgeIdx, null, x0, y0, n0x, n0y, x1, y1, n1x, n1y, EDGE_KIND_AA, u0, u1);
+      const s0 = spillAt(x0, y0);
+      const s1 = spillAt(x1, y1);
+      pushQuad(b, b.edgeIdx, null, x0, y0, n0x, n0y, x1, y1, n1x, n1y, EDGE_KIND_AA, u0, u1, s0, s1);
       if (Math.max(u0, u1) >= o.mossMinUp) {
-        pushQuad(b, b.edgeIdx, b.mossIdx, x0, y0, n0x, n0y, x1, y1, n1x, n1y, EDGE_KIND_MOSS, u0, u1);
+        pushQuad(b, b.edgeIdx, b.mossIdx, x0, y0, n0x, n0y, x1, y1, n1x, n1y, EDGE_KIND_MOSS, u0, u1, s0, s1);
         b.mossArea += len * (o.mossIn + o.mossOut);
       }
       grow(b.bounds, x0 - o.mossIn, y0 - o.mossIn);
@@ -434,11 +477,11 @@ export function buildTerrainMesh(
 function pushQuad(
   b: ChunkBuild, idx: number[], moss: number[] | null,
   x0: number, y0: number, n0x: number, n0y: number, x1: number, y1: number, n1x: number, n1y: number,
-  kind: number, u0: number, u1: number,
+  kind: number, u0: number, u1: number, s0: number, s1: number,
 ): void {
   const base = b.edge.length / EDGE_STRIDE_FLOATS;
   const e = b.edge;
-  const vert = (x: number, y: number, nx: number, ny: number, side: number, up: number): void => {
+  const vert = (x: number, y: number, nx: number, ny: number, side: number, up: number, spill: number): void => {
     e.push(x);
     e.push(y);
     e.push(nx);
@@ -447,11 +490,12 @@ function pushQuad(
     e.push(kind);
     e.push(up);
     e.push(0);
+    e.pushBits(spill);
   };
-  vert(x0, y0, n0x, n0y, -1, u0);
-  vert(x0, y0, n0x, n0y, 1, u0);
-  vert(x1, y1, n1x, n1y, 1, u1);
-  vert(x1, y1, n1x, n1y, -1, u1);
+  vert(x0, y0, n0x, n0y, -1, u0, s0);
+  vert(x0, y0, n0x, n0y, 1, u0, s0);
+  vert(x1, y1, n1x, n1y, 1, u1, s1);
+  vert(x1, y1, n1x, n1y, -1, u1, s1);
   idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
   if (moss) moss.push(base, base + 1, base + 2, base, base + 2, base + 3);
 }

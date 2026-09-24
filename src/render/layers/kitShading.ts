@@ -19,6 +19,8 @@ export interface KitShadeParams {
   mistY: number;
   mistDepth: number;
   mist: number;
+  /** Colour of the height mist (defaults to fogColor): lets a layer's base dissolve into a different mist. */
+  mistColor?: RGB;
 }
 
 export const KIT_MODE = {
@@ -35,11 +37,12 @@ export const KIT_MODE = {
 } as const;
 export type KitMode = (typeof KIT_MODE)[keyof typeof KIT_MODE];
 
-/** Moonlight rim colour (cool, slightly cyan). */
+/** Moonlight rim colour: cold cyan (moonlight leaning toward the spirit and flora glows). */
 export const KIT_RIM_COLOR: RGB = (() => {
   const m = hexToRgb(PALETTE.moonlight);
   const s = hexToRgb(PALETTE.spiritGlow);
-  return [m[0] * 0.7 + s[0] * 0.3, m[1] * 0.7 + s[1] * 0.3, m[2] * 0.7 + s[2] * 0.3];
+  const f = hexToRgb(PALETTE.floraGlow);
+  return [m[0] * 0.45 + s[0] * 0.4 + f[0] * 0.15, m[1] * 0.45 + s[1] * 0.4 + f[1] * 0.15, m[2] * 0.45 + s[2] * 0.4 + f[2] * 0.15];
 })();
 
 /** Rim light scale (the manifest `rim` is a 0..1 artistic strength). */
@@ -68,11 +71,17 @@ export function shadeKit(
   r += (l - r) * p.desaturate;
   g += (l - g) * p.desaturate;
   b += (l - b) * p.desaturate;
+  // Aerial perspective toward the layer's fog colour, then the mist rising from its base.
+  r += (p.fogColor[0] - r) * p.fog;
+  g += (p.fogColor[1] - g) * p.fog;
+  b += (p.fogColor[2] - b) * p.fog;
   const mistT = Math.min(1, Math.max(0, (layerY - p.mistY) / Math.max(1e-3, p.mistDepth)));
-  const f = Math.min(1, p.fog + (1 - p.fog) * mistT * mistT * p.mist);
-  r += (p.fogColor[0] - r) * f;
-  g += (p.fogColor[1] - g) * f;
-  b += (p.fogColor[2] - b) * f;
+  const m = Math.min(1, mistT * mistT * p.mist);
+  const mc = p.mistColor ?? p.fogColor;
+  r += (mc[0] - r) * m;
+  g += (mc[1] - g) * m;
+  b += (mc[2] - b) * m;
+  const f = p.fog + (1 - p.fog) * m;
   const e = em * (1 - f * 0.6) * (p.glow > 0 ? 1 : 0);
   const gr = glowRgb[0] * p.glow;
   const gg = glowRgb[1] * p.glow;

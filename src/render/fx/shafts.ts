@@ -1,16 +1,18 @@
 import { Container, GlProgram, Mesh, Shader, UniformGroup, type Geometry } from 'pixi.js';
-import { DEPTH_SHAFTS, PALETTE } from '../../config.ts';
+import { DEPTH_SHAFTS } from '../../config.ts';
 import type { QualitySettings } from '../../contracts/quality.ts';
 import type { FrameInfo, RenderContext, RenderView } from '../../contracts/render.ts';
-import { hexToRgb } from '../../core/color.ts';
 import { interleavedGeometry, type AttributeSpec } from '../layers/geometry.ts';
 import { GLSL_FRAGMENT_HEADER, GLSL_NOISE, GLSL_VERSION, GLSL_VERTEX_TRANSFORM } from '../shaders/common.ts';
 import type { Extent } from '../util/camera.ts';
 import { createTransparentState } from '../util/states.ts';
 import { shaftTrapezoid, trapezoidBounds, type Trapezoid } from './shaftGeometry.ts';
+import { SHAFT_COLOR, SHAFT_LOOK } from './shaftShading.ts';
 
-/** Shaft brightness relative to def.intensity (the brief's 0.08–0.15 range). */
-export const SHAFT_STRENGTH = 0.13;
+const f = (v: number): string => (Number.isInteger(v) ? `${v}.0` : `${v}`);
+
+/** Shaft brightness relative to def.intensity. */
+export const SHAFT_STRENGTH = SHAFT_LOOK.strength;
 /** Rows per shaft (the u mapping is exact via affine attributes; rows only shape the envelope). */
 const ROWS = 4;
 const STRIDE_FLOATS = 7;
@@ -37,9 +39,9 @@ void main() {
 `;
 
 /**
- * Additive, depth-tested (behind the terrain core) light shaft. aShaft = (x − left(y), width(y), v,
- * intensity): both components are affine over the trapezoid, so u = x / width is exact per fragment.
- * One analytic noise pair, no loops.
+ * Additive, depth-tested (behind the terrain core) light shaft (shaftShading.ts). aShaft = (x − left(y),
+ * width(y), v, intensity): both components are affine over the trapezoid, so u = x / width is exact
+ * per fragment. Two value-noise lookups, no loops.
  */
 export const SHAFT_FRAGMENT = /* glsl */ `${GLSL_FRAGMENT_HEADER}
 in vec4 vShaft;
@@ -52,11 +54,14 @@ ${GLSL_NOISE}
 
 void main() {
   float u = clamp(vShaft.x / max(vShaft.y, 1e-3), 0.0, 1.0);
-  float v = vShaft.z;
-  float env = smoothstep(0.0, 0.22, u) * smoothstep(1.0, 0.78, u) * smoothstep(0.0, 0.08, v) * (1.0 - smoothstep(0.55, 1.0, v));
-  float shimmer = 0.62 + 0.38 * sw_vnoise(vec2(u * 5.0 + vSeed, v * 2.5 - uTime * 0.11));
-  float rays = 0.75 + 0.25 * sw_vnoise(vec2(u * 17.0 + vSeed * 3.1, uTime * 0.05 + vSeed));
-  float a = env * shimmer * rays * vShaft.w * uStrength;
+  float v = clamp(vShaft.z, 0.0, 1.0);
+  float across = smoothstep(0.0, 0.24, u) * (1.0 - smoothstep(0.76, 1.0, u));
+  float along = smoothstep(0.0, ${f(SHAFT_LOOK.fadeIn)}, v) * pow(max(0.0, 1.0 - v), ${f(SHAFT_LOOK.fall)});
+  float n = sw_vnoise(vec2(u * ${f(SHAFT_LOOK.streakFreq)} + vSeed, uTime * ${f(SHAFT_LOOK.streakDrift)} + vSeed * 0.37));
+  float streak = ${f(SHAFT_LOOK.streakMin)} + ${f(1 - SHAFT_LOOK.streakMin)} * smoothstep(0.2, 0.8, n);
+  float sh = sw_vnoise(vec2(u * 2.3 + vSeed * 1.7, v * ${f(SHAFT_LOOK.shimmerFreq)} - uTime * ${f(SHAFT_LOOK.shimmerSpeed)}));
+  float shimmer = ${f(1 - SHAFT_LOOK.shimmerDepth)} + ${f(SHAFT_LOOK.shimmerDepth * 1.6)} * sh;
+  float a = across * along * streak * shimmer * vShaft.w * uStrength;
   finalColor = vec4(uShaftColor * a, a);
 }
 `;
@@ -110,7 +115,7 @@ export class ShaftsView implements RenderView {
     const data = buildShaftMesh(this.traps);
     const geometry = interleavedGeometry(data.vertices, data.indices, STRIDE_FLOATS * 4, ATTRS, 'light-shafts');
     const uniforms = new UniformGroup({
-      uShaftColor: { value: new Float32Array(hexToRgb(PALETTE.spiritGlow)), type: 'vec3<f32>' },
+      uShaftColor: { value: new Float32Array(SHAFT_COLOR), type: 'vec3<f32>' },
       uStrength: { value: SHAFT_STRENGTH, type: 'f32' },
       uTime: { value: 0, type: 'f32' },
     });

@@ -3,8 +3,8 @@ import { describe, expect, test } from 'vitest';
 import { parseManifest } from '../../src/assets/manifest.ts';
 import { DEPTH_INSTANCE_EPS, MAX_ASPECT, MAX_INSTANCES_PER_LAYER, MIN_ASPECT, VIEW_H } from '../../src/config.ts';
 import type { KitLayerDef } from '../../src/contracts/assets.ts';
-import { coverageExtent, elementRowY, instanceBounds, placeLayer } from '../../src/render/layers/placement.ts';
-import { prepareKitLayer, SINGLE_CHUNK_PARALLAX } from '../../src/render/layers/layerModel.ts';
+import { coverageExtent, elementRowY, HINT_CLEARING, instanceBounds, placeLayer } from '../../src/render/layers/placement.ts';
+import { clearingHints, prepareKitLayer, SINGLE_CHUNK_PARALLAX } from '../../src/render/layers/layerModel.ts';
 import { KIT_STRIDE_FLOATS, MAX_MESH_VERTICES } from '../../src/render/layers/kitMesh.ts';
 import { RECIPES } from '../../src/render/layers/recipes.ts';
 import { computeCameraFrame, createCameraFrame, depthForInstance, depthForParallax, layerExtent, visibleLayerRect, type Extent } from '../../src/render/util/camera.ts';
@@ -156,5 +156,45 @@ describe('prepareKitLayer meshes', () => {
       }
     }
     expect(worst).toBeLessThanOrEqual(1.5);
+  });
+});
+
+describe('clearings', () => {
+  const kit = forestKit();
+  test('streams with gaps open clearings: fewer trunks, deterministic, with gaps well beyond the usual spacing', () => {
+    const def = kitLayers.find((d) => d.recipe === 'midForest') as KitLayerDef;
+    const recipe = RECIPES.midForest as NonNullable<(typeof RECIPES)[string]>;
+    const noGaps = { ...recipe, streams: recipe.streams.map(({ gaps: _gaps, ...rest }) => rest) };
+    const trunks = (p: ReturnType<typeof placeLayer>): number[] =>
+      p.instances.filter((i) => i.el.category === 'midTrunk').map((i) => i.x).sort((a, b) => a - b);
+    const withGaps = trunks(placeLayer(def, recipe, kit.byCategory, W, H));
+    const even = trunks(placeLayer(def, noGaps, kit.byCategory, W, H));
+    expect(withGaps).toEqual(trunks(placeLayer(def, recipe, kit.byCategory, W, H)));
+    expect(withGaps.length).toBeLessThan(even.length);
+    expect(withGaps.length).toBeGreaterThan(even.length * 0.3);
+    const widest = (xs: number[]): number => Math.max(...xs.slice(1).map((x, i) => x - (xs[i] as number)));
+    expect(widest(withGaps)).toBeGreaterThan(widest(even) * 1.2);
+  });
+});
+
+describe('clearings around gameplay hints', () => {
+  const kit = forestKit();
+  test('trunk streams leave the goal and lanterns open (in each layer’s parallax space)', () => {
+    const goalX = 8800;
+    for (const def of kitLayers.filter((d) => d.recipe === 'midForest' || d.recipe === 'nearForest')) {
+      const recipe = RECIPES[def.recipe] as NonNullable<(typeof RECIPES)[string]>;
+      const open = placeLayer(def, recipe, kit.byCategory, W, H, [goalX]);
+      const centre = goalX * def.parallax[0];
+      for (const i of open.instances) {
+        if (i.el.category === 'midTrunk' || i.el.category === 'nearTrunk') expect(Math.abs(i.x - centre)).toBeGreaterThanOrEqual(HINT_CLEARING);
+      }
+      // Without hints the same layer is free to put trunks there.
+      expect(placeLayer(def, recipe, kit.byCategory, W, H).instances.length).toBeGreaterThanOrEqual(open.instances.length);
+    }
+  });
+
+  test('clearingHints lists the goal and every lantern', () => {
+    const level = { goal: { x: 100, y: 0, w: 40, h: 80 }, decorHints: [{ id: 0, kind: 'lantern' as const, x: 500, y: 0 }, { id: 1, kind: 'flora' as const, x: 700, y: 0 }] };
+    expect(clearingHints(level)).toEqual([120, 500]);
   });
 });
