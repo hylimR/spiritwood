@@ -26,7 +26,10 @@ node tools/level/build-level.ts               # regenerate public/levels/forest.
 - `src/contracts/**`, `src/config.ts`, the shared helpers (`src/core/{math,rng,color}.ts`,
   `src/render/gen/{noise,sdf}.ts`, `src/render/util/**`, `src/render/shaders/common.ts`) and the configs
   are frozen. If you need a contract change, stop and report it. Do not work around it.
-- Only the main session commits.
+- Never push. Implementation agents work in isolated git worktrees and make local commits there. The
+  main session merges and pushes.
+- To look at generated textures without a browser, write PNGs with `tools/preview/png.ts` and open
+  them with the Read tool.
 
 ## Code conventions
 

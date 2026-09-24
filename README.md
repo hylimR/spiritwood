@@ -37,3 +37,4 @@ npm test
 | `?dynres=0\|1` | Dynamic resolution off or on |
 | `?debug=1` | Show the debug overlay |
 | `?bench` | 30 s scripted flythrough; prints the fps summary (`?bench=60` for 60 s) |
+| `?manifest=plates` | Load the demo painted-plate manifest (streams KTX2 or WebP chunks) |

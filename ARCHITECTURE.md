@@ -111,6 +111,10 @@ layer ≈ 0.95), sky = `DEPTH_SKY` = 0.99. Shaders write `gl_Position.z = depth�
 Everything from slot `terrain` onwards (decor, entities, hero, particles, fog, foreground) uses Pixi's
 default state (no depth test) and simply draws on top in slot order.
 
+**Rule:** anything in slots `opaque`, `sky`, `background` or `shafts` must be a depth-tested custom
+shader. Plain Pixi Sprites, Graphics and ParticleContainers have no depth test, so they would paint
+over the terrain drawn in the pre-pass. They may only be used from slot `terrain` onward.
+
 ### 2.5 Colour and alpha
 
 - Pixi textures and render targets are **premultiplied alpha**, and custom fragment shaders output
@@ -150,9 +154,10 @@ rAF ─▶ FixedStepLoop.frame(now)
   foreground`) get an identity *view-space* transform, and their owners place each layer with
   `applyParallax`.
 - **Glow slots:** `world, entities, hero, particles`. These are additive, emissive-only "twins" of
-  gameplay-plane things (flora, moss rim, orbs, hero, fireflies, shaft dust). Far background glow is *not*
-  twinned, because it would bloom through nearer occluders. Background layers bake their halos into the
-  scene instead.
+  content drawn from slot `terrain` onward (moss rim, decor flora, lanterns, thorn tips, orbs, hero,
+  fireflies, shaft dust). The glow RT has no depth buffer, so **parallax-layer content is never
+  twinned**: it would bloom through the terrain. Background flora bakes its halo into the scene
+  instead.
 - **Dynamic resolution:** the scene and glow RTs are `canvasPx × renderScale`. `renderScale` changes in
   0.05 steps, at most once per second. The composite upsamples bilinearly.
 
@@ -165,11 +170,11 @@ the configs are **frozen**: changing them needs the main session.
 
 | Owner | Files | Summary |
 |---|---|---|
-| **main** (frozen contracts) | `ARCHITECTURE.md`, `README.md`, `CLAUDE.md`, `package.json`, `tsconfig.json`, `vite.config.ts`, `index.html`, `src/config.ts`, `src/contracts/**`, `src/core/{math,rng,color}.ts`, `src/render/gen/{noise,sdf}.ts`, `src/render/util/**`, `src/render/shaders/common.ts`, `tests/shared/**` | Types, constants, pure shared helpers |
+| **main** (frozen contracts) | `ARCHITECTURE.md`, `README.md`, `CLAUDE.md`, `package.json`, `tsconfig.json`, `vite.config.ts` (incl. the KTX2 transcoder plugin), `index.html`, `src/config.ts`, `src/contracts/**`, `src/core/{math,rng,color,todo}.ts`, `src/render/gen/{noise,sdf}.ts`, `src/render/util/**`, `src/render/shaders/common.ts`, `tools/preview/png.ts`, `tests/shared/**` | Types, constants, pure shared helpers |
 | **main** (integration) | `src/main.ts`, `src/game/**`, `src/audio/**` | Boot, orchestrator, glue |
 | **SIM** agent | `src/core/{loop,events}.ts`, `src/input/**`, `src/level/**`, `src/sim/**`, `tools/level/**`, `public/levels/**`, `tests/{core,input,level,sim}/**` | Loop, input, LDtk loading, collision, player controller, camera, world rules, enemy, level content |
-| **WORLD** agent | `src/render/gen/**` (except noise/sdf), `src/render/layers/**`, `src/render/terrain/**`, `src/render/fx/**`, `src/assets/**`, `public/layers/**`, `public/transcoders/**`, `tests/world/**` | Procedural kit and atlases, hull trimming, parallax stack, sky, fog, terrain meshing, decor, thorns, particles, light shafts, layer manifest, chunk streaming, KTX2/WebP |
-| **PIPE** agent | `src/render/pipeline.ts`, `src/render/post/**`, `src/render/hero/**`, `src/render/entities/**`, `src/settings/**`, `src/debug/**`, `src/ui/**`, `src/content/**`, `tests/pipe/**` | Renderer, RTs and passes, bloom, composite and grading, hero rig and view, orb/checkpoint/enemy/goal views, quality presets, dynamic resolution, debug overlay, bench mode, HUD and menu |
+| **WORLD** agent | `src/render/gen/**` (except noise/sdf), `src/render/layers/**`, `src/render/terrain/**`, `src/render/fx/**`, `src/render/world.ts`, `src/assets/**`, `public/layers/**`, `tools/plates/**`, `tools/preview/world/**`, `tests/world/**` | Procedural kit and atlases, hull trimming, parallax stack, sky, fog, terrain meshing, decor, thorns, particles, light shafts, layer manifest, chunk streaming, KTX2/WebP |
+| **PIPE** agent | `src/render/pipeline.ts`, `src/render/pipeViews.ts`, `src/render/post/**`, `src/render/hero/**`, `src/render/entities/**`, `src/settings/**`, `src/debug/**`, `src/ui/**`, `src/content/**`, `tools/preview/pipe/**`, `tests/pipe/**` | Renderer, RTs and passes, bloom, composite and grading, hero rig and view, orb/checkpoint/enemy/goal views, quality presets, dynamic resolution, debug overlay, bench mode, HUD and menu |
 
 Dependency rule: `sim/`, `level/`, `input/` and `core/` never import `pixi.js` or `render/**`.
 `render/**` reads sim state only through `SimView` (the contracts), never through concrete sim classes.
@@ -339,9 +344,15 @@ With the full High budget there are 10 kit layers plus sky and fog:
 - **Chunk streaming** (`src/assets/streamer.ts`, pure logic): computes the chunks visible from the camera
   plus a margin (in layer space via `layerExtent`/parallax). It loads by priority (nearest first, at most
   2 in flight) and evicts least-recently-visible chunks past `textureBudgetMB[level]`.
-- **Texture resolution** (`src/assets/textures.ts`): KTX2 (Basis via `pixi.js/ktx2`, with the transcoder
-  self-hosted in `public/transcoders/ktx/`) when the GPU supports a compressed format. Otherwise WebP,
-  then PNG. Every texture registers its bytes with `TextureBudget` (shown in the debug overlay).
+- **Texture resolution** (`src/assets/textures.ts`): KTX2 (Basis via `pixi.js/ktx2`) when the GPU
+  supports a compressed format. Otherwise WebP, then PNG. The libktx transcoder is self-hosted at
+  `transcoders/ktx/`: the Vite plugin serves it in dev and emits it at build. Every texture registers
+  its bytes with `TextureBudget` (shown in the debug overlay).
+- **Bake tool** (`tools/plates/bake-plates.ts`, Node + sharp + ktx2-encoder): renders a plate to PNG,
+  then writes WebP + KTX2 (ETC1S, mipmapped) chunks and tight hull polygons alongside a manifest. M1
+  ships one demo plate layer in `public/layers/forest.plates.manifest.json` (open with
+  `?manifest=plates`). This exercises the whole painted-plate path, and painted or AI-generated plates
+  go through the same tool.
 
 ---
 
@@ -385,3 +396,5 @@ acceptance test to run on the Iris Xe laptop.
     decisions, manifest validation, chunk streaming.
 - Visual checks (main session only): screenshots of each area, reviewed and iterated.
 - Machine safety: at most 3 concurrent agents. Agents never launch browsers or dev servers.
+- Browser-free visual checks: CPU-generated textures and compositions are written to PNG with
+  `tools/preview/png.ts` and inspected as images (`tools/preview/{world,pipe}/`).

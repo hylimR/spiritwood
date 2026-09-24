@@ -14,7 +14,9 @@ async function main(): Promise<void> {
       gameRoot: document.getElementById('game') as HTMLElement,
       uiRoot: document.getElementById('ui') as HTMLElement,
       levelUrl: 'levels/forest.ldtk',
-      manifestUrl: 'layers/forest.manifest.json',
+      manifestUrl: new URLSearchParams(window.location.search).get('manifest') === 'plates'
+        ? 'layers/forest.plates.manifest.json'
+        : 'layers/forest.manifest.json',
       search: window.location.search,
     });
     window.__spiritwood = game;
