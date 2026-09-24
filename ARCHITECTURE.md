@@ -1038,27 +1038,36 @@ gameplay read comes first.
     `npm run art` (`tools/art/bake-art.ts`) combines the base with the sidecars into the generated
     `public/layers/forest.manifest.json`. `npm run plates` (the demo plate) also derives from the base.
   - **Bake:**
-    - Validates every source and cuts it into 1024² chunks with a 1-texel duplicated border, so
-      bilinear filtering has no seams.
+    - Validates every source and cuts it into 1024² chunk textures: 1016² of content plus a 4-texel
+      duplicated border (`src/assets/plateLayout.ts`). basisu's Kaiser mip filter reads about 3 texels
+      and wraps at the texture edge. With a 1-texel border, mip 1 stepped across seams on 5–13 % of
+      rows, and 1016 also keeps the 4×4 blocks aligned. The runtime accepts borders of 0–4, so older
+      chunks still load.
     - Writes WebP + PNG + KTX2 plus split-hull rects: `PlateChunkDef.core` / `soft` from
       `computeSplitHullHalf`, so set pieces with holes or content only at the edges still get tight
       meshes and an opaque core.
     - Records a pixel hash per chunk (`hash`) and a source hash (PNG + sidecar + tool version) per
-      layer.
+      layer, in `art/bake.lock.json` (`art/demo-plate.lock.json` for the demo). A new
+      `ART_TOOL_VERSION` re-encodes everything.
     - `--check` recomputes hashes and the splice and never re-encodes (KTX2 takes about 4 s per chunk).
+    - Art plate ids may not reuse a base layer or demo plate id, so chunk files can never collide.
   - **Budgets** (the bake fails on these):
-    - Sweep the camera over the clamped range at the widest aspect (`MAX_ASPECT`), `MIN_CAMERA_ZOOM`
-      and maximum shake, at every chunk-edge breakpoint of every layer, for each quality level that
-      draws the layer.
+    - Sweep the camera over the clamped range at `MIN_CAMERA_ZOOM` and maximum shake, at every
+      chunk-edge breakpoint of every layer, for each quality level that draws the layer:
+      - depth-tested layers (fx ≤ 1) at `MAX_ASPECT`, provably their worst case;
+      - foreground layers (fx > 1) also at 4:3 and 16:9, with breakpoints where a chunk edge meets a
+        view clamped at a level end, because narrow views can reach further there.
     - Visible plate chunks × 4·w·h bytes (RGBA8 fallback, no mipmaps), plus every registered atlas,
       must stay ≤ `textureBudgetMB[level]`; the same including the 480 u prefetch margin is a warning.
     - A layer may never show more than 4 chunks at once (2 draws per chunk: core + soft).
   - **Runtime:**
     - One shared streamer and LRU serves all plate layers. Its budget is `textureBudgetMB` minus every
-      registered atlas (kit, particles, entity, hero), read when streaming rather than at init.
+      registered atlas (kit, particles, entity, hero), read when streaming rather than at init. A chunk is
+      budgeted at the RGBA8 worst case until it loads and at its real size after (`markLoaded`), so a
+      KTX2 failure at runtime can't overrun the budget.
     - `layerBudget` limits procedural kit layers only; plates are gated by `minQuality`.
     - Every image load has a deadline, and a plate layer that fails re-enables the base layer it
-      replaced.
+      replaced (`LayerManifest.replaced`), in depth order, the foreground included.
   - **Paint-over templates:** `npm run art:export -- <area | x0,x1>` (`tools/art/export-templates.ts`)
     renders an area's procedural layers to layer-space PNGs in `art/templates/<area>/`, with guide
     overlays (the gameplay terrain silhouette, camera frames at 16:9, 4:3 and 21:9, the parallax factor).
@@ -1081,6 +1090,9 @@ gameplay read comes first.
     landmark (f ≈ 0.2) and a midground frame (f ≈ 0.6). They are generated stand-ins
     (`tools/art/paint-example.ts`) that real paintings replace file for file. They stay in the default
     manifest only if they pass the art review on the GPU.
+  - **The moon stays visible:** no plate may cover more than 20 % of the moon disc anywhere in its area.
+    `tools/art/moon.ts` sweeps the area's cameras (every aspect, walkable heights, aim zoom) and
+    `artMoon.test.ts` enforces the limit.
   - **Single-file artifact:** plate layers are omitted (a replaced base layer is restored), as with
     `#plates`. Base64 plates would grow the page past the size the public review is known to handle,
     and Pixi's image path uses blob workers that the artifact CSP blocks.
