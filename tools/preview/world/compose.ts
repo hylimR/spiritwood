@@ -1,4 +1,4 @@
-import type { FogLayerDef, LayerManifest, SkyLayerDef } from '../../../src/contracts/assets.ts';
+import type { FogLayerDef, LayerManifest, PlateLayerDef, SkyLayerDef } from '../../../src/contracts/assets.ts';
 import type { LevelData } from '../../../src/contracts/level.ts';
 import type { RGB } from '../../../src/core/color.ts';
 import type { KitAtlasData } from '../../../src/render/gen/kit.ts';
@@ -6,7 +6,7 @@ import { NoiseTable } from '../../../src/render/gen/noiseTable.ts';
 import { fogBandParams, shadeFog } from '../../../src/render/layers/fogShading.ts';
 import { KIT_STRIDE_FLOATS, type ChunkMeshes, type MeshData } from '../../../src/render/layers/kitMesh.ts';
 import { KIT_MODE, shadeKit, type KitMode, type KitShadeParams } from '../../../src/render/layers/kitShading.ts';
-import { clearingHints, prepareKitLayer, type PreparedKitLayer } from '../../../src/render/layers/layerModel.ts';
+import { clearingHints, plateShadeParams, prepareKitLayer, type PreparedKitLayer } from '../../../src/render/layers/layerModel.ts';
 import { shadeSky, skyHorizonY, skyParams } from '../../../src/render/layers/skyShading.ts';
 import { vnoise } from './glslNoise.ts';
 
@@ -21,11 +21,35 @@ export interface Camera {
   cy: number;
 }
 
+/** A decoded plate chunk: straight RGBA8, `chunkSize` texels. */
+export interface PlateChunkImage {
+  col: number;
+  row: number;
+  rgba: Uint8Array;
+  /**
+   * How the runtime filters it: KTX2 uploads straight (colour filtered as stored, so transparent
+   * texels' RGB bleeds in), WebP/PNG are premultiplied on upload (alpha-weighted filtering).
+   */
+  straight: boolean;
+}
+
+export interface PreparedPlate {
+  def: PlateLayerDef;
+  params: KitShadeParams;
+  chunks: PlateChunkImage[];
+}
+
+export function preparePlate(def: PlateLayerDef, chunks: PlateChunkImage[]): PreparedPlate {
+  return { def, params: plateShadeParams(def), chunks };
+}
+
 export interface Scene {
   level: LevelData;
   manifest: LayerManifest;
   kit: KitAtlasData;
   layers: Map<string, PreparedKitLayer>;
+  /** Plate layers with decoded chunks (filled by the caller; a plate layer without an entry is skipped). */
+  plates: Map<string, PreparedPlate>;
   noise: NoiseTable;
   /** Extra passes drawn after the depth-tested kit layers (shafts, terrain, decor, particles…). */
   overlays: ((img: Frame) => void)[];
@@ -100,7 +124,7 @@ export function buildScene(level: LevelData, manifest: LayerManifest, kit: KitAt
   for (const def of manifest.layers) {
     if (def.kind === 'kit') layers.set(def.id, prepareKitLayer(def, kit, level.pxWidth, level.pxHeight, clearingHints(level)));
   }
-  return { level, manifest, kit, layers, noise: new NoiseTable(77), overlays: [], lateOverlays: [] };
+  return { level, manifest, kit, layers, plates: new Map(), noise: new NoiseTable(77), overlays: [], lateOverlays: [] };
 }
 
 /** Bilinear straight-alpha atlas sample, weighted like a premultiplied GPU fetch. */
@@ -228,6 +252,93 @@ function drawKitLayer(img: Frame, scene: Scene, L: PreparedKitLayer): void {
   drawKitChunks(img, scene, L.chunks, L.params, L.def.parallax[0], L.def.parallax[1], L.depthTested);
 }
 
+/** Bilinear, clamp-to-edge sample at texel coordinates (u, v) of a straight RGBA8 image, as the GPU filters it. */
+function samplePlate(c: PlateChunkImage, w: number, h: number, u: number, v: number, out: Float32Array): void {
+  const x = u - 0.5;
+  const y = v - 0.5;
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const fx = x - x0;
+  const fy = y - y0;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let a = 0;
+  const p = c.rgba;
+  for (let j = 0; j < 2; j++) {
+    const yy = Math.min(h - 1, Math.max(0, y0 + j));
+    for (let i = 0; i < 2; i++) {
+      const xx = Math.min(w - 1, Math.max(0, x0 + i));
+      const wt = (i ? fx : 1 - fx) * (j ? fy : 1 - fy);
+      const o = (yy * w + xx) * 4;
+      const al = ((p[o + 3] as number) / 255) * wt;
+      const k = c.straight ? wt : al;
+      r += (p[o] as number) * k;
+      g += (p[o + 1] as number) * k;
+      b += (p[o + 2] as number) * k;
+      a += al;
+    }
+  }
+  const ik = c.straight ? 1 / 255 : a > 1e-6 ? 1 / (a * 255) : 0;
+  out[0] = r * ik;
+  out[1] = g * ik;
+  out[2] = b * ik;
+  out[3] = a;
+}
+
+/** The plate branch of `kit.glsl.ts` for a straight texel colour: tint, desaturate, fog, then mist amount `m`. */
+export function shadePlate(out: Float32Array, tex: ArrayLike<number>, p: KitShadeParams, m: number): void {
+  let r = (tex[0] as number) * p.tint[0];
+  let g = (tex[1] as number) * p.tint[1];
+  let b = (tex[2] as number) * p.tint[2];
+  const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  r += (l - r) * p.desaturate;
+  g += (l - g) * p.desaturate;
+  b += (l - b) * p.desaturate;
+  r += (p.fogColor[0] - r) * p.fog;
+  g += (p.fogColor[1] - g) * p.fog;
+  b += (p.fogColor[2] - b) * p.fog;
+  const mc = p.mistColor ?? p.fogColor;
+  out[0] = r + (mc[0] - r) * m;
+  out[1] = g + (mc[1] - g) * m;
+  out[2] = b + (mc[2] - b) * m;
+}
+
+/** A plate layer's chunks with the plate branch of `kit.glsl.ts` (tint, desaturate, fog, mist). */
+function drawPlate(img: Frame, P: PreparedPlate): void {
+  const { def, params: p } = P;
+  const [fx, fy] = def.parallax;
+  const [cw, ch] = def.chunkSize;
+  const ts = def.texelScale;
+  const cam = img.cam;
+  const tex = new Float32Array(4);
+  const rgb = new Float32Array(3);
+  for (const c of P.chunks) {
+    const x0 = def.origin[0] + c.col * cw * ts;
+    const y0 = def.origin[1] + c.row * ch * ts;
+    const toPxX = (lx: number): number => (lx - cam.cx * fx + img.viewW / 2) / img.scale;
+    const toPxY = (ly: number): number => (ly - cam.cy * fy + img.viewH / 2) / img.scale;
+    const pxa = Math.max(0, Math.ceil(toPxX(x0) - 0.5));
+    const pxb = Math.min(img.w, Math.ceil(toPxX(x0 + cw * ts) - 0.5));
+    const pya = Math.max(0, Math.ceil(toPxY(y0) - 0.5));
+    const pyb = Math.min(img.h, Math.ceil(toPxY(y0 + ch * ts) - 0.5));
+    for (let py = pya; py < pyb; py++) {
+      const ly = (py + 0.5) * img.scale - img.viewH / 2 + cam.cy * fy;
+      const v = (ly - y0) / ts;
+      const mt = Math.min(1, Math.max(0, (ly - p.mistY) / Math.max(1e-3, p.mistDepth)));
+      const m = Math.min(1, mt * mt * p.mist);
+      for (let px = pxa; px < pxb; px++) {
+        const lx = (px + 0.5) * img.scale - img.viewW / 2 + cam.cx * fx;
+        samplePlate(c, cw, ch, (lx - x0) / ts, v, tex);
+        const a = tex[3] as number;
+        if (a <= 0) continue;
+        shadePlate(rgb, tex, p, m);
+        img.blend(py * img.w + px, (rgb[0] as number) * a, (rgb[1] as number) * a, (rgb[2] as number) * a, a);
+      }
+    }
+  }
+}
+
 function drawSky(img: Frame, scene: Scene, def: SkyLayerDef): void {
   const p = skyParams(def);
   const out = new Float32Array(3);
@@ -281,6 +392,9 @@ export function renderScene(scene: Scene, cam: Camera, w: number, h: number, vie
       const L = scene.layers.get(def.id) as PreparedKitLayer;
       if (!L.depthTested) late();
       drawKitLayer(img, scene, L);
+    } else if (def.kind === 'plate') {
+      const P = scene.plates.get(def.id);
+      if (P) drawPlate(img, P);
     } else if (def.kind === 'fog') {
       overlays();
       drawFog(img, def);

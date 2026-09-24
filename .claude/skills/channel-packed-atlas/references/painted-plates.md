@@ -2,20 +2,34 @@
 
 The painted-plate path takes a colour image (painted, AI-generated or CPU-painted), bakes it into chunked WebP and KTX2 files with tight hull
 polygons, and streams it at runtime. It uses the same vertex format and program as the procedural kit (modes
-`PlateCore` and `PlateBand`). The listings are verbatim from commit `2ef9428` (the art pass).
+`PlateCore` and `PlateBand`). The listings are verbatim from commit `95b27fb` (the demo plate repainted with the art-pass tree generator).
 
-Pipeline: `paintTreeline` → `bakeImage` (1024² chunks → PNG palette, WebP, KTX2 ETC1S mipmapped + `chunkHulls`)
+Pipeline: `planPlate` (slot, texture size and look of the kit layer it replaces) → `paintTreeline` (generator trees and a clump thicket,
+coloured as that layer before its fog) → `bakeImage` (1024² chunks → PNG palette, WebP, KTX2 ETC1S mipmapped + `chunkHulls`)
 → manifest `PlateLayerDef` → `PlateLayer` (ChunkStreamer → `loadTextureSource` → `plateMeshData` → core and band meshes).
 
-Measured on the demo plate (3 chunks, file sizes in decimal KB): each 1024² chunk takes 68–81 KB as KTX2, 49–65 KB as WebP and
-74–92 KB as PNG. The hull covers about 63% of a chunk and the opaque hull 10–11%. Each hull and opaque hull has 130 points
-(2 × (1024/16 + 1)), which triangulate to 128 triangles.
+Measured on the demo plate (3 chunks, file sizes in decimal KB): each 1024² chunk takes 67–75 KB as KTX2, 53–66 KB as WebP and
+53–66 KB as PNG (561 KB for all nine files). The hull covers 33–37% of a chunk and the opaque hull 4–5% (polygon area over
+1024²). Each hull and opaque hull has 130 points (2 × (1024/16 + 1)), which triangulate to 128 triangles. `npm run plates` takes
+about 10 s (painting ≈ 0.9 s, then ≈ 3 s of encoding per chunk) and is byte-deterministic. In the CPU scene preview the plate
+costs at most 0.05 screens of opaque core and 0.31 of soft band (hull minus core) at the worst camera; the kit layer it replaces costs
+0.01 + 0.19 and the previous cloud-crown plate cost 0.11 + 0.53.
+
+Look at it without a browser:
+
+- `node tools/preview/world/plate-preview.ts <dir> [--baked ktx2|webp|png] [--crop x,y,w,h]`: the plate shaded with its
+  manifest parameters, ×4 downsampled, alpha, hull overlay, per-chunk hull numbers, the value-ramp check against the replaced
+  layer, and (with `--baked`) each encoding's error against a fresh repaint (KTX2 ≈ 2.4 premultiplied-RGB and 6.7 alpha RMSE in 8-bit
+  units, WebP 1.7 / 0.3, PNG 1.8 / 2.3).
+- `node tools/preview/world/scene-preview.ts <dir> --level forest --plates baked|paint [--plate-format ktx2] [--upto L4] [cameras…]`:
+  the real level composited with the plates manifest (KTX2 transcoded to RGBA32 with the self-hosted libktx, sampled straight as the GPU
+  path does); run it without `--plates` for the same cameras with the kit layer.
 
 ## 1. Bake: chunk, encode three ways, trace hulls
 
 This is from `tools/plates/bake-plates.ts`, which you run with `npm run plates`.
 
-`tools/plates/bake-plates.ts` lines 10–82:
+`tools/plates/bake-plates.ts` lines 10–75:
 
 ```ts
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -23,21 +37,13 @@ import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 import { encodeToKTX2 } from 'ktx2-encoder';
 import { parseManifest } from '../../src/assets/manifest.ts';
-import type { KitLayerDef, LayerManifest, PlateChunkDef, PlateLayerDef } from '../../src/contracts/assets.ts';
-import { coverageExtent } from '../../src/render/layers/placement.ts';
+import type { PlateChunkDef } from '../../src/contracts/assets.ts';
 import { chunkHulls, paintTreeline, type PlateImage } from './paint.ts';
+import { CHUNK, planPlate, PLATE_SEED, plateManifest, REPLACES, TEXEL_SCALE } from './plan.ts';
 
 const ROOT = new URL('../../', import.meta.url);
 const LAYERS_DIR = fileURLToPath(new URL('public/layers/', ROOT));
 const PLATES_DIR = fileURLToPath(new URL('public/layers/plates/', ROOT));
-const CHUNK = 1024;
-const TEXEL_SCALE = 1.5;
-/** Level size the plate must cover (the M1 forest: 200 × 50 tiles of 48 u). */
-const LEVEL_W = 9600;
-const LEVEL_H = 2400;
-/** The far kit layer the demo plate replaces. */
-const REPLACES = 'L3-misty-trunks';
-const PLATE_ID = 'L3-plate-treeline';
 
 async function imageDecoder(buffer: Uint8Array): Promise<{ width: number; height: number; data: Uint8Array }> {
   const { data, info } = await sharp(buffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -67,6 +73,7 @@ async function bakeImage(img: PlateImage, name: string): Promise<PlateChunkDef[]
       }
       if (!any) continue;
       const base = `${name}_${col}_${row}`;
+      const t0 = performance.now();
       const input = sharp(raw, { raw: { width: CHUNK, height: CHUNK, channels: 4 } });
       const png = await input.clone().png({ palette: true, quality: 90, effort: 10, dither: 0.6, compressionLevel: 9 }).toBuffer();
       const webp = await input.clone().webp({ quality: 84, alphaQuality: 90, effort: 6 }).toBuffer();
@@ -86,44 +93,222 @@ async function bakeImage(img: PlateImage, name: string): Promise<PlateChunkDef[]
       if (hull) entry.hull = hull;
       if (opaqueHull) entry.opaqueHull = opaqueHull;
       chunks.push(entry);
-      console.log(`${base}: png ${(png.length / 1024).toFixed(0)} KB, webp ${(webp.length / 1024).toFixed(0)} KB, ktx2 ${(ktx2.length / 1024).toFixed(0)} KB, hull ${(hull?.length ?? 0) / 2} pts, core ${(opaqueHull?.length ?? 0) / 2} pts`);
+      console.log(`${base}: png ${(png.length / 1024).toFixed(0)} KB, webp ${(webp.length / 1024).toFixed(0)} KB, ktx2 ${(ktx2.length / 1024).toFixed(0)} KB, hull ${(hull?.length ?? 0) / 2} pts, core ${(opaqueHull?.length ?? 0) / 2} pts, encoded in ${(performance.now() - t0).toFixed(0)} ms`);
     }
   }
   return chunks;
 }
 ```
 
-## 2. Colour dilation before encoding (no dark fringes from straight-alpha files)
+The plate layer takes the replaced kit layer's slot, parallax, fog colour, fog and desaturation (`tools/plates/plan.ts`), because the
+texture holds that layer's colour *before* its distance fog. Storing pre-fog colour also halves the on-screen size of codec errors.
 
-This is from `tools/plates/paint.ts`. Transparent texels take the mist colour instead of black.
-
-`tools/plates/paint.ts` lines 126–142:
+`tools/plates/plan.ts` lines 29–56:
 
 ```ts
-  // Low mist glow across the base, and colour dilation for transparent texels (clean mip edges).
-  const mist = hex(0x2a5872);
-  const rgba = new Uint8Array(width * height * 4);
-  for (let y = 0; y < height; y++) {
-    const glow = smooth(height * 0.5, height * 0.66, y) * (1 - smooth(height * 0.66, height * 0.86, y)) * 0.12;
-    for (let x = 0; x < width; x++) {
-      const o = (y * width + x) * 4;
-      const a = out[o + 3] as number;
-      const lift = glow * (0.6 + 0.4 * noise.sample(x * 0.05, y * 0.2));
-      for (let c = 0; c < 3; c++) {
-        const col = a > 0 ? (out[o + c] as number) : (mist[c] as number);
-        rgba[o + c] = Math.round(Math.min(1, col + lift * 0.5) * 255);
-      }
-      rgba[o + 3] = Math.round(Math.min(1, a) * 255);
-    }
-  }
-  return { width, height, rgba };
+export function planPlate(manifest: LayerManifest): PlatePlan {
+  const index = manifest.layers.findIndex((l) => l.id === REPLACES);
+  const replaced = manifest.layers[index];
+  if (!replaced || replaced.kind !== 'kit') throw new Error(`manifest has no kit layer ${REPLACES}`);
+  const kit: KitLayerDef = replaced;
+  const [fx, fy] = kit.parallax;
+  const ext = coverageExtent(LEVEL_W, LEVEL_H, fx, fy);
+  const width = Math.ceil((ext.x1 - ext.x0 + 64) / TEXEL_SCALE / CHUNK) * CHUNK;
+  const height = Math.ceil((ext.y1 - ext.y0) / TEXEL_SCALE / CHUNK) * CHUNK;
+  const origin: [number, number] = [Math.floor(ext.x0 - 32), Math.floor(ext.y0)];
+  const baselineY = ext.y0 + kit.baseline * (ext.y1 - ext.y0);
+  const layer: PlateLayerDef = {
+    id: PLATE_ID,
+    kind: 'plate',
+    parallax: [fx, fy],
+    minQuality: kit.minQuality,
+    // The texture holds the replaced layer's colour before its distance fog: same fog and desaturation.
+    tint: '#ffffff',
+    fog: kit.fog,
+    fogColor: kit.fogColor,
+    desaturate: kit.desaturate,
+    origin,
+    chunkSize: [CHUNK, CHUNK],
+    texelScale: TEXEL_SCALE,
+    chunks: [],
+  };
+  return { index, width, height, look: treelineLook(kit, baselineY, origin[1], TEXEL_SCALE), layer };
+}
 ```
 
-## 3. Conservative hull polygons per chunk
+## 2. Paint in the look of the layer the plate replaces
+
+A plate that stands in for a kit layer has to read like its neighbours: same silhouettes, same step on the value ramp. The demo painter
+(`tools/plates/paint.ts`) therefore grows each tree with the kit's own archetypes (`broadTree`, `coniferTree`, `willowTree`,
+`slenderTree`, `snagTree` from `src/render/gen/trees.ts`), each in its own `ElementRaster`: the archetype's design rect (as
+`farArchetype` passes it) times the scale that reproduces the replaced layer's tree sizes at the plate's texel density
+(`scale × 2 u/texel ÷ 1.5 u/texel`, since the archetypes are designed at 2 u/texel), finalized like the
+far kit trees (bottom third dissolving, upper-left rim mask) and composited "over" into straight channel planes (R detail, G rim,
+per-tree shade, coverage). Two planes: a back row (0.7–0.8× the size, 0.3 extra haze) and a front row with young trees and a
+continuous thicket of generator `clump`s seated on one body, the plate's opaque core.
+
+`tools/plates/paint.ts` lines 188–215:
+
+```ts
+function plantRow(p: Planes, W: number, H: number, row: TreeRow, seed: number, noise: NoiseTable, scratch: Scratch): number {
+  const final = row.final;
+  const rng = new Rng((hashString(`plate:${row.key}`) ^ seed) >>> 0);
+  let x = -rng.range(0, row.spacing[1]);
+  let n = 0;
+  while (x < W + row.spacing[1]) {
+    const kind = pickKind(rng, row.kinds);
+    const s = rng.range(row.scale[0], row.scale[1]);
+    const ground = row.base + rng.range(-row.baseJitter, row.baseJitter);
+    const shade = rng.range(0.38, 0.62);
+    const treeSeed = rng.nextU32();
+    if (gapNoise(noise, x, row) >= row.gapBelow) {
+      const a = ARCHETYPES[kind] as { fn: TreeFn; w: number; h: number };
+      const w = Math.round(a.w * s);
+      const h = Math.round(a.h * s);
+      const r = new ElementRaster(w, h, noise, 1 + (treeSeed % 97), scratch);
+      r.configure(final);
+      const trng = new Rng((hashString(`${row.key}:${kind}:${n}`) ^ treeSeed) >>> 0);
+      a.fn(r, trng, w / 2 + trng.range(-3, 3), h - 8, s);
+      const px = scratch.bytes(w * h * 4);
+      r.finalize(px, w, 0, 0, final);
+      composite(p, W, H, r, px, Math.round(x - w / 2), Math.round(ground - (h - 8)), shade);
+      n++;
+    }
+    x += rng.range(row.spacing[0], row.spacing[1]);
+  }
+  return n;
+}
+```
+
+Each plane is then coloured with the kit formula of the replaced layer before its fog: `tint·(0.5+R)·(0.8+0.4·shade) + rimColor·G·rim·0.5`,
+with the tint drifting from indigo tops to a teal base, diagonal brush-stroke noise, and the layer's height mist (`t²`, full
+0.75·mistDepth below the ground line). An opaque base hides the luminous mists of the planes behind it (the kit layer's base is
+translucent), so the front plane also rises into its own mist bank, lifted toward teal (`MIST_LIFT`) and wandering along x, and the
+alpha fades out below it. Check the result with `plate-preview.ts`: the median shaded luma of the opaque silhouettes above the mist
+is 0.182 (the kit layer's far trees 0.173, the layers behind and in front 0.208 and 0.141; the old cloud-crown painter measured 0.239).
+
+`tools/plates/paint.ts` lines 266–311:
+
+```ts
+/**
+ * Colour one plane into `out` (straight RGBA floats) with "over": the replaced layer's kit shading
+ * (tint drifting from indigo tops to a teal base, luminance detail, per-tree shade, moonlit rim),
+ * brushy diagonal tone strokes, the layer's height mist plus the plane's haze, then the base fade.
+ */
+function paintPlane(out: Float32Array, p: Planes, W: number, H: number, pl: Plane, look: TreelineLook, noise: NoiseTable, top: number): void {
+  const rimK = look.rim * KIT_RIM_SCALE * pl.rim;
+  // The bank's top wanders along x (soft wisps rather than a ruled line).
+  const wander = new Float32Array(W);
+  for (let x = 0; x < W; x++) wander[x] = (noise.sample(x * 0.03 + 91, 57.3) * 0.7 + noise.sample(x * 0.11 + 13, 91.1) * 0.3) * BANK_WANDER;
+  for (let y = 0; y < H; y++) {
+    const fade = 1 - smoothstep(pl.fade[0], pl.fade[1], y);
+    if (fade <= 0) break;
+    const v = smoothstep(top, pl.base + 30, y);
+    const tr = look.tint[0] * (pl.top[0] + (pl.low[0] - pl.top[0]) * v);
+    const tg = look.tint[1] * (pl.top[1] + (pl.low[1] - pl.top[1]) * v);
+    const tb = look.tint[2] * (pl.top[2] + (pl.low[2] - pl.top[2]) * v);
+    const layerMist = mistAt(look, null, y);
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      const a = (p.alpha[i] as number) * fade;
+      if (a <= 0) continue;
+      let mm = layerMist;
+      if (pl.bank) {
+        const w = wander[x] as number;
+        const b = smoothstep(pl.bank[0] + w, pl.bank[1] + w, y);
+        if (b > mm) mm = b;
+      }
+      const m = pl.haze + (1 - pl.haze) * mm;
+      const stroke = noise.sample((x + y * 0.6) * 0.35, (y - x * 0.3) * 0.08) * 0.07 + noise.sample(x * 0.12 + 50, y * 0.12) * 0.05;
+      const k = (0.5 + (p.lum[i] as number)) * (0.8 + 0.4 * (p.shade[i] as number)) * (1 + stroke);
+      const rim = (p.rim[i] as number) * rimK;
+      const cr = tr * k + KIT_RIM_COLOR[0] * rim;
+      const cg = tg * k + KIT_RIM_COLOR[1] * rim;
+      const cb = tb * k + KIT_RIM_COLOR[2] * rim;
+      const o = i * 4;
+      const ba = out[o + 3] as number;
+      const kb = ba * (1 - a);
+      const oa = a + kb;
+      out[o] = ((cr + (mistColor(look, mm, 0) - cr) * m) * a + (out[o] as number) * kb) / oa;
+      out[o + 1] = ((cg + (mistColor(look, mm, 1) - cg) * m) * a + (out[o + 1] as number) * kb) / oa;
+      out[o + 2] = ((cb + (mistColor(look, mm, 2) - cb) * m) * a + (out[o + 2] as number) * kb) / oa;
+      out[o + 3] = oa;
+    }
+  }
+}
+```
+
+## 3. Colour dilation before encoding (no dark fringes from straight-alpha files)
+
+This is from `tools/plates/paint.ts`. A transparent texel takes the colour of the nearest covered texel in its row or column (within 6
+texels), else its row's misted body colour, instead of black. KTX2 is uploaded straight, so filtering reads these colours directly.
+
+`tools/plates/paint.ts` lines 373–428:
+
+```ts
+/**
+ * Quantise to RGBA8 with colour dilation: a transparent texel takes the colour of the nearest
+ * covered texel in its row or column (within `reach`), else the misted body colour of its row, so
+ * straight-alpha filtering (KTX2) and block compression see the edge colour, not black.
+ */
+function encode(out: Float32Array, W: number, H: number, look: TreelineLook, bank: [number, number] | null, reach = 6): Uint8Array {
+  const rgba = new Uint8Array(W * H * 4);
+  const src = new Int32Array(W * H).fill(-1);
+  for (let i = 0; i < W * H; i++) if ((out[i * 4 + 3] as number) * 255 >= 0.5) src[i] = i;
+  // Nearest covered texel along the row (both directions), then along the column for the rest.
+  const dist = new Int32Array(W * H).fill(reach + 1);
+  for (let i = 0; i < W * H; i++) if ((src[i] as number) >= 0) dist[i] = 0;
+  for (let y = 0; y < H; y++) {
+    for (let pass = 0; pass < 2; pass++) {
+      let last = -1;
+      for (let j = 0; j < W; j++) {
+        const x = pass === 0 ? j : W - 1 - j;
+        const i = y * W + x;
+        if ((dist[i] as number) === 0) last = x;
+        else if (last >= 0 && Math.abs(x - last) < (dist[i] as number)) {
+          dist[i] = Math.abs(x - last);
+          src[i] = y * W + last;
+        }
+      }
+    }
+  }
+  for (let x = 0; x < W; x++) {
+    for (let pass = 0; pass < 2; pass++) {
+      let last = -1;
+      for (let j = 0; j < H; j++) {
+        const y = pass === 0 ? j : H - 1 - j;
+        const i = y * W + x;
+        if ((dist[i] as number) === 0) last = y;
+        else if (last >= 0 && Math.abs(y - last) < (dist[i] as number)) {
+          dist[i] = Math.abs(y - last);
+          src[i] = last * W + x;
+        }
+      }
+    }
+  }
+  for (let y = 0; y < H; y++) {
+    const m = mistAt(look, bank, y);
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      const o = i * 4;
+      const s = src[i] as number;
+      for (let c = 0; c < 3; c++) {
+        const fill = (look.tint[c] as number) + (mistColor(look, m, c) - (look.tint[c] as number)) * m;
+        const col = s >= 0 ? (out[s * 4 + c] as number) : fill;
+        rgba[o + c] = Math.round(Math.min(1, Math.max(0, col)) * 255);
+      }
+      rgba[o + 3] = Math.round(Math.min(1, out[o + 3] as number) * 255);
+    }
+  }
+  return rgba;
+}
+```
+
+## 4. Conservative hull polygons per chunk
 
 The `hull` encloses everything visible. The `opaqueHull` lies inside α ≥ 254 texels, inset by `inset`, and all its strips share one row.
 
-`tools/plates/paint.ts` lines 145–245:
+`tools/plates/paint.ts` lines 430–530:
 
 ```ts
 /**
@@ -229,7 +414,7 @@ export function chunkHulls(
 }
 ```
 
-## 4. Manifest schema and validation
+## 5. Manifest schema and validation
 
 These are from `src/contracts/assets.ts` and `src/assets/manifest.ts`.
 
@@ -317,20 +502,21 @@ function plate(o: Obj, path: string): PlateLayerDef {
 }
 ```
 
-## 5. Texture resolution: KTX2 → WebP → PNG, absolute transcoder URLs, deadline and session fallback
+## 6. Texture resolution: KTX2 → WebP → PNG, no-eval CSP skip, absolute transcoder URLs, deadline and session fallback
 
 This is from `src/assets/textures.ts`.
 
-`src/assets/textures.ts` lines 1–133:
+`src/assets/textures.ts` lines 1–141:
 
 ```ts
 import { Assets, detectWebp, setKTXTranscoderPath, type Texture, type WebGLRenderer } from 'pixi.js';
 import 'pixi.js/ktx2';
 import type { TextureSourceDef } from '../contracts/assets.ts';
+import { evalAllowed } from '../core/csp.ts';
 import type { TextureBudget } from '../contracts/render.ts';
 
 export interface TextureFormatSupport {
-  /** GPU can sample a Basis/KTX2 transcode target (BC7/BC3/ETC2/ASTC). */
+  /** GPU can sample a Basis/KTX2 transcode target (BC7/BC3/ETC2/ASTC) and the CSP lets the transcoder run. */
   ktx2: boolean;
   webp: boolean;
 }
@@ -344,14 +530,21 @@ export function chooseTextureUrl(src: TextureSourceDef, support: TextureFormatSu
   return path ? new URL(path, baseUrl).href : null;
 }
 
+/**
+ * KTX2 needs a transcode target the GPU samples (BC7 bptc, BC3 s3tc, ETC2, ASTC 4×4) and eval: Pixi's
+ * libktx transcoder is Emscripten code that calls `new Function`, so under a no-eval CSP its worker
+ * fails during init (and Pixi's worker handler then throws on the URL-less error). Pure.
+ */
+export function ktx2Usable(ext: Readonly<Partial<Record<'bptc' | 's3tc' | 'etc' | 'astc', unknown>>>, canEval: boolean): boolean {
+  return canEval && !!(ext.bptc || ext.s3tc || ext.etc || ext.astc);
+}
+
 let supportPromise: Promise<TextureFormatSupport> | null = null;
 
 /** Probe compressed-format and WebP support once (cached). */
 export async function detectTextureSupport(renderer: WebGLRenderer): Promise<TextureFormatSupport> {
   supportPromise ??= (async () => {
-    const ext = renderer.context.extensions;
-    // Targets Pixi's KTX2 transcoder can produce: BC7 (bptc), BC3 (s3tc), ETC2 (etc), ASTC 4×4.
-    const ktx2 = !!(ext.bptc || ext.s3tc || ext.etc || ext.astc);
+    const ktx2 = ktx2Usable(renderer.context.extensions, evalAllowed());
     let webp = false;
     try {
       webp = await detectWebp.test();
@@ -487,7 +680,7 @@ function ktxTranscoder(): Plugin {
 }
 ```
 
-## 6. Streaming policy (pure, allocation-free per frame)
+## 7. Streaming policy (pure, allocation-free per frame)
 
 This is from `src/assets/streamer.ts`.
 
@@ -617,7 +810,7 @@ export class ChunkStreamer {
   }
 ```
 
-## 7. Runtime layer: polygon → kit mesh, load, build, evict
+## 8. Runtime layer: polygon → kit mesh, load, build, evict
 
 This is from `src/render/layers/plates.ts`. The band mesh is the whole `hull`. Both meshes get `this.depth`, and the vertex shader
 writes z from `aDepth` alone (it never goes through the transform), so where the band overlaps the `opaqueHull` core its fragments
@@ -758,7 +951,7 @@ export function plateMeshData(poly: readonly number[], rect: Extent, cw: number,
   }
 ```
 
-## 8. Ear clipping that tolerates traced-hull quirks
+## 9. Ear clipping that tolerates traced-hull quirks
 
 This is from `src/render/gen/polygon.ts`.
 

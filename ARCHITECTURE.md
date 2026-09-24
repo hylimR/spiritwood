@@ -593,8 +593,11 @@ With the full High budget there are 10 kit layers plus sky and fog:
 - **Bake tool** (`tools/plates/bake-plates.ts`, Node + sharp + ktx2-encoder): renders a plate to PNG,
   then writes WebP + KTX2 (ETC1S, mipmapped) chunks and tight hull polygons alongside a manifest. M1
   ships one demo plate layer in `public/layers/forest.plates.manifest.json` (open with
-  `?manifest=plates`). This exercises the whole painted-plate path, and painted or AI-generated plates
-  go through the same tool.
+  `?manifest=plates`). It replaces the `L3-misty-trunks` kit layer with a treeline painted by
+  `tools/plates/paint.ts` from the same tree generator (`src/render/gen/trees.ts`), in L3's colour
+  before fog, so the two read alike. `tests/world/plates.test.ts` fails when the committed bake is stale.
+  This exercises the whole painted-plate path, and painted or AI-generated plates go through the same
+  tool.
 
 ---
 

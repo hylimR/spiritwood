@@ -122,9 +122,14 @@ A degenerate-UV quad that samples the centre of a solid block element fills flat
 14. Bake: split the RGBA image into 1024² chunks (skip empty ones), write each as a palette PNG, a WebP and a mipmapped KTX2
     (ETC1S) with sharp and ktx2-encoder, add per-chunk polygons, then write and validate the manifest. The `hull` takes the min top
     and max bottom of each 16-texel strip. The `opaqueHull` takes the strip runs of α ≥ 254, inset by 5, and all its strips must share one row so the polygon can't fold.
-15. Before encoding, set the RGB of transparent texels to the surrounding colour (here the mist colour). WebP and KTX2
-    store straight alpha, and when they are filtered, black transparent texels bleed dark fringes into the edges.
-16. At runtime, stream the chunks near the camera (nearest first, at most 2 in flight, within a byte budget), pick KTX2, then
+15. Before encoding, set the RGB of transparent texels to the surrounding colour (here the nearest covered texel within 6 texels,
+    else the row's misted body colour). WebP and KTX2 store straight alpha, and when they are filtered, black transparent texels
+    bleed dark fringes into the edges.
+16. A plate that replaces a kit layer must read like it: grow its shapes with the same generator (the demo plate plants the
+    far-tree archetypes at that layer's sizes and finalizes them like the kit), store that layer's shading *before* its fog, and give
+    the plate layer the same `fog`, `fogColor` and `desaturate`, so it lands on the same step of the value ramp. An opaque plate base
+    hides the luminous mists of the planes behind a translucent kit base, so bake a mist bank into it instead.
+17. At runtime, stream the chunks near the camera (nearest first, at most 2 in flight, within a byte budget), pick KTX2, then
     WebP, then PNG, and ear-clip the polygons into the same vertex format. Draw `opaqueHull` in the core pass and `hull` in the
     band pass, both at the layer's depth. Where the band overlaps the core, its fragments get exactly the same depth (z comes
     from `aDepth` alone, not from the transform) and fail LESS, so early-Z drops them and you don't need to subtract the polygons.
@@ -244,14 +249,16 @@ Sway lives in the vertex stage: `p.x += (sin(uTime*1.35 + aSway.y + p.x*0.0045)*
   reference `shadeKit`), `src/render/shaders/common.ts` (GLSL header and `pixiClipPosition`).
 - `src/render/layers/parallaxStack.ts` (core and band containers per layer, States) and `src/render/fx/decor.ts` (blend-only
   decor, and glow twins with `emissiveOnly` + `KIT_MODE.Glow` + `blendMode = 'add'`).
-- Plates: `tools/plates/bake-plates.ts` (`npm run plates`), `tools/plates/paint.ts` (`chunkHulls`, colour dilation),
+- Plates: `tools/plates/bake-plates.ts` (`npm run plates`), `tools/plates/plan.ts` (slot, size and look of the replaced layer),
+  `tools/plates/paint.ts` (`paintTreeline` on the art-pass generator, colour dilation, `chunkHulls`),
   `src/render/layers/plates.ts`, `src/assets/{textures,streamer,manifest}.ts`, `src/contracts/assets.ts`. The layer is
-  `L3-plate-treeline` in `public/layers/forest.plates.manifest.json` (open it with `?manifest=plates`). Each chunk's hull covers about 63% of
-  the chunk and its opaque core 10–11%.
+  `L3-plate-treeline` in `public/layers/forest.plates.manifest.json` (open it with `?manifest=plates`). Each chunk's hull covers 33–37% of
+  the chunk and its opaque core 4–5%. Inspect it without a browser with `node tools/preview/world/plate-preview.ts <outDir>` and
+  `node tools/preview/world/scene-preview.ts <outDir> --level forest --plates baked [--plate-format ktx2]`.
 - Inspect the atlas without a browser: `node tools/preview/world/kit-preview.ts <outDir>` writes the composite, the R/G/B/A
   dumps and `kit-hulls.png` (core green, soft red). Measured: 7068 rects, hull 32% of the element rect area, core 25% of
   the hull, and at most 12.7k vertices per chunk mesh.
-- Tests: `npx vitest run tests/world/{hull,kit,kitMesh,misc,textures,streamer}.test.ts --maxWorkers=2`.
+- Tests: `npx vitest run tests/world/{hull,kit,kitMesh,misc,plates,textures,streamer}.test.ts --maxWorkers=2`.
 
 Full listings for reuse: [atlas and shader](references/atlas-and-shader.md), [split hull](references/split-hull.md),
 [chunk meshes](references/chunk-meshes.md), [painted plates](references/painted-plates.md).

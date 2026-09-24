@@ -5,12 +5,18 @@
  *
  *   node tools/preview/world/scene-preview.ts [outDir] [--w 1280] [--time 12.5] [--raw] [camera names…]
  *   node tools/preview/world/scene-preview.ts [outDir] --level forest [--ldtk file] [--at name=fx,fy …] [camera names…]
+ *   … [--plates baked|paint] [--plate-format ktx2|webp|png] [--upto L3]
  *
  * The default is the synthetic preview level and its five area cameras. `--level forest` loads the
  * real public/levels/forest.ldtk and frames gameplay cameras the way the sim camera does (feet in
  * tiles, targetOffsetY, clamped to the level at 16:9), with a hero stand-in at the feet and the orbs;
  * `--ldtk file` reads another LDtk file the same way (e.g. an older revision, to compare), and
  * `--at name=fx,fy` adds a camera with the feet at tile (fx, fy).
+ * `--plates baked` renders public/layers/forest.plates.manifest.json (the demo plate replaces L3) from
+ * its chunk files in `--plate-format` (default webp; ktx2 is transcoded like the GPU path, so ETC1S
+ * artefacts show); `--plates paint` repaints the plate in memory with tools/plates/paint.ts instead.
+ * `--upto <id prefix>` keeps the layers up to the first one whose id starts with the prefix and drops
+ * the gameplay plane (terrain, decor, shafts, particles), to compare distant planes on their own.
  */
 import { readFileSync } from 'node:fs';
 import { PALETTE, TILE, VIEW_H } from '../../../src/config.ts';
@@ -20,6 +26,7 @@ import { hexToRgb, type RGB } from '../../../src/core/color.ts';
 import { parseManifest } from '../../../src/assets/manifest.ts';
 import { parseLdtk } from '../../../src/level/loader.ts';
 import { generateKit, kitSeed } from '../../../src/render/gen/kit.ts';
+import { polygonArea } from '../../../src/render/gen/polygon.ts';
 import { blendGrades, createGradeParams } from '../../../src/render/post/grade.ts';
 import { gradePixel } from '../../../src/render/post/gradeMath.ts';
 import { visibleLayerRect } from '../../../src/render/util/camera.ts';
@@ -27,6 +34,7 @@ import { DEFAULT_CAMERA_TUNING } from '../../../src/sim/tuning.ts';
 import { LDTK_PATH } from '../../level/build-level.ts';
 import { buildScene, renderScene, type Camera, type Frame } from './compose.ts';
 import { outDir, save } from './common.ts';
+import { loadBakedPlates, paintedPlates, type PlateFormat } from './plates.ts';
 import { decorOverlay, particlesOverlay, shaftsOverlay } from './gameplay-overlay.ts';
 import { previewLevel } from './level.ts';
 import { addTerrain } from './terrain-overlay.ts';
@@ -63,24 +71,52 @@ for (let i = args.indexOf('--at'); i >= 0; i = args.indexOf('--at')) {
   extraAt.push([name, fx as number, fy as number]);
   args.splice(i, 2);
 }
+const str = (name: string): string | null => {
+  const i = args.indexOf(`--${name}`);
+  if (i < 0) return null;
+  const v = args[i + 1] as string;
+  args.splice(i, 2);
+  return v;
+};
+const platesArg = str('plates');
+if (platesArg !== null && platesArg !== 'baked' && platesArg !== 'paint') throw new Error(`bad --plates ${platesArg}`);
+const plateFormat = (str('plate-format') ?? 'webp') as PlateFormat;
+const upto = str('upto');
 const only = args.filter((a) => !a.startsWith('--'));
 
-const manifestPath = new URL('../../../public/layers/forest.manifest.json', import.meta.url);
-const manifest = parseManifest(JSON.parse(readFileSync(manifestPath, 'utf8')));
+const layersUrl = new URL('../../../public/layers/', import.meta.url);
+const baseManifest = parseManifest(JSON.parse(readFileSync(new URL('forest.manifest.json', layersUrl), 'utf8')));
+const painted = platesArg === 'paint' ? paintedPlates(baseManifest) : null;
+if (painted) console.log(`plate painted in ${painted.ms.toFixed(0)} ms`);
+let manifest = painted
+  ? painted.manifest
+  : platesArg === 'baked' ? parseManifest(JSON.parse(readFileSync(new URL('forest.plates.manifest.json', layersUrl), 'utf8'))) : baseManifest;
+if (upto) {
+  const end = manifest.layers.findIndex((l) => l.id.startsWith(upto));
+  if (end < 0) throw new Error(`--upto ${upto}: no such layer`);
+  manifest = { ...manifest, layers: manifest.layers.slice(0, end + 1) };
+}
 const level: LevelData = realLevel ? parseLdtk(JSON.parse(readFileSync(ldtkPath, 'utf8'))) : previewLevel();
 const t0 = performance.now();
 const kit = generateKit(kitSeed('forest-kit'));
 const t1 = performance.now();
 const scene = buildScene(level, manifest, kit);
+if (painted) scene.plates = painted.plates;
+else if (platesArg === 'baked') scene.plates = await loadBakedPlates(manifest, plateFormat);
 const t2 = performance.now();
-scene.overlays.push(shaftsOverlay(scene));
-addTerrain(scene);
+if (!upto) {
+  scene.overlays.push(shaftsOverlay(scene));
+  addTerrain(scene);
+}
 const t3 = performance.now();
-const decor = decorOverlay(scene);
-scene.overlays.push(decor.back);
-if (realLevel) scene.overlays.push(entitiesOverlay(level));
-scene.overlays.push(decor.front, particlesOverlay(scene));
-console.log(`kit ${(t1 - t0).toFixed(0)} ms, layers ${(t2 - t1).toFixed(0)} ms, terrain ${(t3 - t2).toFixed(0)} ms, decor ${decor.count}`);
+if (!upto) {
+  const decor = decorOverlay(scene);
+  scene.overlays.push(decor.back);
+  if (realLevel) scene.overlays.push(entitiesOverlay(level));
+  scene.overlays.push(decor.front, particlesOverlay(scene));
+  console.log(`decor ${decor.count}`);
+}
+console.log(`kit ${(t1 - t0).toFixed(0)} ms, layers ${(t2 - t1).toFixed(0)} ms, terrain ${(t3 - t2).toFixed(0)} ms`);
 for (const [id, L] of scene.layers) {
   let verts = 0;
   let maxMesh = 0;
@@ -157,9 +193,44 @@ for (const [id, L] of scene.layers) {
   }
   console.log(`${id}: fill core ${worst.core.toFixed(2)} + band ${worst.band.toFixed(2)} screens, ${worst.draws} draws`);
 }
+// Plate layers: opaque hull (core) and hull minus core (band) per chunk, uniform density inside each chunk.
+for (const [id, P] of scene.plates) {
+  const { def } = P;
+  const [fx, fy] = def.parallax;
+  const [cw, ch] = def.chunkSize;
+  const ts = def.texelScale;
+  let worst = { core: 0, band: 0, draws: 0 };
+  for (let ci = 0; ci < cams.length; ci++) {
+    const cam = cams[ci] as Camera;
+    const frame = { cx: cam.cx, cy: cam.cy, zoom: 1, viewW, viewH: VIEW_H, left: cam.cx - viewW / 2, top: cam.cy - VIEW_H / 2, width: viewW, height: VIEW_H, shakeX: 0, shakeY: 0 };
+    visibleLayerRect(frame, fx, fy, vis);
+    const visArea = (vis.x1 - vis.x0) * (vis.y1 - vis.y0);
+    const acc = { core: 0, band: 0, draws: 0 };
+    for (const c of def.chunks) {
+      const x0 = def.origin[0] + c.col * cw * ts;
+      const y0 = def.origin[1] + c.row * ch * ts;
+      const w = Math.min(x0 + cw * ts, vis.x1) - Math.max(x0, vis.x0);
+      const h = Math.min(y0 + ch * ts, vis.y1) - Math.max(y0, vis.y0);
+      if (w <= 0 || h <= 0) continue;
+      // Visible fraction of the chunk (layer units² per texel² cancel out) over the visible area.
+      const k = (w * h) / (cw * ch) / visArea;
+      // The band mesh spans the whole hull, but over the core its fragments fail the depth test.
+      const core = c.opaqueHull ? Math.abs(polygonArea(c.opaqueHull)) : 0;
+      acc.core += core * k;
+      acc.band += (Math.abs(polygonArea(c.hull ?? [0, 0, cw, 0, cw, ch, 0, ch])) - core) * k;
+      acc.draws += c.opaqueHull ? 2 : 1;
+    }
+    const tot = perCam[ci] as typeof acc;
+    tot.core += acc.core;
+    tot.band += acc.band;
+    tot.draws += acc.draws;
+    if (acc.core + acc.band > worst.core + worst.band) worst = acc;
+  }
+  console.log(`${id}: fill core ${worst.core.toFixed(2)} + band ${worst.band.toFixed(2)} screens, ${worst.draws} draws`);
+}
 cams.forEach((cam, i) => {
   const t = perCam[i] as { core: number; band: number; draws: number };
-  console.log(`camera ${cam.name}: kit layers core ${t.core.toFixed(2)} + band ${t.band.toFixed(2)} screens, ${t.draws} draws`);
+  console.log(`camera ${cam.name}: kit/plate layers core ${t.core.toFixed(2)} + band ${t.band.toFixed(2)} screens, ${t.draws} draws`);
 });
 
 /** Box blur of an RGB float image (separable, `passes` times). */
