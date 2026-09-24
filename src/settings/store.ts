@@ -109,5 +109,7 @@ export function applyUrlOverrides(settings: UserSettings, search: string): UserS
   const debug = params.get('debug');
   if (debug === '' || debug === '1' || debug === 'true') out.debugOverlay = true;
   else if (debug === '0' || debug === 'false') out.debugOverlay = false;
+
+  if (params.has('mute')) out.masterVolume = 0;
   return out;
 }

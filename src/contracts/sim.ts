@@ -96,10 +96,14 @@ export interface ProjectileView {
   readonly vx: number;
   readonly vy: number;
   readonly radius: number;
-  /** Tick of the last fire or reflection (−1 = never used). */
+  /** Tick of the last fire or reflection (−1 = never used). With `id` it identifies one flight. */
   readonly spawnTick: number;
   /** Enemy id that fired it. */
   readonly sourceId: number;
+  /** Ticks stepped since the last fire or reflection (frozen ticks don't count). */
+  readonly age: number;
+  /** The seed expires when age reaches this (seedLifetimeTicks, or reflectedLifetimeTicks after a reflection). */
+  readonly lifetime: number;
 }
 
 export type LaunchTargetKind = 'none' | 'seed' | 'enemy';

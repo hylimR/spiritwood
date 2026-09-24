@@ -965,7 +965,7 @@ describe('determinism', () => {
         if (rng.chance(0.08)) mx = rng.pick([-1, 0, 1, 0.5]);
         out.push({
           moveX: mx, moveY: rng.chance(0.05) ? 1 : 0, jumpPressed: rng.chance(0.06), jumpHeld: rng.chance(0.6),
-          dashPressed: rng.chance(0.02), dashHeld: false, launchPressed: false, launchHeld: false,
+          dashPressed: rng.chance(0.02), dashHeld: false, launchPressed: false, launchHeld: false, launchReleased: false,
         });
       }
       return out;

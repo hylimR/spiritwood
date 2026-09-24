@@ -17,11 +17,12 @@ const HASH_FLAGS: Readonly<Record<string, string>> = {
   medium: 'quality=medium',
   low: 'quality=low',
   uncapped: 'fps=0',
+  mute: 'mute',
 };
 
 /**
  * Query flags, plus `#token[-token…]` equivalents for hosts that only pass a plain hash to the page
- * (e.g. Claude artifacts): `#bench`, `#plates`, `#debug`, `#low`, `#bench-low`.
+ * (e.g. Claude artifacts): `#bench`, `#plates`, `#debug`, `#low`, `#mute`, `#bench-low`.
  */
 function effectiveSearch(): string {
   const params = new URLSearchParams(window.location.search);

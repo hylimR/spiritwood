@@ -75,7 +75,7 @@ export function createFakeSimView(level: LevelData, viewW = VIEW_H * (16 / 9), v
   for (let i = 0; i < MAX_PROJECTILES; i++) {
     projectiles.push({
       id: i, active: false, owner: 'hostile', x: 0, y: 0, prevX: 0, prevY: 0, vx: 0, vy: 0, radius: 12,
-      spawnTick: -1, sourceId: -1,
+      spawnTick: -1, sourceId: -1, age: 0, lifetime: 0,
     });
   }
   const launch: Mutable<LaunchView> = {

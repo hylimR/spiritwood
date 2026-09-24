@@ -104,6 +104,12 @@ export class Hud {
     this.complete.classList.remove('sw-hidden');
   }
 
+  /** "Press a key or click to enable sound" while audio is still locked after play starts. */
+  showSoundHint(visible: boolean): void {
+    // TODO(M2 PIPE): a small caps line under the orb counter; touch the DOM only when `visible` changes.
+    void visible;
+  }
+
   hideComplete(): void {
     this.complete.classList.add('sw-hidden');
   }

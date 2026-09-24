@@ -14,12 +14,14 @@ export interface InputFrame {
   /** Spirit Launch (§5.1.1). Aiming reads moveX/moveY. */
   launchHeld: boolean;
   launchPressed: boolean;
+  /** Latched release edge: a release and re-press inside one frame still releases the aim. */
+  launchReleased: boolean;
 }
 
 export function createInputFrame(): InputFrame {
   return {
     moveX: 0, moveY: 0, jumpHeld: false, jumpPressed: false, dashHeld: false, dashPressed: false,
-    launchHeld: false, launchPressed: false,
+    launchHeld: false, launchPressed: false, launchReleased: false,
   };
 }
 

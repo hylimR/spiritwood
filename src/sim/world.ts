@@ -96,6 +96,8 @@ export class ProjectileState implements ProjectileView {
   radius = 12;
   spawnTick = -1;
   sourceId = -1;
+  age = 0;
+  lifetime = 0;
 
   constructor(id: number) {
     this.id = id;

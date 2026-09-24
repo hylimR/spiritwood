@@ -56,9 +56,11 @@ export interface FrameInfo {
   /** Render dt, seconds, clamped to MAX_RENDER_DT. */
   dt: number;
   /**
-   * World animation clock (particles, sway, shimmer, twinkle, rig secondary motion): advances by
-   * `worldDt` = dt·timeScale. timeScale eases toward TIME_SCALE_FROZEN while `sim.frozen` (Spirit Launch
-   * aim) and back to 1 after, so the world visibly slows to a crawl. UI and post keep `time`/`dt`.
+   * World animation clock (particles, decor and kit sway, fog, sky, shafts, entity idles): while
+   * `sim.frozen` (Spirit Launch aim) timeScale s eases toward g = TIME_SCALE_FROZEN with
+   * s ← g + (s − g)·e^(−dt/τ), τ = TIME_SCALE_EASE, and back toward g = 1 with τ = TIME_SCALE_RELEASE.
+   * worldDt is the exact integral over the frame: g·dt + (s₀ − g)·τ·(1 − e^(−dt/τ)); worldTime sums it.
+   * The hero rig, launch ring/arrow/gather/burst, UI and post stay on `time`/`dt` (§5.5).
    * Upload `worldTime % 3600` to shaders.
    */
   worldTime: number;

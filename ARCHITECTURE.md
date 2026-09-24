@@ -175,7 +175,7 @@ over the terrain drawn in the pre-pass. They may only be used from slot `terrain
 
 ```
 rAF ─▶ FixedStepLoop.frame(now)
-        ├─ input.beginFrame()               sample keyboard + gamepads, latch edges
+        ├─ input.beginFrame()               sample keyboard + gamepads, latch edges; any press → audio.unlock()
         ├─ repeat n∈[0..5] times:
         │     input.nextTick(frame) ─▶ world.step(frame)       (60 Hz, deterministic)
         └─ render(alpha)
@@ -193,8 +193,9 @@ rAF ─▶ FixedStepLoop.frame(now)
               │     │                    (4-tap Kawase), then upsample-add back to glowRT size
               │     └─ PASS 4  composite ─▶ canvas: scene + bloom → per-area grade → death fade
               │                                     → vignette → dither
-              ├─ audio.onSimEvent(e) for each event; world.events.clear()
-              ├─ audio.update(frame)                 (area moods, panning, launch-aim filter; AudioFrame)
+              ├─ fill AudioFrame; guarded: audio.onSimEvent(e, audioFrame) for each event, then
+              │    audio.update(audioFrame) (area moods, panning, leases, launch-aim filter)
+              ├─ world.events.clear()                 (always, even if audio failed)
               └─ hud/debug overlay (DOM, throttled to 4 Hz)
 ```
 
@@ -366,70 +367,131 @@ The hero's light latches onto a nearby **seed** (a Thorn Spitter projectile) or 
 while you aim, and releasing launches you along the aim, flinging a seed the opposite way. The ability is
 locked until an `AbilityShrine` is touched (§5.3).
 
-**Tuning** (`LaunchTuning`, `DEFAULT_LAUNCH_TUNING` in `src/sim/tuning.ts`; tests read these, SIM may
-retune and must then update the reach table in §5.4):
+**Tuning** (`LaunchTuning`, `DEFAULT_LAUNCH_TUNING` in `src/sim/tuning.ts`). Tests read these values. SIM
+may retune them, but must then update the reach tables in §5.4.
 
 | Field | Default | Meaning |
 |---|---|---|
-| range | 170 u | grab radius, player centre (x, y − h/2) → target centre |
-| aimMaxTicks | 120 | aiming auto-releases on this tick |
+| range | 170 u | grab radius, player centre (x, y − h/2) → target centre, inclusive |
+| aimMaxTicks | 120 | aiming auto-releases when aimTicks reaches this |
 | speed | 1150 u/s | launch speed along the aim |
-| flightTicks | 12 | `launched` phase length: gravity × flightGravityMult, horizontal input ignored |
-| flightGravityMult | 0.35 | |
-| graceTicks | 8 | after a release, enemy and seed contact cannot kill |
-| regrabTicks | 20 | the last target cannot be grabbed again for this long |
-| inputLockTicks | 4 | jump and dash presses in these ticks after a release are dropped (not buffered) |
+| flightTicks | 12 | length of the `launched` phase |
+| flightGravityMult | 0.35 | the phase's gravity multiplier (it replaces the §5.1 table) |
+| graceTicks | 8 | ticks from the release in which enemy and seed contact can't kill |
+| regrabTicks | 20 | ticks after the release in which the last target can't be grabbed |
+| inputLockTicks | 4 | jump and dash presses on the first ticks from the release are dropped, not buffered, so a mashed jump can't overwrite the launch |
+| bufferTicks | 6 | a launch press stays live this long waiting for a candidate |
 | seedSpeed | 1000 u/s | speed of a seed flung off (opposite the aim, straight, no gravity) |
 
-**Targets.** Any active seed (either owner) and any enemy (every mode). A target is **valid** when its
-centre is within `range` of the player centre, the segment between the two centres crosses no Solid tile
-(grid DDA; OneWay and Thorns don't block), and it is not the last target while `regrab > 0`. The
-**candidate** is the valid target nearest the player centre; ties go to seeds, then the lower id.
+**Ticks.**
+- The release tick R is flight tick 1.
+- The world countdowns `grace`, `inputLock` and `regrab` are set at step 2 of R (§5.3) and decremented at
+  step 1 of each later tick. So:
+  - grace protects R … R + graceTicks − 1;
+  - presses are dropped on R … R + inputLockTicks − 1;
+  - the old target can't be grabbed on R + 1 … R + regrabTicks.
+- `launchBuffer` is also a world countdown.
 
-**Per-tick handling** (GameWorld, step 2 in §5.3, before the player moves):
+**Input.** `InputFrame.launchReleased` is a latched release edge, so a release and re-press inside one
+frame still releases. The re-press is then buffered.
 
-1. **Aiming** (player mode `launchAim`): aimTicks += 1. Aim = the input vector (moveX, moveY)
-   normalised when its length ≥ `dirThreshold`, else the direction from the target centre to the player
-   centre (so a neutral release pushes you away from it), else (0, −1). Release when `!launchHeld` or
-   aimTicks ≥ aimMaxTicks:
-   - **Player:** position unchanged; (vx, vy) = aim × speed; mode `launched` for flightTicks; airJumps
-     and airDashes restored; dash and wall slide ended; inJumpArc = jumpCuttable = false; jumpBuffer
-     cleared; `grace` = graceTicks; `inputLock` = inputLockTicks; `regrab` = regrabTicks.
-   - **Seed target:** owner = `reflected`, (vx, vy) = −aim × seedSpeed, spawnTick = tick, its lifetime
-     restarts.
-   - **Enemy target:** EnemyHit (cause Launch); the enemy is stunned (crawler: stunTicks; spitter:
-     spitterStunTicks); enemies are never displaced.
-   - Emit Launch; `frozen` = false.
-2. **Grab:** otherwise, when the ability is unlocked, the player is alive, `launchPressed`, and a
-   candidate exists: grab it. The player enters `launchAim` (velocity 0, position held; a dash ends with
-   DashEnd b = 3, a wall slide with WallSlideEnd b = 4), `frozen` = true, aimTicks = 0, the target's
-   kind/id/centre are stored, and LaunchAim is emitted. A press with no candidate emits LaunchFizzle.
-   Grabbing is legal on the ground, in the air, while dashing, wall-sliding or `launched` (chains).
-3. **`launched` physics** (in the player step): each tick, gravity × flightGravityMult, vx unchanged by
-   input (collisions still zero it), the fall cap raised to max(cap, speed) for the phase; then the
-   normal rules resume (over-speed decays vx toward the input target at the air decel rate). A wall or
-   ceiling hit only zeroes that axis. Landing ends it (Land). After inputLock, a jump press fires the
-   first legal jump (air jump or wall jump) and a dash press dashes, ending the phase.
+**Targets.** Any active seed (either owner) and any enemy (in every mode, stunned included). A target is
+**valid** when all of these hold:
+- Its centre is within `range` of the player centre.
+- The segment between the two centres crosses no Solid tile. The check is a supercover grid walk: a
+  segment through a tile corner tests both neighbours and is blocked if either is Solid. OneWay and
+  Thorns don't block.
+- It isn't the last target while `regrab > 0`. The last target is (kind, id) for an enemy and (id,
+  spawnTick) for a seed, so a reused pool slot counts as a new target.
 
-**Freeze.** While `frozen` (= player mode `launchAim`) enemies, projectiles, orbs, checkpoints, shrines
-and the goal do not step (their prev = cur), hazards are not checked, the tick counter, run timer and
-camera keep going. A respawn, teleport or reset cancels the aim and unfreezes.
+The **candidate** is the valid target nearest the player centre; ties go to seeds, then to the lower id.
+It is published at step 8 (LaunchView), and the next tick's grab uses that published candidate, so what
+you grab is always the ring you saw.
 
-**LaunchView** (SimView.launch) is updated in place every tick: candidate fields (none while aiming,
-dead or locked), target fields from the grab until the next grab, aim = the live aim while aiming and
-the launch direction afterwards, aimTicks, aimMaxTicks, range.
+**Per-tick handling** (step 2 in §5.3, before the player moves):
 
-**Test contract** (derive expectations from the tuning):
+1. **Aiming** (player mode `launchAim`):
+   - aimTicks += 1.
+   - Aim = the input vector (moveX, moveY), normalised, when its length ≥ `dirThreshold`. Otherwise it
+     is the direction from the target centre to the player centre, so a neutral release pushes you away
+     from the target. Otherwise it is (0, −1).
+   - Release when `launchReleased`, `!launchHeld` or aimTicks ≥ aimMaxTicks:
+     - **Player:**
+       - Position unchanged; (vx, vy) = aim × speed; mode `launched`.
+       - airJumps and airDashes restored; inJumpArc = jumpCuttable = false; jumpBuffer = 0.
+       - groundKind = Empty; coyote = wallCoyote = wallStick = wallJumpLock = dashCooldown =
+         dropThrough = 0.
+       - facing = sign(aimX) when |aimX| ≥ dirThreshold.
+       - grace = graceTicks, inputLock = inputLockTicks, regrab = regrabTicks.
+     - **Seed target:** owner = `reflected`, (vx, vy) = −aim × seedSpeed, spawnTick = tick, age = 0,
+       lifetime = reflectedLifetimeTicks.
+     - **Enemy target:** EnemyHit (cause Launch), and the enemy is stunned: stunTicks for a crawler,
+       spitterStunTicks for a player-aimed spitter. A running stun restarts. Fixed-aim spitters are
+       never stunned, and enemies are never displaced.
+     - Emit Launch; `frozen` = false.
+2. **Buffer:** a `launchPressed` sets launchBuffer = bufferTicks, as long as the ability is unlocked, the
+   player is alive and not aiming (having just released counts as not aiming). Otherwise the press is
+   ignored. A buffer that runs out without a grab emits LaunchFizzle at the player centre.
+3. **Grab:** not on a release tick. When launchBuffer > 0 and a published candidate exists:
+   - launchBuffer = 0.
+   - The player enters `launchAim`: velocity 0, position held. A dash ends with DashEnd b = 3, and a
+     wall slide with WallSlideEnd b = 4.
+   - `frozen` = true, aimTicks = 0.
+   - The target's kind, id, spawnTick and centre are stored, and the aim is computed as on an aiming
+     tick.
+   - Emit LaunchAim.
+
+   Grabbing is legal on the ground, in the air, while dashing, while wall-sliding and while `launched`
+   (chains).
+
+**While aiming** the player step does only prev ← cur and modeTicks += 1:
+- no timers run;
+- jump and dash presses are dropped;
+- airTicks and inputX are frozen.
+
+A death (debug respawn), respawn, teleport or reset cancels the aim, unfreezes the world and emits no
+Launch.
+
+**`launched` phase** (player step; flight ticks R … R + flightTicks − 1, modeTicks 0 … flightTicks − 1):
+- **Physics:**
+  - a = g·flightGravityMult, replacing the §5.1 gravity table whatever the sign of vy.
+  - vx is held: input doesn't change it, but a wall zeroes it.
+  - The fall cap is max(cap, speed).
+- **Collision:**
+  - Normal sweeps apply, including ledge assist and corner correction.
+  - A wall or ceiling hit zeroes only that axis.
+  - No wall slide starts during the phase.
+- **Landing:** ends the phase (Land). The release cleared groundKind, so a launch that leaves you on the
+  ground lands on R.
+- **Presses after inputLock:** a jump press fires the first legal §5.1 jump (the stale coyote and
+  wallCoyote are gone), and a dash press dashes. Either one ends the phase.
+- **Afterwards:** from R + flightTicks the normal rules apply. Over-speed decays vx toward the input
+  target at the air decel rate.
+
+**Freeze.** While `frozen` (= player mode `launchAim`):
+- Enemies, projectiles, orbs, checkpoints, shrines and the goal do not step; their prev = cur.
+- Hazards are not checked.
+- The tick counter, run timer, respawn fade and camera keep going.
+
+**LaunchView** (SimView.launch) is updated in place every tick:
+- the candidate fields (empty while aiming, dead or locked);
+- the target fields, from the grab until the next grab;
+- the aim: the live aim while aiming, the launch direction afterwards;
+- aimTicks, aimMaxTicks and range.
+
+**Test contract** (derive expectations from the tuning, with the tick convention above):
 
 | Case | Expected |
 |---|---|
-| Straight-up launch from rest | apex gain matches the trapezoid integration of the tuning ± 2 u |
-| 45° launch on flat ground | airtime and horizontal distance match the integration ± 2 u |
-| Freeze | during aim nothing but the player's modeTicks, tick, timer and camera change; release restores stepping |
-| Grab rules | range edge, LOS blocking, seed-first tie-break, regrab lock, fizzle, locked before the shrine |
-| Seed flung off | flies −aim at seedSpeed, stuns the first enemy it hits (EnemyHit cause Seed) |
-| Grace | a hostile seed or enemy touching the player during grace does not kill |
-| Chains | grabbing from `launched` works; abilities restored on every release |
+| Straight-up launch from rest | apex gain matches the integration ± 2 u (416.2 u by default) |
+| 45° launch on flat ground, moveX = +1 after the phase | horizontal distance and airtime match the integration ± 2 u (≈ 495 u, ≈ 51 ticks) |
+| Freeze | while aiming, only the player's modeTicks, the launch aim fields and aimTicks, the tick counter, run timer, respawn fade and camera change; the release restores stepping |
+| Controller state | after a ground or wall-slide grab, no jump on R + inputLockTicks … fires a ground or wall jump from stale coyote; a dash in progress at the grab leaves the dash usable after the release |
+| Grab rules | range edge (inclusive), LOS blocking including corners, seed-first tie-break, regrab window R + 1 … R + regrabTicks including pool-slot reuse, a press up to bufferTicks − 1 ticks early still grabs, fizzle on expiry, no fizzle while locked, dead or aiming |
+| Input | a release and re-press inside one frame releases, then buffers |
+| Seed flung off | flies −aim at seedSpeed; the first enemy it touches takes EnemyHit (cause Seed) and is stunned, except a fixed-aim spitter (the seed bursts without a hit) |
+| Grace | during grace hostile seeds neither kill nor burst and enemy contact doesn't kill; a stomp still bounces |
+| Chains | grabbing from `launched` works; abilities are restored on every release |
 | Determinism | identical input scripts give identical states |
 
 ### 5.2 Camera (`src/sim/camera.ts`) — normative
@@ -447,12 +509,14 @@ Simulated on the fixed step with prev/cur interpolation. The framing point is th
   while |groundRef − focusY| > deadZoneH/2.
 - **Look-ahead:** the direction flips to sign(vx) only after |vx| > lookAheadMinSpeed has held for
   lookAheadCommitTicks. It decays to 0 after lookAheadHoldTicks of slow speed, smoothed with
-  lookAheadSmoothTime.
+  lookAheadSmoothTime. While the player is in `launchAim` the look-ahead is held: its direction, timers
+  and value all freeze.
 - **Look-down:** only when vy ≥ lookDownFallSpeed AND the feet are lookDownMinDrop below the last
   grounded y.
 - **Smoothing and bounds:** `smoothDamp` per axis. Clamp the *target* (not the output) to the level.
   Centre on the level in an axis where it is smaller than the view.
-- **snapTo:** value = target, velocity = 0, prev = cur, snapTick = tick. `setOverride` follows an
+- **snapTo:** value = target, velocity = 0, zoom = its target with zero zoom velocity, prev = cur,
+  snapTick = tick. `setOverride` follows an
   explicit point (bench).
 - **Aim zoom (M2):** while the player is in `launchAim`, zoom smooth-damps toward `aimZoom` (1.08,
   `CameraTuning.aimZoom`, time `zoomSmoothTime` 0.18 s); otherwise back to `zoom`. prevZoom interpolates it.
@@ -461,14 +525,20 @@ Simulated on the fixed step with prev/cur interpolation. The framing point is th
 
 **Step order** (M2):
 
-1. prev ← cur for everything.
-2. Spirit Launch input: release or grab (§5.1.1); this toggles `frozen`.
+1. prev ← cur for everything; decrement the world countdowns (§5.1.1).
+2. A queued `respawn()` kills the player (Debug), which cancels an aim. Then Spirit Launch: aiming and
+   release, buffer, grab (§5.1.1). This toggles `frozen`.
 3. Player.
-4. Unless frozen: enemies (spitters may fire), then projectiles (move, then collide with terrain, the
-   player and enemies).
-5. If alive and not aiming, in order: thorns (the hazard AABB inset by `HAZARD_INSET`), then enemies,
-   then hostile seeds (enemy and seed contact are skipped during launch grace), then the kill plane
-   (feet y > pxHeight + KILL_MARGIN).
+4. Unless frozen:
+   1. Enemies. Spitters may fire; a seed fired this tick doesn't move until the next tick.
+   2. Projectiles: age, move, terrain and enemy collisions, expiry.
+5. If alive and not aiming, in order:
+   1. Thorns (the hazard AABB inset by `HAZARD_INSET`).
+   2. Enemies. During grace the stomp test still runs; only the kill branch is skipped.
+   3. Hostile seeds against the player's box at their end positions. Skipped during grace: they neither
+      kill nor burst. Tunnelling is impossible: the relative motion is ≤ 43.4 u per tick (seed and fast
+      fall both at 1300 u/s), below the 52 u minimum overlap span.
+   4. The kill plane (feet y > pxHeight + KILL_MARGIN).
 6. If alive and not frozen: orbs, checkpoints, ability shrines, goal.
 7. Death and respawn timers.
 8. Launch candidate refresh (LaunchView).
@@ -477,49 +547,81 @@ Simulated on the fixed step with prev/cur interpolation. The framing point is th
 **Enemies:**
 
 - **Stomp** (crawlers only) iff the boxes overlap, player vy > 0, and player.prevY ≤ enemy.prevY −
-  enemy.height + stompTolerance. The player bounces with vy = −stompBounceVelocity (cuttable: about 143 u held, 50 u
-  released).
-- Any other overlap with a harmful enemy kills (DeathCause.Enemy): a crawler while patrolling, a
-  spitter in every mode but `stunned`.
-- A stunned enemy is harmless and non-solid. It re-forms after stunTicks at its current position,
-  deferred while it overlaps the player.
+  enemy.height + stompTolerance. The player bounces with vy = −stompBounceVelocity (cuttable: about
+  143 u held, 50 u released).
+- Any other overlap with a harmful enemy kills (DeathCause.Enemy): a crawler while patrolling, or a
+  spitter in any mode except `stunned`.
+- A stunned enemy is harmless and non-solid. It re-forms after its stun at its current position,
+  deferred while it overlaps the player. A reflected seed or a launch off a stunned enemy restarts its
+  stun.
 
-**Thorn Spitter** (M2, `src/sim/spitter.ts`; `WorldTuning` defaults: spitterWidth 44, spitterHeight 60,
-spitterMuzzleHeight 50, spitterWindupTicks 36, spitterStunTicks 300, plus the LDtk field defaults):
+**Thorn Spitter** (M2, `src/sim/spitter.ts`). `WorldTuning` defaults: spitterWidth 44, spitterHeight 60,
+spitterMuzzleHeight 50, spitterWindupTicks 36, spitterStunTicks 300, spitterViewInset 32, plus the LDtk
+field defaults.
 
-- A rooted plant; contact box `spitterWidth × spitterHeight` on its feet, muzzle at (x, y −
-  spitterMuzzleHeight). **Harmful from every side** in every mode except `stunned` (touching it kills with
-  DeathCause.Enemy); it cannot be stomped.
-- **Active** while the player is alive and within `range` of the muzzle (player centre); otherwise
-  `idle`, and the cycle restarts. On becoming active it waits `phase` ticks (mode `cooldown`), then cycles:
-  `windup` for spitterWindupTicks (emits SpitterWindup on entry; facing = toward the player, or
-  sign(fixedVx) for fixed aim, unchanged when 0) → fire on the last windup tick → `cooldown` for
-  max(1, period − spitterWindupTicks) → `windup` …
-- **Fire:** take the lowest free projectile slot (none free: skip the shot). The seed starts at the
-  muzzle, owner `hostile`. Fixed aim: v = (fixedVx, fixedVy). Player aim: ballistic onto the player centre
-  at fire time with flight time T = flightTicks·dt: vx = dx/T, vy = dy/T − ½·seedGravity·T, scaled down to
-  seedMaxSpeed if faster. Emit SeedFired.
-- **Stunned** (EnemyHit by a flung seed, or launched off): harmless and silent for spitterStunTicks, then
-  it re-forms (EnemyReformed, deferred while it overlaps the player) into `cooldown` for a full period.
+- **Body:** a rooted plant with a `spitterWidth × spitterHeight` contact box on its feet and its muzzle
+  at (x, y − spitterMuzzleHeight).
+  - **Harmful from every side** in every mode except `stunned`: touching it kills with
+    DeathCause.Enemy. It can't be stomped.
+  - Fixed-aim spitters are anchors, not foes: they are never stunned.
+- **Active** while the player is alive with its centre within `range` of the muzzle (inclusive). A
+  player-aimed spitter also needs:
+  - LOS from the muzzle to the player centre (the §5.1.1 walk);
+  - its muzzle inside the sim camera's current view, inset by spitterViewInset, so it never fires from
+    off-screen.
+
+  Becoming inactive in any mode except `stunned` returns it to `idle`, and the next activation restarts
+  the cycle.
+- **Cycle** (modeTicks is 0 on entry; W = spitterWindupTicks, C = max(1, period − W)):
+  - **Activation:** on its first active step it goes from `idle` to `cooldown` for (phase mod period)
+    ticks, or straight into `windup` when that is 0.
+  - **Windup:** lasts W ticks. On entry it emits SpitterWindup (a = W) and sets facing toward the player,
+    or to sign(fixedVx) for fixed aim (unchanged when that is 0).
+  - **Fire:** on the step after the windup's last tick it fires (SeedFired) and enters `cooldown` for C
+    ticks, then `windup` again.
+
+  So shots are exactly `period` ticks apart.
+- **Fire:**
+  - **Slot:** the lowest free projectile slot. With none free the shot is skipped (validate.ts rules this
+    out).
+  - **Seed:** starts at the muzzle with prev = cur, age 0, lifetime seedLifetimeTicks, owner `hostile`.
+  - **Fixed aim:** v = (fixedVx, fixedVy).
+  - **Player aim:** a ballistic shot onto the player centre at fire time, with flight time
+    T = flightTicks·dt:
+    - vx = dx/T and vy = dy/T − ½·seedGravity·T;
+    - scaled down to seedMaxSpeed if faster;
+    - trapezoid integration makes an unscaled shot exact.
+- **Stunned** (player aim only): an EnemyHit from a reflected seed, or a launch off it, stuns it for
+  spitterStunTicks. It is harmless and silent. It then re-forms (EnemyReformed, deferred while it
+  overlaps the player) into `cooldown` for a full period, or into `idle` if it is inactive.
 - Respawn and reset put it back to `idle`.
 
-**Seeds** (M2, `WorldTuning`: seedRadius 12, seedGravity 1400 u/s², seedMaxSpeed 1300 u/s,
-seedLifetimeTicks 300, reflectedLifetimeTicks 150, seedOutMargin 240):
+**Seeds** (M2). `WorldTuning`: seedRadius 12, seedGravity 1400 u/s², seedMaxSpeed 1300 u/s,
+seedLifetimeTicks 300, reflectedLifetimeTicks 150, seedOutMargin 240. A fixed pool of `MAX_PROJECTILES`
+(SimView.projectiles). Each unfrozen tick (step 4), each active seed:
 
-- A fixed pool of `MAX_PROJECTILES` (SimView.projectiles). Hostile seeds fall with seedGravity; reflected
-  seeds fly straight. Each tick they move in sub-steps no longer than seedRadius (no tunnelling).
-- A seed bursts (SeedBurst, slot freed) when its centre enters a Solid tile or leaves the top of the
-  level (Terrain), outlives its lifetime (Expired), or goes more than seedOutMargin past the left, right
-  or bottom edge (Expired). OneWay and Thorns tiles don't stop seeds.
-- A **hostile** seed whose circle touches the player's box kills the player (DeathCause.Seed) and
-  bursts (Player), unless the player is aiming or in launch grace. Hostile seeds pass through enemies.
-- A **reflected** seed whose circle touches an enemy's box stuns it (EnemyHit cause Seed) and bursts
-  (Enemy). Reflected seeds never hurt the player.
-- Respawn, teleport and reset free every slot silently (no events).
+1. **Age:** age += 1. Age counts only stepped ticks, so aiming doesn't age seeds.
+2. **Move:** trapezoid integration. Hostile seeds fall with seedGravity; reflected seeds fly straight.
+   Speed is capped at seedMaxSpeed. The move takes n = ceil(|d| / seedRadius) equal sub-steps.
+3. **Sub-step checks**, in order:
+   - A centre inside a Solid tile bursts it (SeedBurst Terrain). Outside the left, right and top edges
+     counts as Solid (§2.1).
+   - A reflected seed touching an enemy's box bursts it (Enemy). The enemy takes EnemyHit (cause Seed)
+     and is stunned, except a fixed-aim spitter. OneWay and Thorns tiles don't stop seeds.
+   - Hostile seeds pass through enemies.
+4. **Expiry:** age ≥ lifetime, or more than seedOutMargin below the bottom edge, expires it (SeedBurst
+   Expired). A burst frees the slot.
+
+Player contact (step 5):
+- A hostile seed whose circle touches the player's box kills (DeathCause.Seed) and bursts (Player).
+- Reflected seeds never hurt the player.
+
+Respawn, teleport and reset free every slot silently (no events).
 
 **Ability shrines** (M2): the first time the player's box overlaps an `AbilityShrine` rect,
 `launch.unlocked` becomes true and AbilityUnlocked is emitted. Unlocks persist through deaths and
-respawns; `reset()` clears them.
+respawns; `reset()` clears them. Tests unlock through `GameWorld.unlock(ability)`: playthrough segments
+start with `teleport`, which never passes the shrine.
 
 **Death timeline** (death tick D):
 
@@ -557,7 +659,8 @@ and 2.2 tall). M2 widens it to at most **260 × 50** for the Thornveil (every ki
   `grade: AreaGrade`, `blend`), `Lantern`, `Flora`; M2: `Spitter` (fields in `SpitterDef`, enum
   `SpitterAim`) and `AbilityShrine` (resizable; field `ability`, enum `Ability`). The loader validates both
   (a spitter stands on a Solid or OneWay floor tile with its box clear of Solid; a shrine rect is inside
-  the level and not inside Solid).
+  the level and not inside Solid). Spitter `angleDeg` → (fixedVx, fixedVy) snaps components with
+  |c| < 1e-9 to 0, so 90° is exactly vertical.
 - **Workflow:** edit `tools/level/forest.map.txt` (format documented at its top), then `npm run level`.
   `node tools/level/build-level.ts --check` and `tests/level/forest.test.ts` fail when the committed
   `.ldtk` is stale. `node tools/level/preview-level.ts out.png` renders a map preview, and
@@ -575,20 +678,27 @@ and 2.2 tall). M2 widens it to at most **260 × 50** for the Thornveil (every ki
 | Jump + double jump (air jump at the apex) | 550 u (11.5 tiles) |
 | Jump + double jump, late air jump (restarts the arc) | ≈ 650 u (13.5 tiles) |
 | Jump + double jump + dash at the second apex | 765 u (15.9 tiles) |
+| Jump + air dash, cancelled by the air jump (keeps 1180 u/s) | ≈ 1064 u leading edge (22 tiles) |
+| Ground dash → coyote jump (cancels) + air dash + air jump (cancels) | ≈ 1346 u leading edge (28 tiles); ≈ 1137 u onto a ledge 6 tiles higher |
 | Dash | 196.7 u |
 
 Coyote time (≈ 51 u) and the collider width widen the crossable gaps. The air jump sets vy =
-−airJumpVelocity whenever it fires, so a *late* double jump restarts the arc.
+−airJumpVelocity whenever it fires, so a *late* double jump restarts the arc. A jump that cancels a
+dash keeps the dash's vx, which then decays at airDecel, so dash-jumps outreach every other move.
 
-**Spirit Launch reach** (DEFAULT_LAUNCH_TUNING; SIM measures these with the same integrator and replaces
-the estimates):
+The vertical reach without launch is the 293.9 u peak, plus 12 u of ledge assist, plus ≈ 14 u from
+a crawler stomp: ≈ 320 u, under 7 tiles. The dash-jump reaches nothing at a rise of 7 tiles.
+
+**Spirit Launch reach** (DEFAULT_LAUNCH_TUNING, the §5.1.1 tick convention; measured with a port of the
+controller validated against `PlayerController`):
 
 | Move | Reach |
 |---|---|
-| Straight-up launch from rest (apex gain) | ≈ 416 u (8.7 tiles) |
-| … then the restored double jump at the apex | ≈ 537 u (11.2 tiles) |
-| 45° launch on flat ground (feet travel back to launch height) | ≈ 488 u |
-| Launch off a seed mid-gap, then double jump + dash | ≫ 765 u (SIM measures the best case) |
+| Straight-up launch from rest (apex gain) | 416.2 u (8.7 tiles) |
+| … then the restored air jump | 537.3 u (11.2 tiles) |
+| Jump + double jump, grab at the 293.9 u peak, launch up, air jump | ≈ 831 u (17.3 tiles) |
+| 45° launch on flat ground, holding forward (back to launch height) | ≈ 495 u, airtime ≈ 51 ticks, peak 233.6 u |
+| Launch off a mid-air seed, flat, then air jump + dash (cancelled) | ≈ 1166 u |
 
 **Design rules:**
 
@@ -601,11 +711,44 @@ the estimates):
 - `tests/sim/reach.test.ts` asserts each gate: the intended move succeeds and the next-weaker move
   fails.
 - `tests/sim/playthrough.test.ts` replays scripted inputs through every area of `forest.ldtk`.
-- **Launch gates (M2):** a gate that needs Spirit Launch must beat jump + double jump + dash (with coyote
-  and the collider) for horizontal gates, and jump + double jump from any wall-free standing spot for
-  vertical ones. `reach.test.ts` proves each: no jump/dash timing crosses it, and a scripted launch does.
-  Seeds that serve as anchors come from **fixed-aim** spitters with period ≤ 120 ticks, so the rhythm is
-  learnable. Seeds never reach a checkpoint, and a gate's approach is safe while standing still (fair).
+- **Launch-only landings (M2).** Width alone never gates: the dash-jump outreaches a single launch. A
+  landing that needs Spirit Launch satisfies all of these:
+  - **Height:** it is ≥ 7 tiles (336 u) above every standable tile and crawler floor it can be
+    approached from without launching.
+  - **No wall climbs:** the landing ledge is OneWay, or its face is Thorns. A single wall can be climbed,
+    and entering a wall slide restores the air jump and dash, so no Solid face exposed to air may have
+    its bottom less than 366 u above a standable approach surface within 28 tiles
+    (293.9 + 58 body + 14 stomp).
+  - **Proof** in `reach.test.ts`:
+    - A conservative no-launch reachability closure must exclude the landing. It allows rises of ≤ 6
+      tiles within 28 tiles, plus the top of every climbable face.
+    - A bot search must also fail to land. It searches ground dash tick × jump tick (grounded or
+      coyote, which may cancel the dash) × air dash tick × air jump tick (which may cancel the air
+      dash).
+    - A scripted launch does land. It uses only the 8 keyboard directions and neutral aim.
+  - **Anchors in the proof:** every launch target reachable from the approach counts, including
+    player-aimed seeds, which come to the player, and enemy bodies.
+- **Stun gates (M2):** a player-aimed spitter stands in a passage ≤ 2 tiles tall. Its box plus the
+  player's (118 u) doesn't fit under a 96 u ceiling, and the dash gives no invulnerability, so the only
+  way through is to stun it with a flung seed or a launch.
+- **Anchors (M2):** seeds that serve as anchors come from **fixed-aim** spitters with period ≤ 120
+  ticks, so the rhythm is learnable. Fixed-aim spitters are never stunned, so their streams can't be
+  shut off by accident.
+- **Fairness (M2),** checked by `forest.test.ts`:
+  - Fixed-aim streams never cross the standable surfaces of a gate's approach, so standing still before
+    a gate is safe.
+  - No checkpoint's respawn point is within `range` of a player-aimed spitter.
+  - Simulated fixed-aim trajectories (seedLifetimeTicks) never touch a checkpoint's respawn stand box.
+  - Player-aimed spitters only fire from on-screen (§5.3), and every shot is telegraphed by a 36-tick
+    windup.
+- **Shrine chokepoint (M2):** the AbilityShrine rect spans its corridor from floor to ceiling.
+  `forest.test.ts` blocks the shrine's cells and flood-fills non-Solid cells from the spawn (4-connected;
+  cells above the top edge count as open); the fill must reach no Spitter and not the Goal. So the
+  launch course can't be entered without the ability.
+- **Seed pool (M2):** Σ over spitters of ceil((seedLifetimeTicks + reflectedLifetimeTicks) / period) ≤
+  `MAX_PROJECTILES` (`validate.ts`), so a shot is never skipped and anchor rhythms hold.
+- **Grade zones** cover every tile, leaving no uncovered remainder (`forest.test.ts`), so the audio mood
+  never falls back to its default.
 - No dead masses: from any standable tile, with the camera framed as the sim frames it, solid rock
   more than 3 tiles from open air covers < 8 % of the view (`forest.test.ts`). Scenery-only rock is
   ≤ 5–6 tiles thick; carve bigger masses into ledges, alcoves and windows onto the forest.
@@ -619,15 +762,17 @@ Six areas (five in M1), left to right, each with a colour grade:
    platform, and light shafts.
 5. **Thornveil** (`veil`, M2, between Canopy Walk and Moonwell): the AbilityShrine and a checkpoint at the
    entry, then a Spirit Launch course:
-   - **Teach:** a fixed spitter lobs seeds straight up in a safe pit; launching off one reaches a reward
-     alcove (optional).
-   - **Gap gate:** a flat gap too wide for jump + double jump + dash, fed by seeds from spitters below.
-   - **Vertical gate:** an open shaft (no walls in reach) to a ledge above double-jump reach, with a seed
-     stream.
-   - **Reflect gate:** a player-aimed spitter guards a passage with no way around it; stun it with a
-     flung seed (or by launching off it) and pass.
-   - **Chain:** two launches in a row (seed → seed, or seed → a crawler on a floating platform) over a
-     wide chasm; orbs reward the chain.
+   - **Teach:** a fixed spitter lobs seeds straight up in a safe pit. Launching off one reaches a reward
+     alcove ≥ 7 tiles up (optional).
+   - **Rise gate:** a thorn chasm whose far landing is ≥ 7 tiles above the near ledge, fed by seeds lobbed
+     from below (a diagonal launch).
+   - **Vertical gate:** a shaft with no climbable faces, up to a OneWay ledge ≥ 7 tiles up, beside a seed
+     stream (a straight-up launch).
+   - **Stun gate:** a player-aimed spitter (short flightTicks, so shots stay under the ceiling) blocks a
+     low passage. Stun it with its own seed, flung back by launching away from it, or by launching off
+     it, then pass.
+   - **Chain (optional):** orbs along a two-launch route (seed → seed, or seed → a crawler on a floating
+     platform).
    - A checkpoint after the vertical gate.
 6. **Moonwell** (`shrine`): a descent into a warm, lantern-lit clearing with the goal shrine.
 
@@ -679,24 +824,48 @@ With the full High budget there are 10 kit layers plus sky and fog:
 
 **M2 visuals** (PIPE unless noted):
 
-- **World clock:** `FrameInfo.timeScale` eases (time constant TIME_SCALE_EASE) toward TIME_SCALE_FROZEN
-  while `sim.frozen`, back to 1 otherwise, and `worldTime`/`worldDt` advance by it. Everything that
-  animates the world uses them: particles, decor and kit sway, fog, sky twinkle, shaft shimmer, entity
-  idles, and the hero's secondary motion (not the aim pose itself). UI, post and the composite keep
-  `time`/`dt`.
+- **World clock** (FrameInfo doc is normative): s ← g + (s − g)·e^(−dt/τ) on the clamped render dt, with
+  g = TIME_SCALE_FROZEN and τ = TIME_SCALE_EASE while `sim.frozen`, and g = 1, τ = TIME_SCALE_RELEASE
+  otherwise. worldDt is the exact integral over the frame, so the clock is frame-rate independent.
+  - **World clock users:** particles (per-particle flag: ambient and world bursts use it), decor and kit
+    sway, fog, sky, shafts, entity idles.
+  - **Frozen-aware tick animations:** animations that count sim ticks since an event (orb collect,
+    checkpoint stones) record `worldTime` at the event instead, because ticks keep counting while frozen.
+  - **Real clock (`time`/`dt`):** the hero rig and all its secondary motion, the launch ring, aim
+    arrow, LaunchAim gather and Launch burst/streak, UI, post. A verlet or velocity estimate on
+    `worldDt` explodes as the scale ramps back up: the scarf would lead the hero after a release. While
+    `launchAim`, the scarf may float by scaling its gravity and rest pull by `timeScale`, never its step.
+  - **Freeze grade:** freeze amount k = (1 − s)/(1 − TIME_SCALE_FROZEN), applied on the CPU to the
+    blended GradeParams (saturation × (1 − 0.35k), temperature − 0.3k, vignette + 0.15k). No shader
+    cost.
 - **Thorn Spitter:** a rooted bulb plant about 1.3 tiles tall with thorny leaves. Its bulb swells and
   glows `thorns` rose over the windup, recoils on the shot, droops and dims while stunned, and re-forms
   with a small bloom. SDF parts are baked into the entity atlas: one merged draw plus a glow twin.
 - **Seeds:** hostile = a rose ember with small thorns; reflected = a spirit-blue wisp. Each has a short
-  ribbon trail (≤ 8 points). All seeds and trails share one draw, plus one glow-twin draw. Trails reset
-  when `spawnTick` changes.
+  ribbon trail (≤ 8 points). All seeds and trails share one draw, plus one glow-twin draw. That holds
+  only if:
+  - the trails are default-shader meshes of ≤ 100 vertices (a custom shader or state disables
+    batching);
+  - every seed uses one blend mode (premultiplied normal; emissive texels at alpha 0 add);
+  - inactive slots are hidden with alpha 0, never `visible` (which rebuilds the render group).
+
+  Trail behaviour:
+  - Trails take one sample per tick in which the seed moved (a frozen seed keeps its trail).
+  - Point 0 is the interpolated head, followed by the samples.
+  - Trails reset when `spawnTick` changes (a new flight or a reflection).
+  - A seed fades over its last 30 ticks of `age` / `lifetime`, so an expiry never pops.
+  - Twins of thin things (trails) are at least 2 glow-buffer pixels wide.
 - **Spirit Launch:**
-  - A thin, pulsing spirit-glow ring marks `launch.candidate` (only when unlocked).
+  - A thin, pulsing spirit-glow ring marks `launch.candidate` (only when unlocked). It follows the
+    candidate's *interpolated* position, looked up by kind and id, not candidateX/Y.
   - While aiming, the ring locks and tightens on the target, and an aim arrow (≈ 90 u) leaves the hero
     along the aim.
-  - The composite adds a freeze grade driven by 1 − timeScale: ≈ 35 % desaturation, a cool shift and
-    +0.15 vignette.
-  - On release: a radial light burst at the target, a light streak on the hero, and a small shake.
+  - The freeze grade (above) comes in and out with the world clock.
+  - On release: a radial light burst at the centre of the LaunchAim that preceded the Launch (not
+    `LaunchView`, which a later grab in the same frame overwrites), a light streak on the hero, and a
+    small shake.
+  - The spitter's glow twin may draw with normal blend (a dark body with alpha) so it occludes moss glow
+    behind it.
 - **AbilityShrine:** a mossy stone pedestal holding a floating lantern-seed that dims once unlocked.
   Unlocking bursts with light, and the HUD shows a toast with the controls.
 - **Bursts** (particles): SeedFired puff, SeedBurst shards (rose) or wisps (blue), LaunchAim light gather,
@@ -707,19 +876,31 @@ form-following brush strokes at 1:1, soft broken edges, no outlines, no speckle 
 aerial-perspective value ramp and the terrain/background value separation stay as they are, because the
 gameplay read comes first.
 
+- **Strokes live in local stroke coordinates, never in a rotated global coordinate.** Rotating texel or
+  world coordinates by a per-texel direction or a per-vertex tangent warps the noise domain: 7–19× the
+  intended frequency near lobe centres, and shimmer on terrain corners. That is exactly the speckle to
+  avoid.
 - **Kit atlas (bake time, zero runtime cost):**
-  - The raster records a per-texel stroke direction from the SDF primitives: along limbs and trunks, a
-    tangent around clump and lobe centres for foliage, near-horizontal for ground, rocks and roots.
-  - An oriented, elongated brush texture (stretch 4–6 : 1, 2–3 scales) modulates R by about ±10–15 %.
-  - The rim mask G breaks into stroke segments.
+  - `put()` records a stroke coordinate (u, v) per texel in the owning shape's frame, next to
+    `mat`/`shade`. Capsules and curves: along / across the segment. Ellipses and lobes: (r̄·φ, r) around
+    the lobe centre, faded as r → 0. Leaves: along the blade. Ground, rocks and roots: stretched (x, y).
+  - An elongated brush texture (stretch 4–6 : 1, 2–3 scales) is evaluated in (u, v). Stroke widths are
+    given in layer units, converted with `unitsPerTexel`, and are at least 3 texels and 2 px at the
+    minimum render scale.
+  - **Visibility target:** body strokes change final luma by at least 3–4 8-bit codes on L3–L8 (about
+    ±0.3 in R, or a stroke gain inside the kit shading); ±10–15 % of R is invisible (≤ 2 codes). The
+    rim mask G breaks into stroke segments while keeping its mean over every 2×2 texel block, so the
+    mip-averaged rim, and with it the value ramp, does not shift.
   - Alpha edges get a light dry-brush breakup along the stroke direction, within the existing
-    edge-noise budget.
-  - Decor inherits all of this through the atlas.
-- **Terrain:** strokes follow the surface tangent in the rim zone and the warped strata deeper in: one
-  oriented noise lookup, using a per-vertex tangent from the mesh. That is ≤ 10 value-noise lookups per
-  fragment in total.
-- **Budget:** cold atlas bake ≤ +150 ms, the same atlas size, no new textures. Previews compare before and
-  after at gameplay scale and in 2× crops; the main session reviews on the GPU.
+    edge-noise budget. Decor inherits all of this through the atlas.
+- **Terrain:** vertices carry a stroke coordinate (s, depth): s is the arc length at the nearest contour
+  point (from the mesh build), wrapped mod 1024 so the hash keeps its precision. Strokes follow it in
+  the rim zone and blend into the existing warped-strata coordinates by 60 u of depth. Stroke frequency
+  is clamped with `fwidth` to ≤ 0.25 cycles per pixel at `minRenderScale`. This costs one more
+  value-noise lookup (≤ 10 per fragment) and a vertex stride of 5 → 7 floats.
+- **Budget:** cold atlas bake ≤ +150 ms (a 3-lookup modulation over the ≈ 0.85 M covered texels measures
+  60–80 ms), the same atlas size, no new textures. Previews compare before and after at gameplay scale
+  and in 2× crops, and report the measured luma change per layer; the main session reviews on the GPU.
 
 ### 5.6 In-house rig (`src/render/hero/rig.ts`)
 
@@ -742,7 +923,7 @@ gameplay read comes first.
 | Initial render scale | 0.75 | 0.9 | 1.0 |
 | Min render scale (dynres) | 0.5 | 0.6 | 0.7 |
 | Max render pixels | 1280×720 | 1600×900 | 2560×1440 |
-| Kit layers (layer budget) | 6 | 8 | 10 |
+| Kit layers (layer budget; plates are gated by `minQuality` instead) | 6 | 8 | 10 |
 | Particles density | 0.35 | 0.65 | 1.0 |
 | Bloom | quarter res, 2 passes | half, 3 passes | half, 4 passes |
 | Light shafts, sway | shafts on, sway off | on | on |
@@ -763,8 +944,10 @@ gameplay read comes first.
     queries polled without blocking. Results are discarded on `GPU_DISJOINT_EXT`, and the value is −1
     when the extension is missing (Firefox, Safari, some drivers).
 - **Persisted** in `localStorage` (guarded with try/catch): preset, pixel-ratio cap override, fps cap
-  (60 or uncapped), dynamic resolution, the debug overlay and (M2) master/music/effects volumes (menu
-  rows stepping 0.1).
+  (60 or uncapped), dynamic resolution, the debug overlay and (M2) master/music/effects volumes.
+  - The volume rows step by 0.1, clamp at 0 and 1 (no wrap), ignore confirm and show percentages.
+  - The engine maps a slider value v to gain v², so each step sounds even.
+  - `?mute` or `#mute` sets master to 0 for the session without persisting it.
 - **Keys:** `Esc` or Start = menu, `F3` = debug overlay, `F4` = collision/hitbox debug draw,
   `R` = respawn at the checkpoint. **Spirit Launch** (M2): `C`, `J` or `E`; gamepad B, LB or LT. The
   controls hint gains it once unlocked.
@@ -800,99 +983,296 @@ gameplay read comes first.
 
 - **Painted layers (M2, ART-TOOLS):** artists paint plate layers and drop them in; the pipeline does the
   rest.
-  - **Source:** `art/plates/<id>.png` (sRGB, 8-bit RGBA, straight alpha, ≤ 16384 px a side) plus
-    `art/plates/<id>.json`: `parallax [fx, fy]`, exactly one of `insertAfter` / `replaces` (a layer id in
-    the base manifest), `origin [x, y]` (layer-space top-left, u), `texelScale`, `minQuality`, `fog`,
-    `fogColor`, `desaturate`, `tint`, and an optional `area` (an AreaGradeId, for docs and budget reports).
-  - **Bake:** `npm run art` (`tools/art/bake-art.ts`) validates every source, chunks it into 1024² tiles,
-    writes WebP + PNG + KTX2 with hull / opaque-hull polygons (reusing `tools/plates`), and splices the
-    plate layers into `public/layers/forest.manifest.json` deterministically. `--check` fails when
-    anything is stale. The bake also fails if the worst-case resident plate memory over any camera
-    position, plus the atlases, exceeds `textureBudgetMB[level]` for a quality level that draws the
-    layer.
+  - **Source:** `art/plates/<id>.png` (sRGB, 8-bit RGBA, straight alpha, ≤ 16384 px a side, read with
+    sharp `limitInputPixels: false` and chunk `extract()` so nothing decodes the whole image at once)
+    plus `art/plates/<id>.json`:
+    - `parallax [fx, fy]`, which sets the draw position among the base layers (ties are rejected);
+      `replaces` (an optional base layer id) swaps that layer out;
+    - `origin [x, y]` (layer-space top-left, u) and `texelScale` (≥ 1.5, because WebP/PNG chunks have
+      no mipmaps);
+    - `minQuality`, `fog`, `fogColor`, `desaturate`, `tint`, and an optional `area` (an AreaGradeId,
+      for docs and budget reports).
+  - **Manifests:** `public/layers/forest.base.manifest.json` is hand-edited and never generated.
+    `npm run art` (`tools/art/bake-art.ts`) combines the base with the sidecars into the generated
+    `public/layers/forest.manifest.json`. `npm run plates` (the demo plate) also derives from the base.
+  - **Bake:**
+    - Validates every source and cuts it into 1024² chunks with a 1-texel duplicated border, so
+      bilinear filtering has no seams.
+    - Writes WebP + PNG + KTX2 plus split-hull rects: `PlateChunkDef.core` / `soft` from
+      `computeSplitHullHalf`, so set pieces with holes or content only at the edges still get tight
+      meshes and an opaque core.
+    - Records a pixel hash per chunk (`hash`) and a source hash (PNG + sidecar + tool version) per
+      layer.
+    - `--check` recomputes hashes and the splice and never re-encodes (KTX2 takes about 4 s per chunk).
+  - **Budgets** (the bake fails on these):
+    - Sweep the camera over the clamped range at the widest aspect (`MAX_ASPECT`), `MIN_CAMERA_ZOOM`
+      and maximum shake, at every chunk-edge breakpoint of every layer, for each quality level that
+      draws the layer.
+    - Visible plate chunks × 4·w·h bytes (RGBA8 fallback, no mipmaps), plus every registered atlas,
+      must stay ≤ `textureBudgetMB[level]`; the same including the 480 u prefetch margin is a warning.
+    - A layer may never show more than 4 chunks at once (2 draws per chunk: core + soft).
+  - **Runtime:**
+    - One shared streamer and LRU serves all plate layers. Its budget is `textureBudgetMB` minus every
+      registered atlas (kit, particles, entity, hero), read when streaming rather than at init.
+    - `layerBudget` limits procedural kit layers only; plates are gated by `minQuality`.
+    - Every image load has a deadline, and a plate layer that fails re-enables the base layer it
+      replaced.
   - **Paint-over templates:** `npm run art:export -- <area | x0,x1>` (`tools/art/export-templates.ts`)
     renders an area's procedural layers to layer-space PNGs in `art/templates/<area>/`, with guide
     overlays (the gameplay terrain silhouette, camera frames at 16:9, 4:3 and 21:9, the parallax factor).
-  - **Hot reload (dev only):** a Vite plugin (`tools/art/vite-plugin.ts`, wired in `vite.config.ts` by
-    main) watches `art/plates/**`. It re-bakes the changed plate (WebP + PNG; KTX2 waits for
-    `npm run art`), rewrites the manifest, and sends `spiritwood:plate-updated` { id }. Then
-    `src/assets/hotReload.ts` (behind `import.meta.hot`) has the parallax stack reload that layer:
-    evict its chunks, rebuild its hull meshes and re-stream, without a page reload.
+  - **Hot reload (dev only):**
+    - A Vite plugin (`tools/art/vite-plugin.ts`, `apply: 'serve'`, inert under `process.env.VITEST`,
+      wired in `vite.config.ts` by main) watches `art/plates/**` through `configureServer` +
+      `server.watcher`.
+    - Writes are debounced until the file size is stable for 200 ms. Only chunks whose pixels changed
+      are re-encoded, WebP only and off the dev-server thread.
+    - The dev manifest rewrite drops `ktx2` from re-baked chunks, so a stale KTX2 can't win.
+    - Plate files are served from the plugin's own middleware; Vite's public-file set lags new files.
+    - Texture URLs carry `?v=<hash8>` (the validator checks the pathname). Budget keys carry a
+      generation, and a layer unloads a URL only while it still owns it.
+    - A pixel-only change sends `spiritwood:plate-updated` { id }. `src/assets/hotReload.ts` (behind
+      `import.meta.hot`) re-fetches the manifest, and the parallax stack reloads that layer: it evicts
+      the chunks, rebuilds the meshes and re-streams, updating its own copy of the manifest.
+    - Any structural change (parallax, `replaces`, `minQuality`, a plate added or deleted) sends a
+      full page reload.
   - **Example:** the Hollow Glade gets two painted set pieces through this pipeline: a distant moonlit
     landmark (f ≈ 0.2) and a midground frame (f ≈ 0.6). They are generated stand-ins
     (`tools/art/paint-example.ts`) that real paintings replace file for file. They stay in the default
     manifest only if they pass the art review on the GPU.
-  - **Single-file artifact:** `tools/artifact` embeds the default manifest's plate WebPs as `data:`
-    URIs, and `textures.ts` loads `data:` URLs through the image-element path (no worker fetch, which
-    the artifact CSP blocks).
+  - **Single-file artifact:** plate layers are omitted (a replaced base layer is restored), as with
+    `#plates`. Base64 plates would grow the page past the size the public review is known to handle,
+    and Pixi's image path uses blob workers that the artifact CSP blocks.
 
 ### 5.9 Audio (M2, `src/audio/**`) — synthesized
 
-No audio files: every sound is synthesized with the Web Audio API.
+No audio files: every sound is synthesized with the Web Audio API. The spec below is shaped by browser
+facts the review measured: autoplay policies, missing Firefox APIs, the compressor's makeup gain, and
+ramp edge cases.
 
-- **Engine** (`AudioSystem implements AudioEngine`, `src/contracts/audio.ts`):
-  - One `AudioContext` is created by the first `unlock()` (a user gesture) with
-    `latencyHint: 'interactive'`.
-  - `stats.state` tracks `unavailable → locked → running`. The context is suspended while the tab is
-    hidden and resumed on return.
-  - Nothing throws; without Web Audio every call is a no-op.
-- **Graph:** voices → `sfx` / `music` / `ambience` buses → `master` gain → compressor-limiter
-  (threshold ≈ −12 dB, ratio 4, knee 6) → destination.
-  - Volumes come from UserSettings and move with `setTargetAtTime` (τ 0.05 s).
-  - While `AudioFrame.paused`, music ducks 12 dB, ambience holds low and no new SFX start.
-- **Launch aim filter:** while `sim.frozen`, a low-pass on the music and ambience buses sweeps to
-  ≈ 900 Hz. A soft heartbeat pulses, and the aim sustain rings until the release.
-- **SFX patches** (oscillators, prebuilt noise buffers, filters, envelopes), one or more per event:
-  - Movement: Jump, AirJump, WallJump, Dash, DashEnd (b = 2 wall thud), Land (loudness ∝ impact
-    speed), a wall-slide scrape loop kept alive while the player's mode is `wallSlide`.
-  - Pickups and progress: OrbCollected (bell notes rising within a 1.5 s combo), CheckpointActivated
-    (warm swell), GoalReached (melodic cadence), AbilityUnlocked (grand bloom).
-  - Life and death: Died (reverse swell plus low thud), Respawned (shimmer).
-  - Enemies: EnemyStomped, EnemyReformed, SpitterWindup (a creaking rattle rising over the windup),
-    SeedFired (wet pop), SeedBurst (crackle; a chime for reflected seeds), EnemyHit.
-  - Spirit Launch: LaunchAim (time-freeze whoosh down), Launch (whoosh plus a bright ping), LaunchFizzle
-    (soft tick).
-- **Space:**
-  - Stereo pan = clamp((x − camX)/(viewW/2), −1, 1) · 0.8.
-  - Gain fades out over half a view width beyond the screen edge.
-  - Events more than 1.5 view widths away are culled.
-  - At most 24 voices sound at once; each patch has its own polyphony cap, and the oldest voice is
-    stolen.
-- **Music:** generative, cross-faded per area by `areaWeights(level.gradeZones, camX, camY)`
-  (`src/core/zones.ts`); the uncovered remainder goes to the glade mood. Each area defines a mode, a
-  chord cycle, a density and timbres:
+#### Engine and lifecycle
 
-  | Area | Mood |
+- **Class:** `AudioSystem implements AudioEngine` (`src/contracts/audio.ts`). Options:
+  `{ createContext?, gestureTarget?, enabled?, seed? }`. Tests inject a fake context factory and
+  gesture target. `?bench` constructs it with `enabled: false`.
+- **Fails closed:**
+  - Every public method catches. On the first unexpected error it logs once, closes the context and sets
+    `stats.state = 'unavailable'`.
+  - `game.ts` also wraps the audio calls, so `events.clear()` and the HUD always run.
+- **Ports:** Web Audio is reached only through the narrow structural ports in `src/audio/ports.ts`,
+  which the real context satisfies. The ports leave out:
+  - `cancelAndHoldAtTime` and `automationRate`: Firefox lacks them;
+  - AudioWorklet: its modules load under script-src, which the artifact CSP restricts;
+  - ScriptProcessor.
+
+  Every value written to an AudioParam is clamped to a finite number, since NaN or Infinity throws.
+- **Context:** `new AudioContext({ latencyHint: 'interactive', sampleRate: 48000 })` inside try/catch.
+  - It is never created before a user activation.
+  - No `webkitAudioContext`: WebGL2 already implies Safari 15.
+  - `outputLatency` may be undefined; `stats.latency` is then −1.
+  - On iOS, Web Audio obeys the silent switch.
+- **Unlock:**
+  - **Listeners:** the engine listens in the capture phase on `window` for `pointerdown`, `pointerup`,
+    `mousedown`, `touchend`, `keydown`, `click` and `gamepadconnected`.
+  - **On each trusted event,** synchronously:
+    - create the context if needed;
+    - call `resume()`, never awaited and never gated on an earlier call;
+    - start a one-sample silent buffer (WebKit).
+  - **Retry:** the listeners stay armed while `ctx.state !== 'running'`.
+  - **`unlock()`:** does the same and is idempotent. `game.ts` calls it after polling the pad, because
+    Chromium grants activation from gamepad presses.
+  - **Until running,** `update()` schedules nothing and SFX events are dropped. That avoids a burst of
+    queued notes and Chromium's console spam.
+  - **HUD:** while `stats.state === 'locked'` after play starts, it shows "Press a key or click to
+    enable sound".
+- **States:**
+
+  | `stats.state` | When |
   |---|---|
-  | glade | warm pentatonic pads, a sparse bell melody |
-  | gully | minor, a low pulse, sparser |
-  | rootwell | dark drone, resonant drips |
-  | canopy | airy high pads, more melody |
-  | veil | whole-tone shimmer, tense harmonics |
-  | shrine | warm major-7 swells toward the goal |
+  | `unavailable` | no AudioContext, the factory threw, `enabled: false`, or a fail-closed error (final) |
+  | `locked` | no context yet, or it has never reached `running` |
+  | `running` | `ctx.state === 'running'` |
+  | `suspended` | it ran before and is now `suspended` or `interrupted` |
+  | `closed` | after `destroy()` (final) |
 
-  A lookahead scheduler inside `update()` books notes up to 0.25 s ahead on `ctx.currentTime` (no
-  timers). The choices come from a seeded `Rng`.
-- **Ambience:**
-  - A wind bed (filtered noise with a slow LFO).
-  - Crickets (short FM chirps, density per area).
-  - A rare owl or wood creak.
-  - Water drips in the Rootwell.
-- **Performance:**
-  - `update()` averages ≤ 0.3 ms per frame and allocates nothing when nothing starts.
-  - Nodes are created only when a sound starts.
-  - Noise and impulse buffers are built once (≤ 2 MB).
-- **Tests:** a fake `BaseAudioContext` records the node graph and parameter automation:
-  - event → patch mapping, envelopes and the absence of clicks (every gain ramps from and to 0);
-  - voice limits and stealing;
-  - volume and pause behaviour;
-  - area cross-fades;
-  - that nothing throws before unlock or without Web Audio.
+  `setActive(false)` (tab hidden) suspends the context and `setActive(true)` resumes it. Each
+  `statechange` reconciles the wanted state with the actual one, and every promise is caught.
 
-  `tools/audio/render-patches.ts` optionally renders every patch offline to WAV (with
-  `node-web-audio-api` when installed) for listening and to check peak and RMS levels.
+#### Graph and levels
 
----
+- **Chain per bus** (`sfx`, `music`, `ambience`):
+  1. volume Gain;
+  2. duck Gain, plus the freeze low-pass on music and ambience;
+  3. master Gain;
+  4. compressor (threshold −12 dB, ratio 4, knee 6);
+  5. trim Gain −4 dB, which cancels the compressor's automatic makeup gain;
+  6. WaveShaper soft clip (linear to ±0.8, tanh knee up to ±1);
+  7. destination.
+- **Ownership:** one owner per AudioParam, since each `setTargetAtTime` overrides the last.
+  - volume Gain: the volume setting, τ 0.05 s; slider v → gain v², and ambience follows `sfx`;
+  - duck Gain: pause;
+  - freeze filter: the aim.
+- **Pause** (`AudioFrame.paused`):
+  - music ducks 12 dB and ambience holds low;
+  - every sustained SFX releases within 50 ms and comes back on resume if its condition still holds;
+  - no new SFX start.
+- **Freeze** (`sim.frozen`):
+  - the music and ambience low-pass keeps `frequency` at 20 kHz and sweeps `detune` toward −5370 cents
+    (≈ 900 Hz) with `setTargetAtTime`, τ = `TIME_SCALE_EASE`, in step with the visual freeze;
+  - a soft heartbeat speeds up with aimTicks / aimMaxTicks;
+  - the aim sustain rings.
+- **Headroom:** each patch alone peaks ≤ −12 dBFS on its bus, and the worst-case stress mix peaks
+  ≤ −1 dBFS after the chain. `render-patches` checks both.
+
+#### Voices
+
+- **Chain:** sources → envelope Gain → kill Gain → panner → bus. Non-spatial voices replace the panner
+  with a fixed 0.7071 gain, so their level matches the panned voices.
+- **Envelopes** (these rules make clicks impossible):
+  - Attack: `setValueAtTime(0, t0)`, then a linear ramp.
+  - Decay: exponential ramps down to no less than 1e-4 (a ramp to 0 throws), or `setTargetAtTime`.
+  - Release: always ends with `linearRampToValueAtTime(0, tEnd)`, and sources stop at tEnd + 5 ms.
+  - Steal: on the kill Gain, `setValueAtTime(1, now)`, then a linear ramp to 0 by now + 10 ms, and a
+    stop at now + 15 ms.
+- **Budgets:** a voice is one patch instance.
+  - Budgets per category: SFX 16, music 12, ambience 6. Stealing happens within a category: lowest
+    priority first, then oldest.
+  - The wind and cricket beds are long-lived nodes outside the budgets. Crickets are gain-gated FM on
+    persistent oscillators, not new nodes per chirp.
+  - Music uses bus-level pan and filter and one shared reverb send.
+  - `stats.voices` is the sum of the three categories.
+- **Leases:** sustained sounds (the wall scrape, aim sustain, heartbeat, windup rattle and ambience beds)
+  are leases.
+  - Each `update()` re-issues `stop(now + 0.35)` (the last `stop()` wins) and moves the kill fade to
+    start at now + 0.2. So a sound whose `update()` stops (hidden tab, throttled iframe) fades out on its
+    own.
+  - Each follows state read in `update()`, never events:
+    - scrape ⇔ `player.mode === 'wallSlide'`;
+    - aim sounds ⇔ `sim.frozen`;
+    - rattle pitch and gain ⇔ `modeTicks / modeDuration` while a spitter is in `windup`.
+  - Reset, Teleported and Respawned release every SFX voice and clear the orb combo.
+- **Retire and write:** voices retire by their scheduled end time in `update()` (no `onended`
+  closures) and are then disconnected. Continuous parameters are written only when their target changes.
+
+#### SFX
+
+`EVENT_PATCH satisfies Record<SimEventType, PatchId | null>`, so every event type is mapped:
+
+- **Movement:**
+  - Jump, AirJump, WallJump and Dash each have a patch.
+  - DashEnd b = 2: a wall thud. Other DashEnd reasons are silent.
+  - WallSlideStart: a grip tick. WallSlideEnd: silent.
+  - DropThrough: a soft rustle.
+  - Land: loudness ∝ impact speed; silent below 150 u/s; at least 80 ms apart.
+- **Pickups and progress:**
+  - OrbCollected: bell notes climbing at most 7 scale steps within a 1.5 s combo. Same-frame pickups are
+    staggered 50 ms apart.
+  - CheckpointActivated: a warm swell.
+  - GoalReached: a melodic cadence.
+  - AbilityUnlocked: a grand bloom.
+- **Life and death:**
+  - Died: a reverse swell plus a low thud.
+  - Respawned: a shimmer.
+  - Reset and Teleported: control only (release voices).
+- **Enemies:**
+  - EnemyStomped and EnemyReformed each have a patch.
+  - SpitterWindup: starts the rattle lease; the 2 nearest play.
+  - SeedFired: a wet pop, cap 3.
+  - SeedBurst: a crackle, cap 4. With a = Enemy it is a chime only; with a = Player it is silent (Died
+    covers it).
+  - EnemyHit: cause Seed plays a hit; cause Launch is silent (Launch covers it).
+- **Spirit Launch:**
+  - LaunchAim: a time-freeze whoosh down.
+  - Launch: a whoosh plus a bright ping.
+  - LaunchFizzle: a soft tick.
+- **Pitch:** melodic SFX (orb combo, checkpoint, goal, ability) take their pitches from the current
+  music harmony.
+
+#### Space
+
+`onSimEvent(e, frame)` receives the frame already filled for this render, so snaps (Respawned, Reset,
+Teleported) use the new camera. With zoom = `sim.camera.zoom`:
+
+- **Distance:**
+  - hx = viewW / (2·zoom), hy = viewH / (2·zoom);
+  - ex = max(0, |x − camX| − hx) / hx, and ey likewise for y;
+  - d = √(ex² + ey²).
+- **Gain:** × (1 − smoothstep(0, 1, d)).
+- **Cull:** when d ≥ 1, before a voice is allocated.
+- **Pan:** clamp((x − camX) / hx, −1, 1) · 0.6.
+- **Non-spatial events** (pan 0, never culled): player-origin events, i.e. movement, launch, orbs,
+  checkpoint, death and respawn, goal, ability, reset and teleport.
+
+#### Music
+
+Generative, following `areaWeights(level.gradeZones, camX, camY)` (`src/core/zones.ts`). The uncovered
+remainder goes to glade. Each area has a mode, a chord cycle, a density and timbres:
+
+| Area | Mood |
+|---|---|
+| glade | warm pentatonic pads, a sparse bell melody |
+| gully | minor, a low pulse, sparser |
+| rootwell | dark drone, resonant drips |
+| canopy | airy high pads, more melody |
+| veil | whole-tone shimmer, tense harmonics |
+| shrine | warm major-7 swells toward the goal |
+
+- **Harmony:**
+  - All moods share one transport: tempo, bar grid and tonic.
+  - Layer gains follow the area weights, smoothed with τ = 1.5 s.
+  - Mode and chord follow the dominant area. They change only on a bar line, and only when the new
+    area's weight beats the current one by 0.2.
+  - Every sounding layer takes its notes from the current harmony, so two harmonic engines never clash
+    at a boundary.
+- **Scheduler:** a lookahead scheduler inside `update()` (no timers).
+  - It books notes in (currentTime + lead, currentTime + 0.25], with lead = max(0.03, 2·baseLatency).
+  - A lane that has fallen behind skips to its next step boundary: missed notes are dropped, never
+    played late or in a burst.
+  - Nothing is booked unless the context is running.
+  - Timing uses only `ctx.currentTime`; `frame.dt` only smooths.
+  - The engine owns an `Rng` seeded from `level.seed` and draws once per musical step, so the note
+    sequence doesn't depend on frame rate.
+
+#### Ambience
+
+- A wind bed: filtered noise with a slow LFO.
+- Crickets, with a density per area.
+- A rare owl or wood creak.
+- Water drips in the Rootwell.
+
+#### Performance
+
+- **Main thread:** `update()` averages ≤ 0.3 ms per frame, measured in `stats.updateMs`. It allocates
+  nothing when nothing starts; an idle `update()` creates zero nodes.
+- **Buffers:** noise and impulse buffers total ≤ 1 MB at a fixed 48 kHz, with the reverb impulse ≤ 1.5
+  s.
+  - They are built in slices of ≤ 2 ms per `update()`.
+  - Patches whose buffer isn't ready yet are skipped.
+  - The convolver's internal copies count toward the budget.
+
+#### Tests
+
+- **Fake context:** a fake context behind the ports records the node graph and parameter automation.
+  Tests assert:
+  - the event map covers every type;
+  - the envelope rules;
+  - budgets, caps and steal fades;
+  - one owner per param;
+  - leases release on pause and when `update()` stops;
+  - area gains follow `areaWeights`;
+  - harmony changes only on bar lines, with hysteresis;
+  - no burst after a fake 2 s stall;
+  - the lifecycle table (the factory returning null or throwing, `unlock()` twice, `setActive`,
+    `destroy`);
+  - fail-closed behaviour;
+  - an idle `update()` creating zero nodes.
+- **Offline render:** `tests/audio/render.test.ts` renders patches with `node-web-audio-api`'s
+  `OfflineAudioContext` and checks peak, RMS, clicks and silence at the end (tolerances, not hashes).
+  - The module is loaded with a dynamic import, and the test uses `describe.skipIf` when it is
+    unavailable: there are no musl binaries.
+  - The realtime `AudioContext` is never constructed in tests or tools.
+  - Patches are pure functions of `(ctx, out, t, params)` with no DOM access.
+- **WAV export:** `tools/audio/render-patches.ts` writes every patch and a stress mix to WAV for
+  listening, and checks the headroom rules.
 
 ## 6. Performance budget (hard requirement)
 
@@ -913,10 +1293,11 @@ High features with pixel-ratio cap 1 and dynamic resolution.
 | Draw calls (estimate at High) | kit ≈ 10 layers × ≤ 2 chunks × 2 = ≤ 40 (typically ≈ 28); sky 1; fog 2; foreground ≈ 4; terrain ≈ 3 per visible chunk ≈ 12; decor ≈ 6; shafts ≤ 3; entities ≈ 5; hero 3; particles ≈ 6; glow twins ≈ 10; bloom 2·passes; composite 1. Total ≈ 90–110 (measured: 74–87 across eight gameplay views) |
 | Transparent full-screen layers | Must be cheap shaders: at most one texture fetch or a small analytic noise, and no dependent loops. |
 | Frame pacing (acceptance) | `lateFramePct` < 1% over the bench. Frame-time percentiles are reported, but they include fps-cap cadence jitter. |
-| M2 draw calls | Spitters 1 + glow 1; seeds with trails 1 + glow 1; launch ring and aim arrow ≤ 2; the shrine joins the entity batch. About +4–6 at High. |
+| M2 draw calls | Spitters 1 + glow 1; seeds with trails 1 + glow 1; launch ring and aim arrow ≤ 2; the shrine joins the entity batch: about +4–6 at High. Painted plates: 2 per visible chunk, ≤ 4 chunks per layer (bake-enforced); the two Glade set pieces add ≈ 8–16 where they are visible. |
 | M2 fill | Seeds, trails, rings and the arrow ≤ 0.05 screens; the freeze grade adds ALU only in the composite. Terrain core ≤ 10 value-noise lookups per fragment. |
-| M2 CPU | Launch candidate search + seeds ≤ 0.1 ms per step (≤ 24 seeds, LOS DDA only for in-range targets). Audio `update()` ≤ 0.3 ms per frame average, ≤ 24 voices. |
-| M2 memory | Painted plates count toward `textureBudgetMB` (the bake enforces it); audio buffers ≤ 2 MB; no new atlases. |
+| M2 CPU | Launch candidate search + seeds ≤ 0.1 ms per step (≤ `MAX_PROJECTILES` seeds, LOS walk only for in-range targets). Audio `update()` ≤ 0.3 ms per frame average (`stats.updateMs`). |
+| M2 audio thread | ≤ 34 budgeted voices (SFX 16, music 12, ambience 6) plus the beds, one compressor and one ≤ 1.5 s convolver: ≈ 20–30 % of one core by the offline measurement, which is indicative only. Music pans and filters per bus, not per voice. |
+| M2 memory | Painted plates count toward `textureBudgetMB` through one shared streamer (the bake enforces the worst case, RGBA8 4·w·h per chunk); audio buffers ≤ 1 MB at 48 kHz, including the convolver's copies; no new atlases. |
 
 **Verification.** The debug overlay (F3) shows fps (average and 1% low), late-frame %, frame, sim and render CPU ms,
 GPU ms (timer query), draw calls, estimated fill (sum of on-screen mesh bounds ÷ screen area), render
@@ -945,7 +1326,8 @@ acceptance test to run on the Iris Xe laptop.
   - the loader and validator for the new entities;
   - painterly bake determinism and budgets;
   - painted-layer bake and staleness, budget reports, hot-reload message handling;
-  - audio graph and scheduling on a fake context.
+  - audio on a fake context (graph, envelopes, budgets, leases, scheduling, lifecycle), plus guarded
+    offline renders with `node-web-audio-api`.
 - Visual checks (main session only): screenshots of each area, reviewed and iterated.
 - Machine safety: at most 3 concurrent agents. Agents never launch browsers or dev servers.
 - Browser-free visual checks: CPU-generated textures and compositions are written to PNG with
