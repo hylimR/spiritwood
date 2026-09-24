@@ -78,7 +78,7 @@ describe('entity atlas', () => {
       'lumenStone', 'rune', 'crawlerBody', 'crawlerEye', 'leg', 'orbCore', 'sparkle', 'beam', 'moonArch', 'lantern', 'pool', 'glow',
       'wisp', 'ring', 'spitterRoots', 'spitterStem', 'spitterBulb', 'spitterBulbGlow', 'spitterLeaf', 'seedHostile', 'seedWisp',
       'seedTrail', 'seedEmber', 'glowLight', 'launchRing', 'aimArrow', 'shrinePedestal', 'shrineGlyph', 'lanternSeed',
-      'lanternSeedLight',
+      'lanternSeedLight', 'anchorStalk', 'anchorPod', 'anchorRing',
     ];
     for (const name of names) {
       const f = atlas.frames[name];
@@ -126,7 +126,7 @@ describe('entity atlas', () => {
     // hides the beam's foot; opaque parts butt into the part drawn over them).
     const joined: Record<string, readonly ('left' | 'right' | 'top' | 'bottom')[]> = {
       seedTrail: ['left'], seedEmber: ['left'], beam: ['bottom'], spitterStem: ['top', 'bottom'], spitterBulb: ['bottom'],
-      lantern: ['top'],
+      anchorStalk: ['bottom'], anchorPod: ['bottom'], lantern: ['top'],
     };
     const worst: string[] = [];
     for (const [name, f] of Object.entries(atlas.frames)) {

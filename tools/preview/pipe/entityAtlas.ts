@@ -20,7 +20,7 @@ savePng(bg, join(dir, 'entity-atlas.png'));
 
 const parts = [
   'spitterRoots', 'spitterStem', 'spitterBulb', 'spitterBulbGlow', 'spitterLeaf', 'seedHostile', 'seedWisp', 'seedTrail',
-  'seedEmber', 'glowLight', 'launchRing', 'aimArrow', 'shrinePedestal', 'shrineGlyph', 'lanternSeed', 'lanternSeedLight',
+  'seedEmber', 'anchorStalk', 'anchorPod', 'anchorRing', 'glowLight', 'launchRing', 'aimArrow', 'shrinePedestal', 'shrineGlyph', 'lanternSeed', 'lanternSeedLight',
 ];
 const pad = 12;
 let w = pad;

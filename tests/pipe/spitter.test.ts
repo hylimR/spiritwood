@@ -1,9 +1,12 @@
 import { describe, expect, test } from 'vitest';
 import type { Container, Sprite } from 'pixi.js';
+import type { LevelData, SpitterDef } from '../../src/contracts/level.ts';
 import { SimEventType, type EnemyMode, type SimEvent } from '../../src/contracts/sim.ts';
 import { EntitiesView } from '../../src/render/entities/entitiesView.ts';
-import { SPITTER_ART } from '../../src/render/entities/spitterArt.ts';
-import { createSpitterPose, SPITTER, SPITTER_MUZZLE_HEIGHT, spitterPose } from '../../src/render/entities/spitters.ts';
+import { ANCHOR_ART, ANCHOR_STALK_LENGTH, SPITTER_ART } from '../../src/render/entities/spitterArt.ts';
+import {
+  ANCHOR, anchorCharge, anchorRingLevel, createSpitterPose, SPITTER, SPITTER_MUZZLE_HEIGHT, spitterPose,
+} from '../../src/render/entities/spitters.ts';
 import { createFakeSimView, levelFromAscii, SIM_SPITTER_MUZZLE_HEIGHT, type FakeSim } from '../shared/fixtures.ts';
 import { createFrame, createTestContext, stepFrame, walk } from './helpers.ts';
 
@@ -70,6 +73,46 @@ describe('spitterPose (pure)', () => {
   });
 });
 
+describe('anchor (fixed-aim) spitters (pure)', () => {
+  test('the pod\'s tip is the sim muzzle, on a stalk taller than the bulb\'s stem', () => {
+    expect(-ANCHOR_ART.podTipY).toBe(SIM_SPITTER_MUZZLE_HEIGHT);
+    expect(ANCHOR_ART.stalkBaseY - ANCHOR_STALK_LENGTH - ANCHOR_ART.podLength).toBe(ANCHOR_ART.podTipY);
+    expect(ANCHOR_STALK_LENGTH).toBeGreaterThan(SPITTER_ART.stemLength);
+  });
+
+  test('the charge climbs through the cooldown, then faster through the windup, to 1 at the shot', () => {
+    let last = -1;
+    const steps = 40;
+    for (const mode of ['cooldown', 'windup'] as const) {
+      for (let i = 0; i <= steps; i++) {
+        const c = anchorCharge(mode, i / steps);
+        expect(c).toBeGreaterThanOrEqual(last - 1e-12);
+        last = c;
+      }
+    }
+    expect(anchorCharge('cooldown', 0)).toBe(0);
+    expect(anchorCharge('windup', 0)).toBeCloseTo(ANCHOR.windupFrom, 12);
+    expect(anchorCharge('windup', 1)).toBeCloseTo(1, 12);
+    expect(anchorCharge('idle', 0.5)).toBe(ANCHOR.idleCharge);
+  });
+
+  test('the rings light in turn, base to tip; the tip ring only in the windup; embers at rest', () => {
+    const rings = ANCHOR_ART.rings.length;
+    const lightsAt = (k: number): number => {
+      for (let c = 0; c <= 1; c += 0.001) if (anchorRingLevel(k, c) > 0.5) return c;
+      return Infinity;
+    };
+    for (let k = 1; k < rings; k++) expect(lightsAt(k)).toBeGreaterThan(lightsAt(k - 1) + 0.1);
+    for (const c of [0.2, 0.45, 0.7, 0.9]) {
+      for (let k = 1; k < rings; k++) expect(anchorRingLevel(k, c)).toBeLessThanOrEqual(anchorRingLevel(k - 1, c) + 1e-12);
+    }
+    const tip = rings - 1;
+    expect(anchorRingLevel(tip, anchorCharge('cooldown', 1))).toBeLessThan(0.3);
+    expect(anchorRingLevel(tip, anchorCharge('windup', 0.95))).toBeGreaterThan(0.8);
+    for (let k = 0; k < rings; k++) expect(anchorRingLevel(k, 0)).toBeCloseTo(ANCHOR.ringEmber, 12);
+  });
+});
+
 describe('SpitterRenderer in the EntitiesView', () => {
   const MAP = [
     '..........................',
@@ -78,8 +121,9 @@ describe('SpitterRenderer in the EntitiesView', () => {
     '##########################',
   ];
 
-  function rig() {
+  function rig(edit?: (level: LevelData) => void) {
     const level = levelFromAscii(MAP);
+    edit?.(level);
     const ctx = createTestContext(level);
     const sim = createFakeSimView(level);
     for (const e of sim.enemies) if (e.kind === 'thornSpitter') Object.assign(e, { width: 44, height: 60 });
@@ -187,5 +231,97 @@ describe('SpitterRenderer in the EntitiesView', () => {
     frame.timeScale = 1;
     run(20);
     expect(leaf.rotation).not.toBeCloseTo(r0, 4);
+  });
+
+  test('the level\'s aim picks the species: the hunter keeps its bulb, the anchor grows a pod on a stalk', () => {
+    const { ctx, sim, view, spitterIds } = rig();
+    const [hunter, anchor] = spitterIds as [number, number];
+    expect(sim.level.enemies[hunter]).toMatchObject({ kind: 'thornSpitter', aim: 'player' });
+    expect(sim.level.enemies[anchor]).toMatchObject({ kind: 'thornSpitter', aim: 'fixed' });
+    expect(view.spitters?.isAnchor(hunter)).toBe(false);
+    expect(view.spitters?.isAnchor(anchor)).toBe(true);
+    const labels = (k: number): string[] => bodyOf(ctx, sim, k).map((s) => s.texture.label ?? '');
+    expect(labels(0)).toContain('entity:spitterBulb');
+    expect(labels(0)).not.toContain('entity:anchorPod');
+    expect(labels(1)).toEqual(expect.arrayContaining(['entity:anchorStalk', 'entity:anchorPod', 'entity:spitterRoots', 'entity:spitterLeaf']));
+    expect(labels(1)).not.toContain('entity:spitterBulb');
+    // The same seven body parts from the same atlas: the same batches.
+    expect(bodyOf(ctx, sim, 1)).toHaveLength(7);
+    const source = bodyOf(ctx, sim, 0)[0]?.texture.source;
+    for (const s of bodyOf(ctx, sim, 1)) expect(s.texture.source).toBe(source);
+  });
+
+  test('an anchor\'s mouth sits on the muzzle and its pod points along the fixed aim, for any aim', () => {
+    const density = 3;
+    for (const [ax, ay] of [[0, -1], [0.5, -Math.sqrt(0.75)], [-0.6, -0.8], [1, 0]] as const) {
+      const { ctx, sim, run, spitterIds } = rig((level) => {
+        const def = level.enemies.find((e) => e.kind === 'thornSpitter' && e.aim === 'fixed') as SpitterDef;
+        def.fixedVx = ax * 900;
+        def.fixedVy = ay * 900;
+      });
+      const en = sim.enemies[spitterIds[1] as number] as FakeSim['enemies'][number];
+      en.facing = ax < 0 ? -1 : 1;
+      run(3);
+      const parts = bodyOf(ctx, sim, 1);
+      const stalk = parts[2] as Sprite;
+      const pod = parts[3] as Sprite;
+      const tip = pod.toGlobal({ x: 0, y: 0 });
+      expect(tip.x).toBeCloseTo(en.x, 6);
+      expect(tip.y).toBeCloseTo(en.y - SIM_SPITTER_MUZZLE_HEIGHT, 6);
+      expect((pod.parent as Container).scale.x).toBe(1);
+      expect(pod.rotation).toBeCloseTo(Math.atan2(ax, -ay), 6);
+      // The pod's neck lies behind the tip, against the aim, and the stalk reaches it from the mound.
+      const neck = pod.toGlobal({ x: 0, y: ANCHOR_ART.podLength * density });
+      expect(neck.x).toBeCloseTo(en.x - ax * ANCHOR_ART.podLength, 4);
+      expect(neck.y).toBeCloseTo(en.y - SIM_SPITTER_MUZZLE_HEIGHT - ay * ANCHOR_ART.podLength, 4);
+      const top = stalk.toGlobal({ x: 0, y: -ANCHOR_STALK_LENGTH * density });
+      expect(Math.hypot(top.x - neck.x, top.y - neck.y)).toBeLessThan(0.5);
+      const base = stalk.toGlobal({ x: 0, y: 0 });
+      expect(base.x).toBeCloseTo(en.x, 6);
+      expect(base.y).toBeCloseTo(en.y + ANCHOR_ART.stalkBaseY, 6);
+    }
+  });
+
+  test('an anchor keeps its pose through `facing`; its rings light in turn over the cycle and flash on the shot', () => {
+    const { ctx, sim, run, pending, spitterIds } = rig();
+    const en = sim.enemies[spitterIds[1] as number] as FakeSim['enemies'][number];
+    const parts = bodyOf(ctx, sim, 1);
+    const pod = parts[3] as Sprite;
+    const group = pod.parent as Container;
+    const front = (ctx.scene.entities.children[0]!.children[3] as Container).children[group.parent!.getChildIndex(group)] as Container;
+    const rings = front.children.filter((c) => (c as Sprite).texture?.label === 'entity:anchorRing') as Sprite[];
+    expect(rings).toHaveLength(ANCHOR_ART.rings.length);
+    run(3);
+    en.facing = -1;
+    run(20);
+    expect(group.scale.x).toBe(1);
+    // One cycle: cooldown then windup; note when each ring first shines past half.
+    const W = 36;
+    const C = 54;
+    const litAt = rings.map(() => Infinity);
+    let tick = 0;
+    const watch = (): void => {
+      tick++;
+      rings.forEach((r, k) => {
+        if (r.alpha > 0.5 && litAt[k] === Infinity) litAt[k] = tick;
+      });
+    };
+    Object.assign(en, { mode: 'cooldown', modeTicks: 0, modeDuration: C });
+    run(C, () => { en.modeTicks++; watch(); });
+    Object.assign(en, { mode: 'windup', modeTicks: 0, modeDuration: W });
+    run(W, () => { en.modeTicks = Math.min(W, en.modeTicks + 1); watch(); });
+    for (let k = 1; k < rings.length; k++) expect(litAt[k]).toBeGreaterThan(litAt[k - 1] as number);
+    // The tip ring lights only in the windup: the seed is coming.
+    expect(litAt[rings.length - 1]).toBeGreaterThan(C);
+    // The shot: the pod squashes toward its tip and every ring flashes, then they drain.
+    Object.assign(sim.projectiles[0] as object, { active: true, sourceId: en.id, x: en.x, y: en.y - SIM_SPITTER_MUZZLE_HEIGHT, spawnTick: sim.tick });
+    Object.assign(en, { mode: 'cooldown', modeTicks: 0, modeDuration: C });
+    pending.push({ type: SimEventType.SeedFired, tick: sim.tick, x: en.x, y: en.y - SIM_SPITTER_MUZZLE_HEIGHT, a: 0, b: -900, id: 0 });
+    run(1);
+    expect(pod.scale.y).toBeLessThan(pod.scale.x);
+    for (const r of rings) expect(r.alpha).toBeGreaterThan(0.6);
+    run(30, () => { en.modeTicks++; });
+    for (const r of rings.slice(2)) expect(r.alpha).toBeLessThan(0.35);
+    expect(pod.scale.y).toBeCloseTo(pod.scale.x / (1 + 0.05 * anchorCharge('cooldown', 31 / C)), 2);
   });
 });

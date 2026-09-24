@@ -427,6 +427,192 @@ function leaf(): AtlasImage {
   });
 }
 
+/** Anchor pod profile: ring grooves (s = distance from the tip down the axis), body length and girth. */
+const POD_GROOVES = [22.7, 18.6, 14.2, 9.8, 5.4] as const;
+const POD_BODY = 24;
+const POD_GIRTH = 6.2;
+
+/**
+ * Half-width of the anchor's pod at s: a teardrop whose bulk sits toward the base, drawing out to the
+ * closed point of its tip, telescoped into ring segments (a lip just below each groove, a pinch at it).
+ */
+function podRadius(s: number): number {
+  if (s <= 0 || s >= POD_BODY) return 0;
+  const t = s / POD_BODY;
+  let r = (POD_GIRTH * Math.pow(t, 1.3) * Math.pow(1 - t, 0.4)) / 0.3955;
+  for (let i = 1; i < POD_GROOVES.length; i++) {
+    const g = POD_GROOVES[i] as number;
+    const lip = (s - g - 0.75) / 0.6;
+    const pinch = (s - g) / 0.38;
+    r += 0.5 * Math.exp(-lip * lip) - 0.42 * Math.exp(-pinch * pinch);
+  }
+  return r;
+}
+
+/**
+ * Anchor (fixed-aim) spitter layout (§5.5): a tall slender stalk carrying a closed seed pod of ring
+ * segments that points along the fixed aim. The pod pivots at its tip, the mouth, which sits on the sim
+ * muzzle for any aim; it is drawn pointing up (−y) and turned by the view. s = distance from the tip
+ * down the pod's axis.
+ */
+export const ANCHOR_ART = Object.freeze({
+  stalkBaseY: -6,
+  /** The pod's tip (mouth) above the feet: the sim muzzle (§5.3). */
+  podTipY: -50,
+  /** Tip → the end of the pod's neck, where the stalk joins. */
+  podLength: 26,
+  /** Ring grooves, base → tip: [s, half-width of the pod there] (the lights sit in them). */
+  rings: POD_GROOVES.map((g, i) => [g, i === 0 ? 3 : podRadius(g) + 0.25] as const) as readonly (readonly [number, number])[],
+  /** Leaves: the thorny rosette, more upright than the bulb spitter's (a taller, narrower plant). */
+  leaves: [
+    { x: -2, y: -8, angle: -1.92, scale: 0.7, back: true },
+    { x: 2, y: -8, angle: -1.22, scale: 0.68, back: true },
+    { x: -3, y: -4.5, angle: -2.62, scale: 0.8, back: false },
+    { x: 3.5, y: -4.5, angle: -0.55, scale: 0.82, back: false },
+  ] as readonly { x: number; y: number; angle: number; scale: number; back: boolean }[],
+});
+
+/** Stalk length in the drawing (base → where it enters the pod's neck) for a straight-up aim. */
+export const ANCHOR_STALK_LENGTH = -ANCHOR_ART.podTipY - ANCHOR_ART.podLength + ANCHOR_ART.stalkBaseY;
+
+/** The coronet of thorns round the tip pore: [base x, base s, tip x, tip s] (mirrored). */
+const POD_SPIKES: readonly (readonly [number, number, number, number])[] = [
+  [1, 3.4, 2.3, -11.5],
+  [2.2, 5.8, 6.4, -1.2],
+];
+
+function podBody(x: number, s: number): number {
+  const r = podRadius(Math.min(POD_BODY - 1e-3, Math.max(1e-3, s)));
+  // Distance to the profile (its slope stays small), capped at the tip and the base.
+  const d = Math.max((Math.abs(x) - r) * 0.92, -s, s - POD_BODY);
+  return smin(d, sdTaperedCapsule(x, s, 0, 21.8, 0, 26.3, 3.1, 2.4), 1.3);
+}
+
+function podThorns(x: number, s: number): number {
+  if (Math.abs(x) > 9 || s > 8.5) return Math.max(Math.abs(x) - 8, s - 7.5);
+  const ax = Math.abs(x);
+  let d = Infinity;
+  for (let i = 0; i < POD_SPIKES.length; i++) {
+    const k = POD_SPIKES[i] as readonly [number, number, number, number];
+    const e = sdTaperedCapsule(ax, s, k[0], k[1], k[2], k[3], 0.9, 0.08);
+    if (e < d) d = e;
+  }
+  return d;
+}
+
+/** Distance (u, along the axis) from s to the nearest ring groove. */
+function podGroove(s: number): number {
+  let best = Infinity;
+  for (let i = 0; i < POD_GROOVES.length; i++) best = Math.min(best, Math.abs(s - (POD_GROOVES[i] as number)));
+  return best;
+}
+
+function podSdf(x: number, s: number): number {
+  return smin(podBody(x, s), podThorns(x, s), 0.7) + noise.fbm(x * 0.5, s * 0.5, 2) * 0.2;
+}
+
+function anchorPod(): AtlasImage {
+  return bake({
+    name: 'anchorPod', x0: -9.5, y0: -13.5, x1: 9.5, y1: 27.5, density: DENSITY, sdf: podSdf, normalBand: 5,
+    shade: (x, s, d, nx, ny, out) => {
+      barkColor(x, s, d, nx, ny, 4.5, out);
+      let c = [out[0] as number, out[1] as number, out[2] as number];
+      if (podThorns(x, s) < podBody(x, s)) {
+        // The coronet: dark thorns, rose toward their points.
+        c = mix3(c, [0.44, 0.1, 0.18], Math.max(smoothstep(1, -9, s), smoothstep(0.35, 1, (Math.abs(x) - podRadius(Math.max(0.1, s)) + 0.4) / 3.8)) * 0.9);
+      } else {
+        // Telescoped rings: the lip under each groove catches the moon; the groove itself is a dark seam.
+        let lip = 0;
+        for (let i = 1; i < POD_GROOVES.length; i++) {
+          const u = (s - (POD_GROOVES[i] as number) - 0.9) / 0.8;
+          lip = Math.max(lip, Math.exp(-u * u));
+        }
+        const groove = 1 - smoothstep(0.15, 0.75, podGroove(s));
+        c = mix3(c, [c[0] * 1.9 + 0.035, c[1] * 1.75 + 0.025, c[2] * 1.95 + 0.04], lip * 0.55);
+        c = mix3(c, [0.012, 0.008, 0.016], groove * 0.9);
+        const rib = 0.88 + 0.12 * Math.sin(x * 2.3 + noise.noise2(x * 0.3, s * 0.25) * 2.2);
+        c = [c[0] * rib, c[1] * rib, c[2] * rib];
+        // The closed pore at the tip.
+        c = mix3(c, [0.02, 0.005, 0.012], 1 - smoothstep(0.35, 1.2, Math.hypot(x / 1.2, s - 0.9)));
+      }
+      out[0] = c[0] as number;
+      out[1] = c[1] as number;
+      out[2] = c[2] as number;
+      return 1;
+    },
+  });
+}
+
+const STALK_SPURS: readonly (readonly [number, number, number, number])[] = [
+  [-2.2, -6.8, -5.6, -11.2],
+  [2.1, -12.6, 5.3, -16.6],
+];
+
+function stalkSpurs(x: number, y: number): number {
+  if (Math.abs(x) > 8) return Math.abs(x) - 7;
+  let d = Infinity;
+  for (let i = 0; i < STALK_SPURS.length; i++) {
+    const t = STALK_SPURS[i] as readonly [number, number, number, number];
+    const e = sdTaperedCapsule(x, y, t[0], t[1], t[2], t[3], 1.0, 0.1);
+    if (e < d) d = e;
+  }
+  return d;
+}
+
+function stalkSdf(x: number, y: number): number {
+  const top = -ANCHOR_STALK_LENGTH - 1.5;
+  let d = sdCurve(x, y, 0, 2.5, -0.9, top * 0.5, 0.2, top, 3.3, 2.5, 6);
+  // Two knotted nodes, like a cane's joints.
+  d = smin(d, sdEllipse(x, y, -0.35, -6.3, 3.3, 1.05), 0.8);
+  d = smin(d, sdEllipse(x, y, -0.1, -12.3, 3.05, 1.0), 0.8);
+  return smin(d, stalkSpurs(x, y), 1) + noise.fbm(x * 0.5, y * 0.5, 2) * 0.3;
+}
+
+function anchorStalk(): AtlasImage {
+  const tip = [0.4, 0.09, 0.15];
+  return bake({
+    name: 'anchorStalk', x0: -8, y0: -ANCHOR_STALK_LENGTH - 5, x1: 8, y1: 4, density: DENSITY, sdf: stalkSdf, normalBand: 3,
+    shade: (x, y, d, nx, ny, out) => {
+      barkColor(x, y, d, nx, ny, 2.8, out);
+      const fibre = 0.84 + 0.16 * Math.sin(x * 2.4 + noise.noise2(x * 0.4, y * 0.12) * 3);
+      let c = [(out[0] as number) * fibre, (out[1] as number) * fibre, (out[2] as number) * fibre];
+      if (stalkSpurs(x, y) < 0.4) c = mix3(c, tip, smoothstep(3.2, 5.4, Math.abs(x)) * 0.85);
+      out[0] = c[0] as number;
+      out[1] = c[1] as number;
+      out[2] = c[2] as number;
+      return 1;
+    },
+  });
+}
+
+/**
+ * The light in one of the pod's ring grooves (premultiplied, pure emission): a thin band that wraps the
+ * pod (curving slightly with it), rose with a hot core. One sprite per groove, scaled to the pod's width
+ * there; the view lights them in turn over the anchor's cycle.
+ */
+function anchorRing(): AtlasImage {
+  const w = 48;
+  const h = 16;
+  return bakeLight({
+    name: 'anchorRing', x0: 0, y0: 0, x1: w, y1: h, density: 1,
+    texel: (px, py, out) => {
+      const x = (px / w) * 2 - 1;
+      const y = (py / h) * 2 - 1;
+      const across = 1 - x * x;
+      const yc = y - 0.28 * across;
+      const band = Math.exp(-(yc * yc) / (2 * 0.2 * 0.2)) * Math.pow(Math.max(0, across), 0.7);
+      const hot = Math.exp(-(yc * yc) / (2 * 0.1 * 0.1)) * Math.pow(Math.max(0, across), 1.4);
+      const edge = (1 - smoothstep(0.82, 1, Math.abs(x))) * (1 - smoothstep(0.7, 1, Math.abs(y)));
+      const e = band * 0.8 * edge;
+      const k = hot * 0.6 * edge;
+      out[0] = ROSE[0] * e + ROSE_HOT[0] * k;
+      out[1] = ROSE[1] * e + ROSE_HOT[1] * k;
+      out[2] = ROSE[2] * e + ROSE_HOT[2] * k;
+      out[3] = 0;
+    },
+  });
+}
+
 export function buildSpitterImages(): AtlasImage[] {
-  return [roots(), stem(), bulb(), bulbGlow(), leaf()];
+  return [roots(), stem(), bulb(), bulbGlow(), leaf(), anchorStalk(), anchorPod(), anchorRing()];
 }

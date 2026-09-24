@@ -2,8 +2,9 @@
  * M2 PIPE previews in the real forest (CPU composite, bloomed and graded): the Thorn Spitter's poses,
  * seeds with their trails (hostile and reflected), the ability shrine before and after the unlock, and
  * the Spirit Launch marks (candidate ring, locked ring + aim arrow under the freeze grade, the release
- * burst). Each at gameplay scale (1 px per unit, as at 1080p) and 3×.
- * Usage: node tools/preview/pipe/m2.ts [outDir] [spitter|seeds|shrine|launch …]
+ * burst), and the anchor (fixed-aim) spitters against a player-aimed one in the real Thornveil and
+ * through their rhythm. Each at gameplay scale (1 px per unit, as at 1080p) and 3×.
+ * Usage: node tools/preview/pipe/m2.ts [outDir] [spitter|seeds|shrine|launch|hero|anchors|rhythm …]
  */
 import { join } from 'node:path';
 import { MAX_PROJECTILES, TILE } from '../../../src/config.ts';
@@ -296,6 +297,103 @@ if (want('hero')) {
     panels.push(forestShot(forest, p.x, p.y - 30, 400, 400, 3.2, veil));
   }
   save(row(panels), 'm2-hero.png');
+}
+
+// ---- Anchors (fixed aim) vs player-aimed spitters: the real Thornveil at gameplay scale, and the rhythm ---
+if (want('anchors')) {
+  const s = stage(forest, []);
+  const spitters = s.sim.enemies.filter((e) => e.kind === 'thornSpitter');
+  const byCell = (tx: number, ty: number) => spitters.find((e) => Math.abs(e.x - (tx + 0.5) * TILE) < 2 && Math.abs(e.y - (ty + 1) * TILE) < 2);
+  const teach = byCell(181, 29);
+  const rise = byCell(189, 32);
+  const shaft = byCell(216, 18);
+  const stun = byCell(208, 21);
+  if (!teach || !rise || !shaft || !stun) throw new Error('Thornveil spitters not found');
+  const W = 36;
+  const set = (e: FakeSim['enemies'][number], mode: 'idle' | 'windup' | 'cooldown', ticks: number, dur: number, facing: 1 | -1 = 1): void => {
+    Object.assign(e, { mode, modeTicks: ticks, modeDuration: dur, facing });
+  };
+  placeHero(s, 205.2 * TILE, 22 * TILE, 1);
+  aimCam(s, 200 * TILE, 24 * TILE);
+  run(s, 20);
+  set(teach, 'windup', 26, W);
+  set(rise, 'cooldown', 30, 54);
+  set(stun, 'windup', 22, W, -1);
+  set(shaft, 'windup', 34, W);
+  run(s, 3, () => {
+    teach.modeTicks++;
+    rise.modeTicks++;
+    stun.modeTicks++;
+    shaft.modeTicks = Math.min(W - 1, shaft.modeTicks + 1);
+  });
+  // The shaft anchor fires straight up: flash, squash, a seed leaving its tip.
+  set(shaft, 'cooldown', 0, 54);
+  fire(s, 0, shaft.x, shaft.y - 50, 0, -850);
+  (s.sim.projectiles[0] as { sourceId: number }).sourceId = shaft.id;
+  emit(s, SimEventType.SeedFired, shaft.x, shaft.y - 50, 0, -850, 0);
+  run(s, 5, () => {
+    stepSeed(s, 0);
+    teach.modeTicks = Math.min(W - 1, teach.modeTicks + 1);
+    rise.modeTicks++;
+    stun.modeTicks = Math.min(W - 1, stun.modeTicks + 1);
+    shaft.modeTicks++;
+  });
+  const shots: ReturnType<typeof forestShot>[] = [];
+  const view = (x: number, y: number, w: number, h: number, scale = 1): void => {
+    aimCam(s, x, y);
+    run(s, 1);
+    shots.push(forestShot(forest, x, y, w, h, scale, veil));
+  };
+  // Gameplay scale: the teach pit, the rise gate's pedestal in its thorn chasm, the stun gate's hunter
+  // beside the vertical gate's anchor.
+  view(181.5 * TILE, 30 * TILE - 90, 520, 300);
+  view(189.5 * TILE, 33 * TILE - 110, 520, 300);
+  view(212.4 * TILE, 20 * TILE, 600, 300);
+  save(row(shots.splice(0)), 'm2-anchors-thornveil.png');
+  // Each at 3×: the three anchors (windup, cooldown, just fired) and the stun gate's hunter (windup).
+  view(teach.x, teach.y - 45, 540, 420, 3);
+  view(rise.x, rise.y - 45, 540, 420, 3);
+  view(shaft.x, shaft.y - 45, 540, 420, 3);
+  view(stun.x, stun.y - 45, 540, 420, 3);
+  save(row(shots.splice(0)), 'm2-anchors-3x.png');
+}
+
+// ---- An anchor's rhythm: idle, cooldown 25 % / 90 %, windup 50 % / 95 %, just fired; a 60° anchor --------
+if (want('rhythm')) {
+  const gy = floorY(forest.level, 24, 30);
+  const xs = [20.6, 22.1, 23.6, 25.1, 26.6, 28.1, 29.6].map((t) => t * TILE);
+  const defs = xs.map((x) => spitterDef(x, gy, 'fixed'));
+  const angled = defs[6] as SpitterDef;
+  angled.fixedVx = 900 * Math.cos(Math.PI / 3);
+  angled.fixedVy = -900 * Math.sin(Math.PI / 3);
+  const s = stage(forest, defs);
+  placeHero(s, 17.5 * TILE, floorY(forest.level, 17, 30));
+  aimCam(s, 25 * TILE, gy - 200);
+  const base = forest.level.enemies.length;
+  const en = (k: number) => s.sim.enemies[base + k] as FakeSim['enemies'][number];
+  run(s, 30);
+  const W = 36;
+  const set = (k: number, mode: 'idle' | 'windup' | 'cooldown', ticks: number, dur: number): void => {
+    Object.assign(en(k), { mode, modeTicks: ticks, modeDuration: dur });
+  };
+  set(0, 'idle', 0, 0);
+  set(1, 'cooldown', 13, 54);
+  set(2, 'cooldown', 48, 54);
+  set(3, 'windup', 17, W);
+  set(4, 'windup', 33, W);
+  set(5, 'windup', 30, W);
+  set(6, 'windup', 26, W);
+  run(s, 1);
+  set(5, 'cooldown', 0, 54);
+  fire(s, 0, xs[5] as number, gy - 50, 0, -900);
+  (s.sim.projectiles[0] as { sourceId: number }).sourceId = base + 5;
+  emit(s, SimEventType.SeedFired, xs[5] as number, gy - 50, 0, -900, 0);
+  run(s, 3, () => stepSeed(s, 0));
+  const cx = 25.1 * TILE;
+  const cy = gy - 34;
+  const one = forestShot(forest, cx, cy, 600, 130, 1, veil);
+  const three = forestShot(forest, cx, cy, 1800, 330, 3, veil);
+  save(column([one, three]), 'm2-anchor-rhythm.png');
 }
 
 console.log(`m2 previews → ${dir}: ${outputs.join(', ')}`);

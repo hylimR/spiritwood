@@ -111,11 +111,12 @@ describe('LaunchRenderer', () => {
       r.run(1, 0.75);
       expect(r.launch.ring.position.x).toBeCloseTo(p.prevX + 9, 6);
     }
-    // No candidate: fades out (alpha, never `visible`).
-    r.sim.launch.candidateKind = 'none';
+    // No candidate: fades out (alpha, never `visible`). candidateX/Y are stale then (SIM) and never read.
+    Object.assign(r.sim.launch, { candidateKind: 'none', candidateId: -1, candidateX: Number.NaN, candidateY: Number.NaN });
     r.run(20);
     expect(r.launch.ring.alpha).toBe(0);
     expect(r.launch.ring.visible).toBe(true);
+    expect(Number.isFinite(r.launch.ring.x) && Number.isFinite(r.launch.ring.y)).toBe(true);
     expect(r.launch.ring.width).toBe(0);
   });
 
