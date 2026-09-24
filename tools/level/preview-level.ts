@@ -1,5 +1,7 @@
 /**
  * Browser-free level preview: renders the map (tiles, entities, zones, optional player trace) to a PNG.
+ * Thorn Spitters are drawn as their contact box (rose: player aim, with its range dotted; amber: fixed
+ * aim) with the muzzle, fixed-aim seed flights as dots (the sim's SeedPool), ability shrines in blue.
  *
  *   node tools/level/preview-level.ts <out.png> [--scale 6] [--trace trace.json] [--crop x0,x1] [--map file]
  *
@@ -12,9 +14,11 @@ import { fileURLToPath } from 'node:url';
 import { PALETTE } from '../../src/config.ts';
 import { TileKind, type LevelData } from '../../src/contracts/level.ts';
 import { tileAt } from '../../src/core/tiles.ts';
+import { DEFAULT_WORLD_TUNING } from '../../src/sim/tuning.ts';
 import { writePng } from '../preview/png.ts';
 import { MAP_PATH } from './build-level.ts';
 import { parseMapFile } from './mapfile.ts';
+import { fixedStreams, type SeedPoint } from './streams.ts';
 
 interface Canvas {
   w: number;
@@ -60,7 +64,7 @@ function disc(c: Canvas, cx: number, cy: number, r: number, color: number, alpha
 }
 
 const GRADE_TINT: Readonly<Record<string, number>> = {
-  glade: 0x3fe0c5, gully: 0x8fa3b8, rootwell: 0x2f6fa0, canopy: 0xbff6ff, shrine: 0xffb45a,
+  glade: 0x3fe0c5, gully: 0x8fa3b8, rootwell: 0x2f6fa0, canopy: 0xbff6ff, veil: 0xb05a8c, shrine: 0xffb45a,
 };
 
 export function renderLevel(level: LevelData, scale: number, trace: readonly (readonly [number, number])[] = [], cropCols?: [number, number]): Canvas {
@@ -108,9 +112,31 @@ export function renderLevel(level: LevelData, scale: number, trace: readonly (re
   }
   for (const cp of level.checkpoints) frame(c, X(cp.x), Y(cp.y), X(cp.x + cp.w), Y(cp.y + cp.h), PALETTE.floraGlow);
   if (level.goal) rect(c, X(level.goal.x), Y(level.goal.y), X(level.goal.x + level.goal.w), Y(level.goal.y + level.goal.h), PALETTE.warmAccent, 0.8);
+  const wt = DEFAULT_WORLD_TUNING;
+  for (const sh of level.abilityShrines) {
+    rect(c, X(sh.x), Y(sh.y), X(sh.x + sh.w), Y(sh.y + sh.h), PALETTE.spiritGlow, 0.35);
+    frame(c, X(sh.x), Y(sh.y), X(sh.x + sh.w), Y(sh.y + sh.h), PALETTE.spiritGlow);
+  }
+  for (const { path } of fixedStreams(level)) {
+    for (let i = 0; i < path.length; i += 2) {
+      const pt = path[i] as SeedPoint;
+      disc(c, X(pt.x), Y(pt.y), Math.max(1, scale / 8), PALETTE.thorns, 0.55);
+    }
+  }
   for (const e of level.enemies) {
-    // TODO(M2 SIM): draw Thorn Spitters.
-    if (e.kind !== 'gloomcrawler') continue;
+    if (e.kind === 'thornSpitter') {
+      const hw = wt.spitterWidth / 2;
+      rect(c, X(e.x - hw), Y(e.y - wt.spitterHeight), X(e.x + hw), Y(e.y), e.aim === 'fixed' ? PALETTE.warmAccent : PALETTE.thorns, 0.9);
+      disc(c, X(e.x), Y(e.y - wt.spitterMuzzleHeight), Math.max(1.5, scale / 4), 0xffffff);
+      if (e.aim === 'player') {
+        // The activation range around the muzzle, dotted.
+        for (let a = 0; a < 360; a += 3) {
+          const r = (a * Math.PI) / 180;
+          blend(c, X(e.x + Math.cos(r) * e.range), Y(e.y - wt.spitterMuzzleHeight + Math.sin(r) * e.range), PALETTE.thorns, 0.6);
+        }
+      }
+      continue;
+    }
     rect(c, X(e.patrolMinX - 32), Y(e.y) - 2, X(e.patrolMaxX + 32), Y(e.y), PALETTE.thorns);
     rect(c, X(e.x - 32), Y(e.y - 44), X(e.x + 32), Y(e.y), PALETTE.thorns, 0.7);
   }

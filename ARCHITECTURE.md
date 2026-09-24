@@ -724,8 +724,15 @@ controller validated against `PlayerController`):
     its bottom less than 366 u above a standable approach surface within 28 tiles
     (293.9 + 58 body + 14 stomp).
   - **Proof** in `reach.test.ts`:
-    - A conservative no-launch reachability closure must exclude the landing. It allows rises of ≤ 6
-      tiles within 28 tiles, plus the top of every climbable face.
+    - A conservative no-launch reachability closure must exclude the landing (`tools/level/analysis.ts`).
+      Its limits come from the tuning:
+      - rises of ≤ 6 tiles onto floors, touch reach 8 rows, and 5 rows after a drop;
+      - a run of ≤ 30 tiles, from the measured 1345.7 u dash-jump;
+      - the top of every climbable Solid face, including faces reached by grazing a thorn cell within
+        `HAZARD_INSET`;
+      - floors with thorns two rows up count as standable.
+
+      Positive controls on the real map and on synthetic maps keep the closure from going vacuous.
     - A bot search must also fail to land. It searches ground dash tick × jump tick (grounded or
       coyote, which may cancel the dash) × air dash tick × air jump tick (which may cancel the air
       dash).
@@ -782,8 +789,26 @@ Six areas (five in M1), left to right, each with a colour grade:
      low passage. Stun it with its own seed, flung back by launching away from it, or by launching off
      it, then pass.
    - **Chain (optional):** orbs along a two-launch route (seed → seed, or seed → a crawler on a floating
-     platform).
+     platform). Not built in M2.
    - A checkpoint after the vertical gate.
+
+   **As built** (columns 161–220 of the 260-column level; the Moonwell moved to columns 221–259):
+   - **Entry and shrine:**
+     - A drop shaft leads to the veil floor.
+     - The shrine fills a 2-tall corridor at column 172 behind a wall that reaches the top edge. The
+       stun gate's wall (columns 205–210) also reaches it.
+     - Checkpoint 4 is just past the shrine.
+   - **Teach pit** (column 181): a stream at 700 u/s under a closed rock cup whose OneWay floor is 8
+     tiles up.
+   - **Rise gate:** a thorn chasm (columns 187–198) fed by a 1000 u/s stream. The landing is a OneWay
+     step 7 tiles up, or the lip 9 up, with a thorn-lined far face.
+   - **Stun gate:** a 2-tall passage (columns 205–210) guarded by a player-aimed spitter with range 400
+     and flightTicks 20.
+   - **Vertical gate:** a thorn-lined shaft (columns 213–217) with an 850 u/s stream, up to a OneWay
+     ledge 8 tiles up. Checkpoint 5 is at the exit.
+   - **Streams:** every one fires every 90 ticks. Each scripted launch has at least 8 consecutive press
+     ticks per period. The pool needs 20 of 32 slots.
+   - **Sky:** the Thornveil and the Moonwell are open to it.
 6. **Moonwell** (`shrine`): a descent into a warm, lantern-lit clearing with the goal shrine.
 
 ### 5.5 Visual pipeline

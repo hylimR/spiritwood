@@ -4,9 +4,12 @@ import type {
   SimEventQueueView, SimView,
 } from '../../src/contracts/sim.ts';
 import { MAX_PROJECTILES, VIEW_H } from '../../src/config.ts';
-import { DEFAULT_TUNING, DEFAULT_WORLD_TUNING } from '../../src/sim/tuning.ts';
+import { DEFAULT_LAUNCH_TUNING, DEFAULT_TUNING, DEFAULT_WORLD_TUNING } from '../../src/sim/tuning.ts';
 
 export { levelFromAscii } from '../../src/level/ascii.ts';
+
+/** The sim's spitter muzzle height, so render tests can check their art against it without importing the sim. */
+export const SIM_SPITTER_MUZZLE_HEIGHT = DEFAULT_WORLD_TUNING.spitterMuzzleHeight;
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
@@ -68,7 +71,9 @@ export function createFakeSimView(level: LevelData, viewW = VIEW_H * (16 / 9), v
   }));
   const enemies: Mutable<EnemyView>[] = level.enemies.map((e) => ({
     id: e.id, kind: e.kind, x: e.x, y: e.y, prevX: e.x, prevY: e.y, vx: e.kind === 'gloomcrawler' ? e.speed : 0,
-    facing: 1, width: DEFAULT_WORLD_TUNING.enemyWidth, height: DEFAULT_WORLD_TUNING.enemyHeight,
+    facing: 1,
+    width: e.kind === 'gloomcrawler' ? DEFAULT_WORLD_TUNING.enemyWidth : DEFAULT_WORLD_TUNING.spitterWidth,
+    height: e.kind === 'gloomcrawler' ? DEFAULT_WORLD_TUNING.enemyHeight : DEFAULT_WORLD_TUNING.spitterHeight,
     mode: e.kind === 'gloomcrawler' ? 'patrol' : 'idle', modeTicks: 0, modeDuration: 0,
   }));
   const projectiles: Mutable<ProjectileView>[] = [];
@@ -80,8 +85,8 @@ export function createFakeSimView(level: LevelData, viewW = VIEW_H * (16 / 9), v
   }
   const launch: Mutable<LaunchView> = {
     unlocked: false, candidateKind: 'none', candidateId: -1, candidateX: 0, candidateY: 0,
-    targetKind: 'none', targetId: -1, targetX: 0, targetY: 0, aimX: 0, aimY: -1, aimTicks: 0, aimMaxTicks: 0,
-    range: 0,
+    targetKind: 'none', targetId: -1, targetX: 0, targetY: 0, aimX: 0, aimY: -1, aimTicks: 0, aimMaxTicks: DEFAULT_LAUNCH_TUNING.aimMaxTicks,
+    range: DEFAULT_LAUNCH_TUNING.range,
   };
   const goal: GoalView | null = level.goal ? { ...level.goal, reached: false } : null;
   return {

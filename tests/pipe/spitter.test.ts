@@ -4,7 +4,7 @@ import { SimEventType, type EnemyMode, type SimEvent } from '../../src/contracts
 import { EntitiesView } from '../../src/render/entities/entitiesView.ts';
 import { SPITTER_ART } from '../../src/render/entities/spitterArt.ts';
 import { createSpitterPose, SPITTER, SPITTER_MUZZLE_HEIGHT, spitterPose } from '../../src/render/entities/spitters.ts';
-import { createFakeSimView, levelFromAscii, type FakeSim } from '../shared/fixtures.ts';
+import { createFakeSimView, levelFromAscii, SIM_SPITTER_MUZZLE_HEIGHT, type FakeSim } from '../shared/fixtures.ts';
 import { createFrame, createTestContext, stepFrame, walk } from './helpers.ts';
 
 describe('spitterPose (pure)', () => {
@@ -64,8 +64,8 @@ describe('spitterPose (pure)', () => {
     expect(at('idle', 0, -1, -1).bloom).toBe(0);
   });
 
-  test('the art puts the mouth on the sim muzzle (50 u above the feet)', () => {
-    expect(SPITTER_MUZZLE_HEIGHT).toBe(50);
+  test('the art puts the mouth on the sim muzzle', () => {
+    expect(SPITTER_MUZZLE_HEIGHT).toBe(SIM_SPITTER_MUZZLE_HEIGHT);
     expect(SPITTER_ART.stemBaseY - SPITTER_ART.stemLength + SPITTER_ART.mouthY).toBe(-50);
   });
 });

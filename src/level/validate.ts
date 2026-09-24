@@ -1,8 +1,21 @@
-import { MIN_ASPECT, MIN_CAMERA_ZOOM, VIEW_H } from '../config.ts';
+import { MAX_PROJECTILES, MIN_ASPECT, MIN_CAMERA_ZOOM, VIEW_H } from '../config.ts';
 import type { Rect } from '../contracts/common.ts';
-import { TileKind, type LevelData } from '../contracts/level.ts';
+import { TileKind, type LevelData, type SpitterDef } from '../contracts/level.ts';
 import { tileAt } from '../core/tiles.ts';
-import { DEFAULT_TUNING, DEFAULT_WORLD_TUNING, type PlayerTuning } from '../sim/tuning.ts';
+import { DEFAULT_TUNING, DEFAULT_WORLD_TUNING, type PlayerTuning, type WorldTuning } from '../sim/tuning.ts';
+
+/**
+ * §5.4 seed pool: the most seeds the spitters can have alive at once, Σ ceil((seedLifetimeTicks +
+ * reflectedLifetimeTicks) / period). validateLevel keeps it ≤ MAX_PROJECTILES, so a shot is never skipped.
+ */
+export function seedPoolDemand(level: Pick<LevelData, 'enemies'>, tuning: WorldTuning = DEFAULT_WORLD_TUNING): number {
+  let n = 0;
+  for (const e of level.enemies) {
+    if (e.kind !== 'thornSpitter' || !(e.period >= 1)) continue;
+    n += Math.ceil((tuning.seedLifetimeTicks + tuning.reflectedLifetimeTicks) / e.period);
+  }
+  return n;
+}
 
 export interface LevelIssue {
   severity: 'error' | 'warning';
@@ -60,8 +73,9 @@ function rectDistance(r: Rect, x: number, y: number): number {
 
 /**
  * Content checks: player start and checkpoints stand on ground with head-room for the player collider,
- * orbs/entities inside bounds and not inside solids, enemy patrol ranges on a floor, grade zones
- * cover the level width, at least one checkpoint and exactly one goal.
+ * orbs/entities inside bounds and not inside solids, enemy patrol ranges on a floor, Thorn Spitters on
+ * a floor with their box clear, ability shrines inside the level and clear of Solid, the §5.4 seed pool
+ * cap, grade zones cover the level width, at least one checkpoint and exactly one goal.
  * Also: every camera centre in the clamped camera range (all supported aspects, sampled on a 48 u
  * grid) has a positive total grade-zone weight, and isolated single-tile solids are flagged.
  */
@@ -117,8 +131,10 @@ export function validateLevel(level: LevelData, tuning: PlayerTuning = DEFAULT_T
   const ew = DEFAULT_WORLD_TUNING.enemyWidth;
   const eh = DEFAULT_WORLD_TUNING.enemyHeight;
   for (const e of level.enemies) {
-    // TODO(M2 SIM): validate Thorn Spitters (rooted on a floor tile, not inside Solid, sane fields).
-    if (e.kind !== 'gloomcrawler') continue;
+    if (e.kind === 'thornSpitter') {
+      checkSpitter(level, e, error, warn);
+      continue;
+    }
     if (e.patrolMinX > e.patrolMaxX) error(`enemy ${e.id} has an empty patrol range`);
     if (e.x < e.patrolMinX || e.x > e.patrolMaxX) error(`enemy ${e.id} spawns outside its patrol range`);
     if (e.y % t !== 0) {
@@ -135,6 +151,14 @@ export function validateLevel(level: LevelData, tuning: PlayerTuning = DEFAULT_T
       }
     }
     if (rectHas(level, x0, e.y - eh, x1, e.y, TileKind.Solid)) error(`enemy ${e.id} patrol range is blocked by Solid tiles`);
+  }
+
+  const demand = seedPoolDemand(level);
+  if (demand > MAX_PROJECTILES) error(`the spitters can keep ${demand} seeds alive, more than the ${MAX_PROJECTILES}-slot pool`);
+
+  for (const s of level.abilityShrines) {
+    if (!(s.w > 0 && s.h > 0) || !inside(level, s)) error(`ability shrine ${s.id} is outside the level`);
+    else if (rectHas(level, s.x, s.y, s.x + s.w, s.y + s.h, TileKind.Solid)) error(`ability shrine ${s.id} overlaps Solid tiles`);
   }
 
   for (const s of level.lightShafts) {
@@ -162,6 +186,29 @@ export function validateLevel(level: LevelData, tuning: PlayerTuning = DEFAULT_T
     }
   }
   return issues;
+}
+
+/**
+ * A Thorn Spitter stands with its feet on a tile top over a Solid or OneWay floor tile, its box clear of
+ * Solid and inside the level, with sane fields (fixed-aim seeds no faster than seedMaxSpeed).
+ */
+function checkSpitter(level: LevelData, s: SpitterDef, error: (m: string) => void, warn: (m: string) => void): void {
+  const wt = DEFAULT_WORLD_TUNING;
+  const t = level.tileSize;
+  const name = `spitter ${s.id}`;
+  const x0 = s.x - wt.spitterWidth / 2;
+  const x1 = s.x + wt.spitterWidth / 2;
+  const y0 = s.y - wt.spitterHeight;
+  if (x0 < 0 || x1 > level.pxWidth || y0 < 0 || s.y > level.pxHeight) error(`${name} is outside the level`);
+  if (s.y % t !== 0) error(`${name} feet y ${fmt(s.y)} is not on a tile top`);
+  else if (!isFloor(tileAt(level, Math.floor(s.x / t), s.y / t))) error(`${name} has no Solid or OneWay floor tile under its feet`);
+  if (rectHas(level, x0, y0, x1, s.y, TileKind.Solid)) error(`${name} overlaps Solid tiles`);
+  if (!(s.range > 0)) error(`${name} range must be positive`);
+  if (!Number.isInteger(s.period) || s.period < 1) error(`${name} period must be a whole number of ticks ≥ 1`);
+  else if (s.period <= wt.spitterWindupTicks) warn(`${name} period ${s.period} is not longer than the windup: shots come every ${wt.spitterWindupTicks + 1} ticks`);
+  if (!Number.isInteger(s.phase)) error(`${name} phase must be a whole number of ticks`);
+  if (s.aim === 'player' && (!Number.isInteger(s.flightTicks) || s.flightTicks < 1)) error(`${name} flightTicks must be a whole number ≥ 1`);
+  if (s.aim === 'fixed' && Math.hypot(s.fixedVx, s.fixedVy) > wt.seedMaxSpeed) error(`${name} fixed seed speed exceeds seedMaxSpeed`);
 }
 
 function checkGradeZones(level: LevelData, error: (message: string) => void): void {

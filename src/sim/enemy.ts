@@ -1,7 +1,7 @@
 import { SIM_DT } from '../config.ts';
 import type { Bounds, Facing } from '../contracts/common.ts';
 import { TileKind, type CrawlerDef } from '../contracts/level.ts';
-import { SimEventType, type EnemyMode } from '../contracts/sim.ts';
+import { SimEventType, type EnemyHitCause, type EnemyMode } from '../contracts/sim.ts';
 import type { SimEventQueue } from '../core/events.ts';
 import type { CollisionGrid } from '../level/grid.ts';
 import { createSweepResult, sweepX } from './physics.ts';
@@ -10,12 +10,16 @@ import { DEFAULT_WORLD_TUNING, type WorldTuning } from './tuning.ts';
 
 /**
  * Gloomcrawler: patrols [patrolMinX, patrolMaxX] on its floor, turning at range ends, walls and
- * ledges. Stomped → 'stunned' for stunTicks (harmless, emits EnemyStomped), then re-forms at its
- * current spot (EnemyReformed).
+ * ledges. Stomped, or hit by a reflected seed or a launch (EnemyHit) → 'stunned' for stunTicks
+ * (harmless and non-solid; a hit restarts a running stun), then re-forms at its current spot
+ * (EnemyReformed), deferred while the player overlaps it.
  */
 export class Gloomcrawler implements SimEnemy {
   readonly id: number;
   readonly kind = 'gloomcrawler' as const;
+  readonly stompable = true;
+  readonly stunnable = true;
+  readonly launchTarget = true;
   x = 0;
   y = 0;
   prevX = 0;
@@ -34,6 +38,11 @@ export class Gloomcrawler implements SimEnemy {
   private readonly sweep = createSweepResult();
   /** While stunned, re-forming waits as long as this box (the player) overlaps the enemy. */
   private blocker: Bounds | null = null;
+  /**
+   * Tick a stun began outside step() (a stomp, a hit). A hit at world step 2 comes before this tick's
+   * step, which then must not count it: modeTicks is 0 on the entry tick.
+   */
+  private stunTick = -1;
 
   constructor(def: CrawlerDef, grid: CollisionGrid, tuning: WorldTuning = DEFAULT_WORLD_TUNING) {
     this.id = def.id;
@@ -62,12 +71,16 @@ export class Gloomcrawler implements SimEnemy {
     this.mode = 'patrol';
     this.modeTicks = 0;
     this.modeDuration = 0;
+    this.stunTick = -1;
+  }
+
+  savePrev(): void {
+    this.prevX = this.x;
+    this.prevY = this.y;
   }
 
   step(tick: number, events: SimEventQueue): void {
-    this.prevX = this.x;
-    this.prevY = this.y;
-    this.modeTicks++;
+    if (tick !== this.stunTick) this.modeTicks++;
     if (this.mode === 'stunned') {
       if (this.modeTicks >= this.modeDuration && !this.blocked()) {
         this.mode = 'patrol';
@@ -82,11 +95,13 @@ export class Gloomcrawler implements SimEnemy {
   }
 
   stomp(tick: number, events: SimEventQueue): void {
-    this.mode = 'stunned';
-    this.modeTicks = 0;
-    this.modeDuration = this.tuning.stunTicks;
-    this.vx = 0;
+    this.stun(tick);
     events.push(SimEventType.EnemyStomped, tick, this.x, this.y - this.height, 0, 0, this.id);
+  }
+
+  hit(cause: EnemyHitCause, tick: number, events: SimEventQueue): void {
+    events.push(SimEventType.EnemyHit, tick, this.x, this.y - this.height / 2, cause, 0, this.id);
+    this.stun(tick);
   }
 
   getBounds(out: Bounds): Bounds {
@@ -95,6 +110,14 @@ export class Gloomcrawler implements SimEnemy {
     out.minY = this.y - this.height;
     out.maxY = this.y;
     return out;
+  }
+
+  private stun(tick: number): void {
+    this.stunTick = tick;
+    this.mode = 'stunned';
+    this.modeTicks = 0;
+    this.modeDuration = this.tuning.stunTicks;
+    this.vx = 0;
   }
 
   private patrol(): void {

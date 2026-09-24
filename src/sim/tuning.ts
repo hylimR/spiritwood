@@ -161,6 +161,10 @@ export interface CameraTuning {
   lookAheadHoldTicks: number;
   /** Look-down only once the feet are this far below the last grounded y. */
   lookDownMinDrop: number;
+  /** Zoom while the player aims a Spirit Launch (§5.2). */
+  aimZoom: number;
+  /** smoothDamp time of the zoom toward `aimZoom` / `zoom` (s). */
+  zoomSmoothTime: number;
 }
 
 export const DEFAULT_CAMERA_TUNING: Readonly<CameraTuning> = Object.freeze({
@@ -179,6 +183,8 @@ export const DEFAULT_CAMERA_TUNING: Readonly<CameraTuning> = Object.freeze({
   lookAheadCommitTicks: 20,
   lookAheadHoldTicks: 45,
   lookDownMinDrop: 192,
+  aimZoom: 1.08,
+  zoomSmoothTime: 0.18,
 });
 
 export interface WorldTuning {
@@ -208,6 +214,25 @@ export interface WorldTuning {
   spitterDefaultFlightTicks: number;
   /** Fixed-aim seed launch speed, u/s. */
   spitterDefaultSpeed: number;
+  /** Thorn Spitter contact box (on its feet) and muzzle height above the feet. */
+  spitterWidth: number;
+  spitterHeight: number;
+  spitterMuzzleHeight: number;
+  /** Telegraph before every shot (SpitterWindup a). */
+  spitterWindupTicks: number;
+  /** Stun of a player-aimed spitter hit by a reflected seed or launched off. */
+  spitterStunTicks: number;
+  /** A player-aimed spitter fires only with its muzzle this far inside the camera view. */
+  spitterViewInset: number;
+  /** Seed collision radius (centre-based terrain test, circle against boxes). */
+  seedRadius: number;
+  /** Gravity of hostile seeds, u/s² (reflected seeds fly straight). */
+  seedGravity: number;
+  seedMaxSpeed: number;
+  seedLifetimeTicks: number;
+  reflectedLifetimeTicks: number;
+  /** Seeds this far below the level's bottom edge expire. */
+  seedOutMargin: number;
 }
 
 export const DEFAULT_WORLD_TUNING: Readonly<WorldTuning> = Object.freeze({
@@ -229,4 +254,53 @@ export const DEFAULT_WORLD_TUNING: Readonly<WorldTuning> = Object.freeze({
   spitterDefaultPeriod: 150,
   spitterDefaultFlightTicks: 60,
   spitterDefaultSpeed: 900,
+  spitterWidth: 44,
+  spitterHeight: 60,
+  spitterMuzzleHeight: 50,
+  spitterWindupTicks: 36,
+  spitterStunTicks: 300,
+  spitterViewInset: 32,
+  seedRadius: 12,
+  seedGravity: 1400,
+  seedMaxSpeed: 1300,
+  seedLifetimeTicks: 300,
+  reflectedLifetimeTicks: 150,
+  seedOutMargin: 240,
+});
+
+/** Spirit Launch (§5.1.1). Ticks are 60 Hz sim ticks; the release tick R is flight tick 1. */
+export interface LaunchTuning {
+  /** Grab radius, player centre → target centre (inclusive), u. */
+  range: number;
+  /** Aiming auto-releases when aimTicks reaches this. */
+  aimMaxTicks: number;
+  /** Launch speed along the aim, u/s. */
+  speed: number;
+  /** Length of the `launched` phase. */
+  flightTicks: number;
+  /** Gravity multiplier of the `launched` phase (replaces the §5.1 table). */
+  flightGravityMult: number;
+  /** Ticks from the release in which enemy and seed contact can't kill. */
+  graceTicks: number;
+  /** Ticks after the release in which the last target can't be grabbed. */
+  regrabTicks: number;
+  /** Jump and dash presses on the first ticks from the release are dropped (not buffered). */
+  inputLockTicks: number;
+  /** A launch press stays live this long waiting for a candidate. */
+  bufferTicks: number;
+  /** Speed of a seed flung off (opposite the aim, straight, no gravity), u/s. */
+  seedSpeed: number;
+}
+
+export const DEFAULT_LAUNCH_TUNING: Readonly<LaunchTuning> = Object.freeze({
+  range: 170,
+  aimMaxTicks: 120,
+  speed: 1150,
+  flightTicks: 12,
+  flightGravityMult: 0.35,
+  graceTicks: 8,
+  regrabTicks: 20,
+  inputLockTicks: 4,
+  bufferTicks: 6,
+  seedSpeed: 1000,
 });

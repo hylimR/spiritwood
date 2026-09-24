@@ -11,6 +11,8 @@ export interface Segment {
   from: number;
   /** Checkpoint index that must become active, or 'goal'. */
   to: number | 'goal';
+  /** Needs Spirit Launch: a run that starts here (past the shrine) unlocks it with GameWorld.unlock. */
+  launch?: boolean;
   run(bot: Bot): void;
 }
 
@@ -88,13 +90,63 @@ export const FOREST_ROUTE: readonly Segment[] = [
     },
   },
   {
-    name: 'Moonwell',
+    name: 'Thornveil: gap B, the drop into the veil, the shrine',
     from: 3,
-    to: 'goal',
+    to: 4,
     run(bot) {
       bot.leap(X(147) - 20, 1, { double: true, dash: true }); // gap B: 14 tiles, 2 up
-      bot.runTo(X(166));
-      bot.land(1); // down onto the plateau
+      landedOn(bot, Y(12));
+      // Off the landing into the drop, down to the veil floor, then through the shrine corridor.
+      bot.hold(1, (w) => w.player.grounded && w.player.y === Y(31), 400);
+      bot.hold(1, cpActive(4), 300);
+      if (!bot.w.launch.unlocked) throw new BotError(bot, 'the shrine did not unlock Spirit Launch');
+    },
+  },
+  {
+    name: 'Thornveil: teach pit, rise gate, stun gate, vertical gate',
+    from: 4,
+    to: 5,
+    launch: true,
+    run(bot) {
+      bot.settle();
+      // Out of the shrine pit onto level A, stopping short of the teach pit; hop it (its seeds stay low).
+      bot.arc(1, { holdTicks: 30, until: (w) => w.player.x > X(176.3) && w.player.vy > 0 });
+      bot.land(0);
+      bot.runTo(X(177.5), true);
+      bot.hold(1, (w) => w.player.x >= X(178.7));
+      bot.arc(1, { until: (w) => w.player.x > X(183.4) && w.player.vy > 0 });
+      bot.land(0);
+      // Rise gate: from the chasm's edge, straight up off a seed lobbed from below, drift onto level B.
+      bot.runTo(X(186.6), true);
+      bot.launch(0, -1, (w) => w.launch.candidateKind === 'seed');
+      bot.fly(1, { airJump: 'apex' });
+      landedOn(bot, Y(21)); // the OneWay step, 7 up
+      bot.arc(1, { holdTicks: 20 });
+      landedOn(bot, Y(19)); // the lip of level B
+      // Stun gate: down into the passage's west pit, then launch off the spitter (up, into the ceiling).
+      bot.hold(1, (w) => w.player.grounded && w.player.y === Y(22), 200);
+      bot.hold(1, (w) => w.launch.candidateKind === 'enemy', 120);
+      bot.launch(0, -1);
+      bot.hold(1, (w) => w.player.x > X(211.3), 300);
+      bot.settle();
+      // Vertical gate: up beside the stream, straight up off one of its seeds onto the OneWay ledge, then level C.
+      bot.arc(1, { holdTicks: 30, until: (w) => w.player.x > X(213.5) && w.player.vy > 0 });
+      bot.land(0);
+      bot.settle();
+      bot.launch(0, -1, (w) => w.launch.candidateKind === 'seed');
+      bot.fly(0);
+      landedOn(bot, Y(11));
+      bot.arc(1, { holdTicks: 20 });
+      bot.hold(1, cpActive(5), 200);
+    },
+  },
+  {
+    name: 'Moonwell',
+    from: 5,
+    to: 'goal',
+    run(bot) {
+      bot.hold(1, (w) => w.player.grounded && w.player.y === Y(12), 200); // down onto the plateau
+      bot.runTo(X(226));
       // Zig-zag down the Moonwell: off the plateau onto the lantern ledge, off its tip onto the branch
       // by the east wall, back west off the branch onto the middle branch, west again down to the knoll
       // side of the clearing, then east through the lanterns to the shrine.

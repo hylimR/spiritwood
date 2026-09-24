@@ -556,3 +556,38 @@ describe('reset and teleport', () => {
     expect(tp).toMatchObject({ type: SimEventType.Teleported, x: 30 * T, y: 11 * T });
   });
 });
+
+describe('M2 world rules', () => {
+  test('the default event queue holds 256 events', async () => {
+    const { GameWorld: World } = await import('../../src/sim/world.ts');
+    const w = new World(levelFromAscii(new MapBuilder(20, 10).put(3, 8, 'P').rows()));
+    expect(w.events.capacity).toBe(256);
+  });
+
+  test('ability shrine: the first overlap unlocks Spirit Launch (AbilityUnlocked once); it persists through death; reset clears it', async () => {
+    const { Ability } = await import('../../src/contracts/sim.ts');
+    const rows = new MapBuilder(40, 12).put(3, 10, 'P').put(10, 10, 'A').put(20, 10, 'A').fill(30, 11, 34, 11, '^').rows();
+    const rig = new WorldRig(rows);
+    const w = rig.world;
+    expect(w.level.abilityShrines).toHaveLength(2);
+    expect(w.launch.unlocked).toBe(false);
+    rig.until((x) => x.launch.unlocked, right, 200);
+    const s = w.level.abilityShrines[0];
+    if (!s) throw new Error('fixture');
+    const ev = rig.eventsOf(SimEventType.AbilityUnlocked);
+    expect(ev).toEqual([{ type: SimEventType.AbilityUnlocked, tick: w.tick, x: s.x + s.w / 2, y: s.y + s.h, a: Ability.Launch, b: 0, id: s.id }]);
+    // Past the second shrine and into the thorns: no second event; the unlock survives the death.
+    rig.until((x) => !x.player.alive, right, 400);
+    rig.run(wt.dyingTicks + 1);
+    expect(w.player.alive).toBe(true);
+    expect(w.launch.unlocked).toBe(true);
+    expect(rig.eventsOf(SimEventType.AbilityUnlocked)).toHaveLength(1);
+    w.reset();
+    expect(w.launch.unlocked).toBe(false);
+    // unlock() is the silent test hook.
+    w.unlock(Ability.Launch);
+    expect(w.launch.unlocked).toBe(true);
+    rig.drain();
+    expect(rig.eventsOf(SimEventType.AbilityUnlocked)).toHaveLength(1);
+  });
+});

@@ -21,6 +21,7 @@ export class GamepadSource {
   private readonly prevButtons = new Uint8Array(MAX_BUTTONS);
   private readonly down: Uint8Array;
   private readonly edge: Uint8Array;
+  private readonly releaseEdge: Uint8Array;
   private padIndex = -1;
   private stickX = 0;
   private stickY = 0;
@@ -37,6 +38,7 @@ export class GamepadSource {
     this.actionButtons = this.actions.map((a) => bindings[a]);
     this.down = new Uint8Array(this.actions.length);
     this.edge = new Uint8Array(this.actions.length);
+    this.releaseEdge = new Uint8Array(this.actions.length);
   }
 
   poll(): void {
@@ -76,6 +78,7 @@ export class GamepadSource {
       }
       this.down[i] = isDown;
       this.edge[i] = isDown & (wasDown ^ 1);
+      this.releaseEdge[i] = wasDown & (isDown ^ 1);
     }
 
     const right = this.isDown('right') ? 1 : 0;
@@ -118,6 +121,12 @@ export class GamepadSource {
   pressed(action: GameAction): boolean {
     const i = this.actions.indexOf(action);
     return i >= 0 && this.edge[i] === 1;
+  }
+
+  /** Became released during the latest poll (held at the previous poll of the same pad, not now). */
+  released(action: GameAction): boolean {
+    const i = this.actions.indexOf(action);
+    return i >= 0 && this.releaseEdge[i] === 1;
   }
 
   /** Any button newly pressed during the latest poll (bound or not). */

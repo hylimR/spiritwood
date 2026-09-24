@@ -10,13 +10,15 @@ export interface InputManagerOptions {
   pad?: PadBindings;
 }
 
-/** Latched presses per action never exceed this (ARCHITECTURE.md §2.2). */
+/** Latched presses (and launch releases) per action never exceed this (ARCHITECTURE.md §2.2). */
 const MAX_PENDING_PRESSES = 2;
 
 /**
  * Merges keyboard + gamepad. Call `beginFrame()` once per render frame, then `nextTick()` once per sim
- * step. Jump/dash presses are latched and delivered to exactly one tick (the first one after the press);
- * if no tick runs this frame they carry over. `meta` holds per-frame UI actions.
+ * step. Jump/dash/launch presses are latched and delivered to exactly one tick (the first one after the
+ * press); if no tick runs this frame they carry over. The launch release is latched the same way
+ * (`launchReleased`), so a release and re-press inside one frame still releases (§5.1.1). `meta` holds
+ * per-frame UI actions.
  * moveX/moveY: keyboard digital (opposite keys cancel → 0) or gamepad analog, whichever has the larger
  * magnitude this frame.
  */
@@ -30,8 +32,11 @@ export class InputManager {
   private moveY = 0;
   private jumpHeld = false;
   private dashHeld = false;
+  private launchHeld = false;
   private pendingJump = 0;
   private pendingDash = 0;
+  private pendingLaunch = 0;
+  private pendingLaunchRelease = 0;
   private stickUp = false;
   private stickDown = false;
   private stickLeft = false;
@@ -58,8 +63,16 @@ export class InputManager {
     this.moveY = Math.abs(pad.moveY) > Math.abs(kbY) ? pad.moveY : kbY;
     this.jumpHeld = kb.isDown('jump') || pad.isDown('jump');
     this.dashHeld = kb.isDown('dash') || pad.isDown('dash');
+    const kbLaunch = kb.isDown('launch');
+    const padLaunch = pad.isDown('launch');
+    this.launchHeld = kbLaunch || padLaunch;
     this.pendingJump = Math.min(MAX_PENDING_PRESSES, this.pendingJump + this.presses('jump'));
     this.pendingDash = Math.min(MAX_PENDING_PRESSES, this.pendingDash + this.presses('dash'));
+    this.pendingLaunch = Math.min(MAX_PENDING_PRESSES, this.pendingLaunch + this.presses('launch'));
+    // A device's release is the action's release only while the other device isn't holding it.
+    const kbReleases = kb.takeReleases('launch');
+    const releases = (padLaunch ? 0 : kbReleases) + (pad.released('launch') && !kbLaunch ? 1 : 0);
+    this.pendingLaunchRelease = Math.min(MAX_PENDING_PRESSES, this.pendingLaunchRelease + releases);
 
     const m = this.meta;
     m.pausePressed = this.presses('pause') > 0;
@@ -107,6 +120,11 @@ export class InputManager {
     out.dashPressed = this.pendingDash > 0;
     if (out.dashPressed) this.pendingDash--;
     out.dashHeld = this.dashHeld || out.dashPressed;
+    out.launchPressed = this.pendingLaunch > 0;
+    if (out.launchPressed) this.pendingLaunch--;
+    out.launchHeld = this.launchHeld || out.launchPressed;
+    out.launchReleased = this.pendingLaunchRelease > 0;
+    if (out.launchReleased) this.pendingLaunchRelease--;
     return out;
   }
 
@@ -114,6 +132,8 @@ export class InputManager {
   clearEdges(): void {
     this.pendingJump = 0;
     this.pendingDash = 0;
+    this.pendingLaunch = 0;
+    this.pendingLaunchRelease = 0;
     const m = this.meta;
     m.pausePressed = false;
     m.debugOverlayPressed = false;

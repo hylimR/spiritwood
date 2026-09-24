@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
 import type { CrawlerDef, LevelData } from '../../src/contracts/level.ts';
-import { SimEventType } from '../../src/contracts/sim.ts';
+import { Ability, SimEventType } from '../../src/contracts/sim.ts';
 import { parseLdtk } from '../../src/level/loader.ts';
 import { LDTK_PATH } from '../../tools/level/build-level.ts';
 import { Bot } from './bot.ts';
@@ -19,6 +19,12 @@ function startAt(bot: Bot, checkpoint: number): void {
   bot.w.teleport(c.x + c.w / 2, c.y + c.h);
 }
 
+/** A segment run on its own: teleport never passes the shrine, so launch segments unlock it directly. */
+function startSegment(bot: Bot, s: Segment): void {
+  startAt(bot, s.from);
+  if (s.launch) bot.w.unlock(Ability.Launch);
+}
+
 function arrived(bot: Bot, s: Segment): boolean {
   return s.to === 'goal' ? bot.w.completed : bot.w.checkpoints[s.to]?.active === true;
 }
@@ -27,7 +33,7 @@ describe('playthrough: forest.ldtk is completable with the real controller', () 
   for (const segment of FOREST_ROUTE) {
     test(`${segment.name} (checkpoint ${segment.from} → ${segment.to})`, () => {
       const bot = new Bot(new WorldRig(level));
-      startAt(bot, segment.from);
+      startSegment(bot, segment);
       segment.run(bot);
       expect(arrived(bot, segment)).toBe(true);
       expect(bot.rig.eventsOf(SimEventType.Died)).toHaveLength(0);
