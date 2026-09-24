@@ -1,4 +1,4 @@
-import { embeddedFetch, readEmbeddedFiles } from './assets/embedded.ts';
+import { embeddedFetch, GAME_DATA, readEmbeddedFiles, shipsFile } from './assets/embedded.ts';
 import { evalAllowed } from './core/csp.ts';
 import { Game } from './game/game.ts';
 
@@ -8,8 +8,6 @@ declare global {
     __spiritwood?: Game;
   }
 }
-
-const PLATES_MANIFEST = 'layers/forest.plates.manifest.json';
 
 const HASH_FLAGS: Readonly<Record<string, string>> = {
   bench: 'bench',
@@ -50,12 +48,12 @@ async function main(): Promise<void> {
     const embedded = readEmbeddedFiles(document);
     // The single-file build embeds only what it ships: without the plate manifest, #plates is ignored.
     const plates = new URLSearchParams(search).get('manifest') === 'plates'
-      && (!embedded || embedded.has(new URL(PLATES_MANIFEST, document.baseURI).href));
+      && shipsFile(embedded, GAME_DATA.platesManifest, document.baseURI);
     const game = await Game.boot({
       gameRoot: document.getElementById('game') as HTMLElement,
       uiRoot: document.getElementById('ui') as HTMLElement,
-      levelUrl: 'levels/forest.ldtk',
-      manifestUrl: plates ? PLATES_MANIFEST : 'layers/forest.manifest.json',
+      levelUrl: GAME_DATA.level,
+      manifestUrl: plates ? GAME_DATA.platesManifest : GAME_DATA.manifest,
       search,
       fetchFn: embedded ? embeddedFetch(embedded, document.baseURI, (input, init) => fetch(input, init)) : undefined,
     });

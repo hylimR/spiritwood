@@ -52,10 +52,11 @@ painted plates load as WebP.
 
 To publish as a Claude artifact, run `npm run artifact -- <outDir>` and publish `<outDir>/index.html`
 on its own. Public artifact links need the host to review the page, and a multi-file build (19 JS
-modules) couldn't be reviewed, so this build is one self-contained page (≈430 KB):
-- PixiJS loads from jsDelivr, pinned with SRI;
-- the game is inlined as one script;
-- the level and layer manifest are inlined as JSON.
+modules) couldn't be reviewed, so this build is one self-contained page (≈375 KB):
+- PixiJS loads from jsDelivr, pinned with SRI; if it's blocked, the page shows the boot error;
+- the game is inlined as one script, with no string compilation (the eval probe is replaced by its
+  known answer);
+- the level and layer manifest are inlined as compact JSON.
 
 It leaves out KTX2, which needs eval, and the painted-plate demo, which streams image files, so
 `#plates` falls back to the procedural forest there.

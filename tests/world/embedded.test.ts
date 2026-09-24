@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'vitest';
-import { EMBEDDED_FILES_ID, embeddedFetch, parseEmbeddedFiles, readEmbeddedFiles } from '../../src/assets/embedded.ts';
+import {
+  EMBEDDED_FILES_ID, embeddedFetch, GAME_DATA, parseEmbeddedFiles, readEmbeddedFiles, shipsFile,
+} from '../../src/assets/embedded.ts';
 
 const BASE = 'https://host.example/art/abc/index.html';
 
@@ -47,5 +49,17 @@ describe('embeddedFetch', () => {
   test('passes everything else to the fallback unchanged', async () => {
     expect(await (await f('layers/other.json')).text()).toBe('net');
     expect(calls).toEqual(['layers/other.json']);
+  });
+});
+
+describe('shipsFile', () => {
+  test('everything ships without embedded files (the normal multi-file build)', () => {
+    expect(shipsFile(null, GAME_DATA.platesManifest, BASE)).toBe(true);
+  });
+
+  test('with embedded files, only what was embedded ships (#plates falls back in the single-file build)', () => {
+    const files = parseEmbeddedFiles(JSON.stringify({ [GAME_DATA.level]: '{}', [GAME_DATA.manifest]: '{}' }), BASE);
+    expect(shipsFile(files, GAME_DATA.manifest, BASE)).toBe(true);
+    expect(shipsFile(files, GAME_DATA.platesManifest, BASE)).toBe(false);
   });
 });

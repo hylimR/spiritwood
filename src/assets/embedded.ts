@@ -6,6 +6,13 @@
  */
 export const EMBEDDED_FILES_ID = 'spiritwood-files';
 
+/** Where the game requests its data (relative to the page); the single-file build embeds level + manifest. */
+export const GAME_DATA = {
+  level: 'levels/forest.ldtk',
+  manifest: 'layers/forest.manifest.json',
+  platesManifest: 'layers/forest.plates.manifest.json',
+} as const;
+
 export type FetchFn = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 /** Parse the embedded JSON into a map keyed by absolute URL (paths resolve against `base`). Throws on bad data. */
@@ -35,4 +42,9 @@ export function embeddedFetch(files: ReadonlyMap<string, string>, base: string, 
     const type = /\.(?:json|ldtk)$/.test(url.pathname) ? 'application/json' : 'text/plain';
     return Promise.resolve(new Response(text, { status: 200, headers: { 'content-type': type } }));
   };
+}
+
+/** Whether the page can load `path`: always without embedded files, else only if it was embedded. */
+export function shipsFile(files: ReadonlyMap<string, string> | null, path: string, base: string): boolean {
+  return !files || files.has(new URL(path, base).href);
 }

@@ -6,8 +6,9 @@
  * minified code, most of it PixiJS) "couldn't be reviewed". So this build has no supporting files:
  * - PixiJS comes from the jsDelivr CDN (an allowlisted script host) as the pinned UMD build with SRI,
  *   plus its unsafe-eval package, which installs eval-free shader sync on load (artifacts forbid eval);
- * - the game is bundled as one IIFE against the `PIXI` global and inlined;
- * - the level and layer manifest are inlined as JSON and served to the loaders by `embeddedFetch`.
+ * - the game is bundled as one IIFE against the `PIXI` global and inlined, guarded so a blocked CDN
+ *   shows the boot error; the build fails if it reads a name the CDN global lacks or compiles strings;
+ * - the level and layer manifest are inlined as compact JSON and served to the loaders by `embeddedFetch`.
  * KTX2 needs eval and the painted-plate demo needs streamed image files, so neither ships here.
  *
  * Usage: node tools/artifact/package-artifact.ts <outDir>
@@ -17,24 +18,31 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build, type Plugin } from 'vite';
-import { EMBEDDED_FILES_ID } from '../../src/assets/embedded.ts';
+import { EMBEDDED_FILES_ID, GAME_DATA } from '../../src/assets/embedded.ts';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const PIXI_DIR = join(ROOT, 'node_modules/pixi.js');
 /** Data files the page embeds, by the path the game requests them at. */
-export const EMBEDDED_PATHS = ['levels/forest.ldtk', 'layers/forest.manifest.json'] as const;
+export const EMBEDDED_PATHS = [GAME_DATA.level, GAME_DATA.manifest] as const;
 /**
  * Bundle-time stand-ins for pixi.js subpaths. KTX2 never runs without eval. The CDN unsafe-eval script
  * installs itself on load, except that (pixi.js 8.21.0) it patches a private copy of ParticleBuffer
  * instead of PIXI.ParticleBuffer, so particle updates would still call `new Function`: patch the real one.
  */
-const STAND_INS: Readonly<Record<string, string>> = {
+export const STAND_INS: Readonly<Record<string, string>> = {
   'pixi.js/ktx2': 'export {};',
   'pixi.js/unsafe-eval': [
     "import { ParticleBuffer, generateParticleUpdatePolyfill } from 'pixi.js';",
     'Object.assign(ParticleBuffer.prototype, { generateParticleUpdate: generateParticleUpdatePolyfill });',
   ].join('\n'),
 };
+/**
+ * The artifact host forbids eval, so the eval probe (which a no-eval CSP reports as a violation even
+ * when the EvalError is caught) is replaced by its known answer.
+ */
+const CSP_MODULE = join(ROOT, 'src/core/csp.ts');
+const CSP_STAND_IN = 'export function evalAllowed() { return false; }';
+const BOOT_FAILURE = 'Could not start.\n\nPixiJS did not load from cdn.jsdelivr.net (blocked network or integrity mismatch).';
 
 export interface CdnScript {
   src: string;
@@ -71,14 +79,25 @@ export function assemblePage(p: PageParts): string {
   const body = pick(p.indexHtml, /<body>([\s\S]*?)<\/body>/, 'body')
     .replace(/<script\b[\s\S]*?<\/script>/g, '')
     .split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
-  if (/<\/script/i.test(p.code)) throw new Error('bundled code contains "</script"; it cannot be inlined');
+  // Any of these can end the inline script early or switch the HTML tokenizer into an escaped state.
+  const unsafe = p.code.match(/<\/script|<!--|<script/i);
+  if (unsafe) throw new Error(`bundled code contains "${unsafe[0]}"; it cannot be inlined`);
+  // A blocked or tampered CDN leaves PIXI undefined: show the boot error instead of hanging on the title.
+  const guarded = [
+    'if (window.PIXI && PIXI.Application && PIXI.generateParticleUpdatePolyfill) {',
+    p.code,
+    '} else {',
+    "  const boot = document.getElementById('boot');",
+    `  if (boot) { boot.classList.add('error'); boot.textContent = ${JSON.stringify(BOOT_FAILURE)}; }`,
+    '}',
+  ].join('\n');
   return [
     title,
     style,
     body,
     ...p.cdn.map((s) => `<script src="${s.src}" integrity="${s.integrity}" crossorigin="anonymous"></script>`),
     `<script type="application/json" id="${EMBEDDED_FILES_ID}">${scriptSafeJson(p.files)}</script>`,
-    `<script>${p.code}</script>`,
+    `<script>${guarded}</script>`,
     '',
   ].join('\n');
 }
@@ -87,13 +106,23 @@ function sri(path: string): string {
   return `sha384-${createHash('sha384').update(readFileSync(path)).digest('base64')}`;
 }
 
-/** Resolve the subpath stand-ins; everything else from 'pixi.js' stays external (the PIXI global). */
+/**
+ * Resolve the pixi.js subpath stand-ins (an unknown subpath fails the build rather than bundling a
+ * private PixiJS copy) and the eval probe; bare 'pixi.js' stays external (the PIXI global).
+ */
 function standIns(): Plugin {
   return {
-    name: 'spiritwood-pixi-stand-ins',
+    name: 'spiritwood-artifact-stand-ins',
     enforce: 'pre',
-    resolveId: (id) => (id in STAND_INS ? `\0stand-in:${id}` : null),
-    load: (id) => (id.startsWith('\0stand-in:') ? STAND_INS[id.slice('\0stand-in:'.length)] ?? null : null),
+    resolveId(id) {
+      if (id in STAND_INS) return `\0stand-in:${id}`;
+      if (id.startsWith('pixi.js/')) throw new Error(`${id}: no stand-in for the CDN build (add one to STAND_INS)`);
+      return null;
+    },
+    load(id) {
+      if (id.startsWith('\0stand-in:')) return STAND_INS[id.slice('\0stand-in:'.length)] ?? null;
+      return id.split('?')[0] === CSP_MODULE ? CSP_STAND_IN : null;
+    },
   };
 }
 
@@ -112,7 +141,7 @@ async function bundleGame(outDir: string, minify: boolean): Promise<string> {
       copyPublicDir: false,
       lib: { entry: join(ROOT, 'src/main.ts'), formats: ['iife'], name: 'Spiritwood', fileName: () => 'spiritwood.js' },
       rollupOptions: {
-        external: ['pixi.js'],
+        external: (id) => id === 'pixi.js',
         output: { globals: { 'pixi.js': 'PIXI' } },
       },
     },
@@ -132,18 +161,37 @@ export function umdExportNames(src: string, bundleVar: string): string[] {
   return [...src.slice(start, end).matchAll(new RegExp(`\\b${p}\\.(\\w+)=`, 'g'))].map((m) => m[1] as string);
 }
 
+/** Every name the page's two CDN scripts put on the PIXI global. */
+export function cdnGlobalNames(pixiDir: string = PIXI_DIR): Set<string> {
+  return new Set([
+    ...umdExportNames(readFileSync(join(pixiDir, 'dist/pixi.min.js'), 'utf8'), 'PIXI'),
+    ...umdExportNames(readFileSync(join(pixiDir, 'dist/packages/unsafe-eval.min.js'), 'utf8'), 'unsafe_eval_js'),
+  ]);
+}
+
 /**
- * Every `PIXI.x` the bundle reads must exist on the global the two CDN scripts build (pixi.js plus the
- * unsafe-eval exports). Checked on the unminified bundle, where Rollup names the global's parameter
- * `pixi_js` and nothing shadows it.
+ * Problems with the unminified bundle, where Rollup names the global's parameter `pixi_js` and nothing
+ * shadows it: PIXI names the CDN global lacks, or PixiJS itself bundled in.
  */
-async function checkPixiNames(code: string): Promise<void> {
-  if (!code.startsWith('(function(pixi_js) {')) throw new Error('bundle: expected an IIFE over pixi_js');
+export function checkUnminifiedBundle(code: string, globalNames: ReadonlySet<string>): string[] {
+  if (!code.startsWith('(function(pixi_js) {')) return ['expected an IIFE over pixi_js'];
+  const problems: string[] = [];
   const used = new Set([...code.matchAll(/\bpixi_js\.(\w+)/g)].map((m) => m[1] as string));
-  const unsafeEval = umdExportNames(readFileSync(join(PIXI_DIR, 'dist/packages/unsafe-eval.min.js'), 'utf8'), 'unsafe_eval_js');
-  const names = new Set([...Object.keys(await import('pixi.js')), ...unsafeEval]);
-  const missing = [...used].filter((n) => !names.has(n));
-  if (missing.length) throw new Error(`bundle uses PIXI names the CDN build lacks: ${missing.join(', ')}`);
+  const missing = [...used].filter((n) => !globalNames.has(n));
+  if (missing.length) problems.push(`uses PIXI names the CDN build lacks: ${missing.join(', ')}`);
+  if (code.includes('_unsafeEvalCheck')) problems.push('bundles PixiJS internals instead of using the PIXI global');
+  if (!used.has('generateParticleUpdatePolyfill')) problems.push('lacks the ParticleBuffer unsafe-eval stand-in');
+  return problems;
+}
+
+/** Problems with the shipped bundle: any string compilation, which the host's CSP forbids. */
+export function checkShippedBundle(code: string): string[] {
+  const hits = code.match(/\beval\(|\bFunction\(/g);
+  return hits ? [`compiles strings at runtime (${hits.join(', ')})`] : [];
+}
+
+function assertNoProblems(what: string, problems: readonly string[]): void {
+  if (problems.length) throw new Error(`${what}: ${problems.join('; ')}`);
 }
 
 async function main(): Promise<void> {
@@ -157,10 +205,12 @@ async function main(): Promise<void> {
     src: `https://cdn.jsdelivr.net/npm/pixi.js@${version}/${f}`,
     integrity: sri(join(PIXI_DIR, f)),
   }));
-  await checkPixiNames(await bundleGame(join(out, 'bundle'), false));
+  assertNoProblems('unminified bundle', checkUnminifiedBundle(await bundleGame(join(out, 'bundle'), false), cdnGlobalNames()));
   const code = await bundleGame(join(out, 'bundle'), true);
+  assertNoProblems('bundle', checkShippedBundle(code));
   const files: Record<string, string> = {};
-  for (const path of EMBEDDED_PATHS) files[path] = readFileSync(join(ROOT, 'public', path), 'utf8');
+  // Both are JSON read with res.json(); compacting drops the pretty-printing (~54 KB of the level).
+  for (const path of EMBEDDED_PATHS) files[path] = JSON.stringify(JSON.parse(readFileSync(join(ROOT, 'public', path), 'utf8')));
 
   const page = assemblePage({ indexHtml: readFileSync(join(ROOT, 'index.html'), 'utf8'), cdn, files, code });
   writeFileSync(join(out, 'index.html'), page);
