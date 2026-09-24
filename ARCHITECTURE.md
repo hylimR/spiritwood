@@ -395,14 +395,17 @@ may retune them, but must then update the reach tables in §5.4.
 **Input.** `InputFrame.launchReleased` is a latched release edge, so a release and re-press inside one
 frame still releases. The re-press is then buffered.
 
-**Targets.** Any active seed (either owner) and any enemy (in every mode, stunned included). A target is
-**valid** when all of these hold:
+**Targets.** Any active seed (either owner), any crawler, and any player-aimed spitter, in every mode,
+stunned included. Fixed-aim spitters are emitters, not targets: their seeds are the anchors. Otherwise
+their always-in-range bodies would let the player skip the rhythm the gates teach. A target is **valid**
+when all of these hold:
 - Its centre is within `range` of the player centre.
 - The segment between the two centres crosses no Solid tile. The check is a supercover grid walk: a
   segment through a tile corner tests both neighbours and is blocked if either is Solid. OneWay and
   Thorns don't block.
 - It isn't the last target while `regrab > 0`. The last target is (kind, id) for an enemy and (id,
-  spawnTick) for a seed, so a reused pool slot counts as a new target.
+  spawnTick) for a seed. For a seed that is the spawnTick after the reflection, so the flung seed can't be
+  regrabbed, and a reused pool slot counts as a new target.
 
 The **candidate** is the valid target nearest the player centre; ties go to seeds, then to the lower id.
 It is published at step 8 (LaunchView), and the next tick's grab uses that published candidate, so what
@@ -426,8 +429,8 @@ you grab is always the ring you saw.
      - **Seed target:** owner = `reflected`, (vx, vy) = −aim × seedSpeed, spawnTick = tick, age = 0,
        lifetime = reflectedLifetimeTicks.
      - **Enemy target:** EnemyHit (cause Launch), and the enemy is stunned: stunTicks for a crawler,
-       spitterStunTicks for a player-aimed spitter. A running stun restarts. Fixed-aim spitters are
-       never stunned, and enemies are never displaced.
+       spitterStunTicks for a player-aimed spitter. A running stun restarts. Enemies are never
+       displaced.
      - Emit Launch; `frozen` = false.
 2. **Buffer:** a `launchPressed` sets launchBuffer = bufferTicks, as long as the ability is unlocked, the
    player is alive and not aiming (having just released counts as not aiming). Otherwise the press is
@@ -462,7 +465,7 @@ Launch.
   - A wall or ceiling hit zeroes only that axis.
   - No wall slide starts during the phase.
 - **Landing:** ends the phase (Land). The release cleared groundKind, so a launch that leaves you on the
-  ground lands on R.
+  ground lands on R. A stomp bounce also ends the phase.
 - **Presses after inputLock:** a jump press fires the first legal §5.1 jump (the stale coyote and
   wallCoyote are gone), and a dash press dashes. Either one ends the phase.
 - **Afterwards:** from R + flightTicks the normal rules apply. Over-speed decays vx toward the input
@@ -563,7 +566,8 @@ field defaults.
   at (x, y − spitterMuzzleHeight).
   - **Harmful from every side** in every mode except `stunned`: touching it kills with
     DeathCause.Enemy. It can't be stomped.
-  - Fixed-aim spitters are anchors, not foes: they are never stunned.
+  - Fixed-aim spitters are anchors, not foes: they are never stunned and are not launch targets (their
+    seeds are).
 - **Active** while the player is alive with its centre within `range` of the muzzle (inclusive). A
   player-aimed spitter also needs:
   - LOS from the muzzle to the player centre (the §5.1.1 walk);
@@ -727,7 +731,7 @@ controller validated against `PlayerController`):
       dash).
     - A scripted launch does land. It uses only the 8 keyboard directions and neutral aim.
   - **Anchors in the proof:** every launch target reachable from the approach counts, including
-    player-aimed seeds, which come to the player, and enemy bodies.
+    player-aimed seeds, which come to the player, and the bodies of crawlers and player-aimed spitters.
 - **Stun gates (M2):** a player-aimed spitter stands in a passage ≤ 2 tiles tall. Its box plus the
   player's (118 u) doesn't fit under a 96 u ceiling, and the dash gives no invulnerability, so the only
   way through is to stun it with a flung seed or a launch.

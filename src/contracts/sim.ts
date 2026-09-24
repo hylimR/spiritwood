@@ -115,12 +115,15 @@ export type LaunchTargetKind = 'none' | 'seed' | 'enemy';
 export interface LaunchView {
   /** The ability has been acquired this run (an AbilityShrine was touched). */
   readonly unlocked: boolean;
-  /** The target a press would grab now (nearest valid in range); `none` while aiming, dead or locked. */
+  /**
+   * The target a press would grab now (nearest valid in range); `none` while aiming, dead or locked.
+   * candidateId/X/Y are meaningful only while candidateKind ≠ 'none' (stale otherwise).
+   */
   readonly candidateKind: LaunchTargetKind;
   readonly candidateId: number;
   readonly candidateX: number;
   readonly candidateY: number;
-  /** The grabbed target while aiming, then the last launched target during the flight. */
+  /** The grabbed target while aiming, then the last launched target during the flight; X/Y = its centre at the grab. */
   readonly targetKind: LaunchTargetKind;
   readonly targetId: number;
   readonly targetX: number;
