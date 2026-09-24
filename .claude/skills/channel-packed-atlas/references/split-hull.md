@@ -2,7 +2,7 @@
 
 This is a column-strip decomposition of an alpha map into an **opaque core** (drawn in the depth pre-pass with blending off)
 and a **soft band** (drawn blended). It is pure TypeScript with no engine dependency. The listing is verbatim from
-`src/render/gen/hull.ts` at commit `49a1da2`.
+`src/render/gen/hull.ts` at commit `2ef9428` (unchanged by the art pass; only the settings below changed).
 
 The steps:
 1. Morphology masks. `visible` (α > 1) is dilated by `pad`, and `opaque` (α ≥ 254) is eroded by `coreInset`. Both use separable O(n) sweeps.
@@ -13,9 +13,10 @@ The steps:
 5. `subdivideRows` splits rects on a global row grid, so vertex sway can bend them. `splitRowsAt` splits rects at a stretch row.
 
 The repo settings (`src/render/gen/kit.ts`, with `KIT_MAX_MIP = 1`) are:
-`{ cell: 6, maxSpans: 4, coreInset: 1 + (1 << KIT_MAX_MIP), pad: 1 << KIT_MAX_MIP, minCore: 8, minGap: 4, snap: 2 }`.
-On the forest kit they produce 5161 rects (1273 core, 3888 soft). The hull covers 34% of the element rect area, and 32% of the hull is
-core. The core covers 54% of the opaque texels; the rest is given up to insets, `minCore` and quantisation.
+`{ cell: 4, maxSpans: 6, coreInset: 1 + (1 << KIT_MAX_MIP), pad: 1 << KIT_MAX_MIP, minCore: 6, minGap: 4, snap: 2 }`.
+On the 79-element forest kit they produce 7068 rects as stored on the elements (1430 core, 5638 soft; 5071 before the sway and
+stretch-row splits). The hull covers 32% of the element rect area, and 25% of the hull is core. The core covers 44% of the opaque
+texels; the rest is given up to insets, `minCore` and quantisation.
 
 ## Listing
 

@@ -2,7 +2,7 @@
 
 The painted-plate path takes a colour image (painted, AI-generated or CPU-painted), bakes it into chunked WebP and KTX2 files with tight hull
 polygons, and streams it at runtime. It uses the same vertex format and program as the procedural kit (modes
-`PlateCore` and `PlateBand`). The listings are verbatim from commit `49a1da2`.
+`PlateCore` and `PlateBand`). The listings are verbatim from commit `2ef9428` (the art pass).
 
 Pipeline: `paintTreeline` → `bakeImage` (1024² chunks → PNG palette, WebP, KTX2 ETC1S mipmapped + `chunkHulls`)
 → manifest `PlateLayerDef` → `PlateLayer` (ChunkStreamer → `loadTextureSource` → `plateMeshData` → core and band meshes).

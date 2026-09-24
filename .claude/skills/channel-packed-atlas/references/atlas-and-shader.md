@@ -1,10 +1,12 @@
 # Atlas and shader listings (channel-packed-atlas)
 
-These excerpts are verbatim from the Spiritwood repo at commit `49a1da2`, with only the line ranges trimmed. The
+These excerpts are verbatim from the Spiritwood repo at commit `2ef9428` (the art pass), with only the line ranges trimmed. The
 `as number` casts are the repo's house style; you can drop them unless your tsconfig enables `noUncheckedIndexedAccess`. Read them in this order: the raster finalize
 (channel packing and the rim), the packer, the upload, the element pipeline, then the program that decodes the channels.
 
-## 1. Coverage and smooth union (SDF helpers used by finalize)
+## 1. Coverage and smooth union (the SDF helpers behind the raster)
+
+`smin` joins shapes as they are splatted. `finalize` inlines `coverage` (the same smoothstep, with a precomputed `1 / softness`).
 
 `src/render/gen/sdf.ts` lines 90–100:
 
@@ -25,16 +27,19 @@ export function coverage(d: number, softness: number): number {
 ## 2. Material tables and finalize options
 
 `DISP` is the edge displacement in texels, `FREQ` is the noise frequency, and `RIM` is the rim response. Each table is indexed by material id
-(None, Bark, Leaf, Stone, Soft, Petal, Stem, Moss, Paper, Wood, Fungus).
+(None, Bark, Leaf, Stone, Soft, Petal, Stem, Moss, Paper, Wood, Fungus, PaleBark, Needle). `alphaScale` is unused by the shipped elements.
 
-`src/render/gen/raster.ts` lines 26–50:
+`src/render/gen/raster.ts` lines 30–59:
 
 ```ts
 const FAR = 1e4;
 /** Per material: edge displacement amplitude (texels), noise frequency (table units/texel), rim response. */
-const DISP = new Float32Array([0, 1.2, 4.5, 1.6, 6, 0.4, 0.3, 2.2, 0, 0.8, 0.6]);
-const FREQ = new Float32Array([0, 0.9, 1.1, 0.6, 0.35, 1.5, 1.5, 1.2, 0, 0.8, 1]);
-const RIM = new Float32Array([0, 1, 0.85, 1, 0, 0.6, 0.7, 0.9, 0.3, 1, 0.8]);
+const DISP = new Float32Array([0, 1.2, 3.2, 1.6, 6, 0.4, 0.3, 2.2, 0, 0.8, 0.6, 0.9, 2.2]);
+const FREQ = new Float32Array([0, 0.9, 1.6, 0.6, 0.35, 1.5, 1.5, 1.2, 0, 0.8, 1, 0.9, 2.6]);
+const RIM = new Float32Array([0, 1, 0.85, 1, 0, 0.6, 0.7, 0.9, 0.3, 1, 0.8, 1.1, 0.8]);
+/** Direction toward the moon (upper left), normalised. */
+const LX = -0.55;
+const LY = -0.83;
 
 export interface FinalizeOptions {
   /** AA / softness width in texels (large values bake a blur, e.g. for the foreground frame). */
@@ -48,6 +53,8 @@ export interface FinalizeOptions {
   rimStrength?: number;
   /** Multiplier on luminance detail amplitude. */
   detail?: number;
+  /** Multiplier on the final coverage (translucent elements such as mist banks). */
+  alphaScale?: number;
   /**
    * Alpha fades to 0 over this many texels at the rect edges (a safety net so nothing is hard-cut by
    * the rect), except at an intentionally cut edge.
@@ -64,8 +71,11 @@ Notes on this listing:
 - Halo texels become "pure light".
 - Texels with zero alpha write all-zero RGBA.
 - The rim taps point to earlier rows, so a single row-major pass sees their final alpha.
+- Each row visits only the span its shapes touched (`rowMin`/`rowMax`, widened by the rim offset) and zero-fills the rest.
+- `shade[i]` is the volume shading written by the shape that owns the texel (`volume()`/`lobe()` while drawing).
+- Stores go through a `Uint8ClampedArray` view, which rounds and clamps.
 
-`src/render/gen/raster.ts` lines 249–385:
+`src/render/gen/raster.ts` lines 448–631:
 
 ```ts
   /**
@@ -84,9 +94,28 @@ Notes on this listing:
     const detail = o.detail ?? 1;
     const edge = o.edgeFade ?? 0;
     const cut = o.cut ?? 'none';
+    const alphaScale = o.alphaScale ?? 1;
+    const shadeBuf = this.shade;
     const alpha = this.alpha;
     const dist = this.dist;
     const mats = this.mat;
+    const halo = this.halo;
+    const emit = this.emit;
+    const noise = this.noise;
+    const nox = this.nox;
+    const noy = this.noy;
+    // Clamped view: stores round and clamp to 0..255 natively.
+    const out = new Uint8ClampedArray(dst.buffer, dst.byteOffset, dst.length);
+    const nm = DISP.length;
+    const dispM = new Float32Array(nm);
+    const reachM = new Float32Array(nm);
+    const rimM = new Float32Array(nm);
+    for (let m = 0; m < nm; m++) {
+      dispM[m] = (DISP[m] as number) * dispScale;
+      reachM[m] = (dispM[m] as number) * 1.2 + soft;
+      rimM[m] = (RIM[m] as number) * rimStrength;
+    }
+    const invSoft = 1 / Math.max(1e-6, soft);
     // Rim samples toward the upper-left light. Both offsets point to earlier rows, so a single
     // row-major pass can read their final alpha.
     const lx1 = Math.round(-0.55 * rimWidth);
@@ -100,36 +129,52 @@ Notes on this listing:
         const t = clamp01((y / h - fade[0]) / Math.max(1e-6, fade[1] - fade[0]));
         rowFade = 1 - t * t * (3 - 2 * t);
       }
+      const aRow = rowFade * alphaScale;
       const top = 0.07 * (0.5 - y / h);
-      let o4 = ((dy + y) * dstW + dx) * 4;
-      for (let x = 0; x < w; x++, o4 += 4) {
+      const rowStart = ((dy + y) * dstW + dx) * 4;
+      // Only the touched span (widened by the rim offset) can be non-zero.
+      const xs = Math.max(0, (this.rowMin[y] as number) - 1);
+      const xe = Math.min(w, (this.rowMax[y] as number) + 2 - lx1);
+      if (xe <= xs) {
+        dst.fill(0, rowStart, rowStart + w * 4);
+        continue;
+      }
+      if (xs > 0) dst.fill(0, rowStart, rowStart + xs * 4);
+      if (xe < w) dst.fill(0, rowStart + xe * 4, rowStart + w * 4);
+      const edgeY = edge > 0 ? Math.min(cut !== 'top' ? y + 0.5 : Infinity, cut !== 'bottom' ? h - y - 0.5 : Infinity) : Infinity;
+      const edgeYH = Math.min(y + 0.5, h - y - 0.5);
+      const r1ok = y + ly1 >= 0;
+      const r2ok = y + ly2 >= 0;
+      const r1 = (y + ly1) * w;
+      const r2 = (y + ly2) * w;
+      let o4 = rowStart + xs * 4;
+      for (let x = xs; x < xe; x++, o4 += 4) {
         const i = y * w + x;
         const d0 = dist[i] as number;
         const m = mats[i] as number;
         let a = 0;
         if (d0 < FAR) {
-          const disp = (DISP[m] as number) * dispScale;
-          const reach = disp * 1.2 + soft;
+          const reach = reachM[m] as number;
           if (d0 < reach) {
             let d = d0;
+            const disp = dispM[m] as number;
             if (disp > 0 && d0 > -reach) {
               const f = FREQ[m] as number;
-              d += (this.n(x * f, y * f) * 0.75 + this.n(x * f * 3.1 + 71, y * f * 3.1 + 13) * 0.25) * disp;
+              d += (noise.sample(x * f + nox, y * f + noy) * 0.75 + noise.sample(x * f * 3.1 + 71 + nox, y * f * 3.1 + 13 + noy) * 0.25) * disp;
             }
-            a = coverage(d, soft) * rowFade;
+            const t = 0.5 - d * invSoft;
+            a = (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t)) * aRow;
           }
         }
-        let haloA = this.halo[i] as number;
+        let haloA = halo[i] as number;
         if (edge > 0 && (a > 0 || haloA > 0)) {
           const ex = Math.min(x + 0.5, w - x - 0.5);
-          let e = ex;
-          if (cut !== 'top') e = Math.min(e, y + 0.5);
-          if (cut !== 'bottom') e = Math.min(e, h - y - 0.5);
+          const e = Math.min(ex, edgeY);
           if (e < edge) {
             const t = e / edge;
             a *= t * t * (3 - 2 * t);
           }
-          const eh = Math.min(ex, y + 0.5, h - y - 0.5);
+          const eh = Math.min(ex, edgeYH);
           if (eh < edge) {
             const t = eh / edge;
             haloA *= t * t * (3 - 2 * t);
@@ -146,14 +191,17 @@ Notes on this listing:
         let lum = 0.5;
         let rim = 0;
         if (a > 0) {
-          lum = 0.5 + (this.materialLum(m, x, y) + top) * detail;
+          lum = 0.5 + (this.materialLum(m, x, y) + top + (shadeBuf[i] as number)) * detail;
           if (rimWidth > 0) {
-            const s1 = alphaAt(alpha, w, h, x + lx1, y + ly1);
-            const s2 = alphaAt(alpha, w, h, x + lx2, y + ly2);
-            rim = clamp01(a * ((1 - s1) * 0.7 + (1 - s2) * 0.5) * (RIM[m] as number) * rimStrength);
+            const x1 = x + lx1;
+            const x2 = x + lx2;
+            const s1 = r1ok && x1 >= 0 && x1 < w ? (alpha[r1 + x1] as number) : 0;
+            const s2 = r2ok && x2 >= 0 && x2 < w ? (alpha[r2 + x2] as number) : 0;
+            rim = a * ((1 - s1) * 0.7 + (1 - s2) * 0.5) * (rimM[m] as number);
+            if (rim > 1) rim = 1;
           }
         }
-        let em = this.emit[i] as number;
+        let em = emit[i] as number;
         let outA = a;
         if (haloA > a) {
           // Halo texels are pure light: emissive, no rim, neutral detail.
@@ -164,9 +212,16 @@ Notes on this listing:
           outA = haloA;
         }
         const a8 = Math.round(clamp01(outA) * 255);
-        dst[o4] = a8 === 0 ? 0 : Math.round(clamp01(lum) * 255);
-        dst[o4 + 1] = a8 === 0 ? 0 : Math.round(rim * 255);
-        dst[o4 + 2] = a8 === 0 ? 0 : Math.round(clamp01(em) * 255);
+        if (a8 === 0) {
+          dst[o4] = 0;
+          dst[o4 + 1] = 0;
+          dst[o4 + 2] = 0;
+          dst[o4 + 3] = 0;
+          continue;
+        }
+        out[o4] = lum * 255;
+        out[o4 + 1] = rim * 255;
+        out[o4 + 2] = em * 255;
         dst[o4 + 3] = a8;
       }
     }
@@ -195,15 +250,17 @@ Notes on this listing:
         return 0.18 * this.n(x * 0.08 + 7, y * 0.9 + 3);
       case Mat.Fungus:
         return 0.12 + 0.1 * this.n(x * 0.8, y * 0.8);
+      case Mat.PaleBark: {
+        // Pale bark with dark horizontal lenticels and knots.
+        const marks = this.n(x * 0.35 + 40, y * 1.9 + 7);
+        return 0.46 + 0.1 * this.n(x * 0.5, y * 0.05) - (marks > 0.3 ? Math.min(0.6, (marks - 0.3) * 2.2) : 0);
+      }
+      case Mat.Needle:
+        return 0.02 + 0.16 * this.n(x * 1.4 + 60, y * 1.4);
       default:
         return 0;
     }
   }
-}
-
-function alphaAt(alpha: Float32Array, w: number, h: number, x: number, y: number): number {
-  if (x < 0 || y < 0 || x >= w || y >= h) return 0;
-  return alpha[y * w + x] as number;
 }
 ```
 
@@ -352,20 +409,20 @@ The call sites in `src/render/layers/assets.ts` pass `{ autoGenerateMipmaps: tru
 `estimateTextureBytes(width, height, 4, true)`. Sub-frames share one source through
 `new Texture({ source: tex.source, frame: new Rectangle(x, y, w, h) })`.
 
-## 6. The element pipeline: mip constants, hull settings, raster → pack → alpha copy → split hull
+## 6. The element pipeline: mip constants, hull settings, pack → raster → alpha copy → split hull
 
-`src/render/gen/kit.ts` lines 8–149:
+`src/render/gen/kit.ts` lines 8–169:
 
 ```ts
 /** Highest mip level the kit shader samples (it clamps its LOD); gutters and core insets derive from it. */
 export const KIT_MAX_MIP = 1;
 /** Hull settings for every kit element. */
 export const KIT_HULL: HullOptions = {
-  cell: 6,
-  maxSpans: 4,
+  cell: 4,
+  maxSpans: 6,
   coreInset: 1 + (1 << KIT_MAX_MIP),
   pad: 1 << KIT_MAX_MIP,
-  minCore: 8,
+  minCore: 6,
   minGap: 4,
   snap: 2,
 };
@@ -375,7 +432,7 @@ export const SWAY_ROW_STEP = 24;
 export const KIT_GUTTER = 4;
 /** Default atlas size (the manifest's atlas entry is authoritative at runtime). */
 export const KIT_WIDTH = 2048;
-export const KIT_HEIGHT = 1792;
+export const KIT_HEIGHT = 2048;
 
 export interface KitElement {
   index: number;
@@ -395,6 +452,8 @@ export interface KitElement {
   cut: 'none' | 'top' | 'bottom';
   /** Texel row above which a top-cut element stretches (rows below keep the horizontal scale). */
   stretchFrom: number;
+  /** Texel x of the trunk column that leaves a top-cut element (its anchorX when there is none). */
+  columnX: number;
   /** Element-local texel rects [x0, y0, x1, y1, …]: opaque core and soft band (disjoint). */
   core: number[];
   soft: number[];
@@ -423,6 +482,56 @@ interface Job {
 }
 
 /**
+ * Rasterise one element into the atlas and compute its split hull. (Kept out of the generator:
+ * V8 optimises loops in plain functions much sooner, which matters for the single cold run at boot.)
+ */
+function buildElement(
+  job: Job, i: number, index: number, seed: number, noise: NoiseTable, scratch: Scratch, pixels: Uint8Array, width: number,
+): KitElement {
+  const { spec, variant, item } = job;
+  const rng = new Rng((hashString(`${spec.key ?? spec.category}:${variant}`) ^ seed) >>> 0);
+  const r = new ElementRaster(spec.w, spec.h, noise, i + 1, scratch);
+  r.configure(spec.finalize);
+  spec.draw(r, rng, variant);
+  const x = item.x as number;
+  const y = item.y as number;
+  r.finalize(pixels, width, x, y, { edgeFade: ELEMENT_MARGIN, cut: spec.cut, ...spec.finalize });
+  const alphaBytes = scratch.bytes(spec.w * spec.h);
+  copyAlpha(pixels, width, x, y, spec.w, spec.h, alphaBytes);
+  const hull = computeSplitHullHalf(alphaBytes, spec.w, spec.h, KIT_HULL);
+  const sway = spec.sway !== 'none';
+  const stretchFrom = spec.stretchFrom ?? spec.anchorY;
+  const split = (rects: number[]): number[] => (spec.cut === 'top' ? splitRowsAt(rects, stretchFrom) : rects);
+  return {
+    index,
+    category: spec.category,
+    variant,
+    x, y, w: spec.w, h: spec.h,
+    unitsPerTexel: spec.unitsPerTexel,
+    anchorX: spec.anchorX,
+    anchorY: spec.anchorY,
+    sway: spec.sway,
+    swayScale: spec.swayScale,
+    emissive: spec.emissive,
+    cut: spec.cut,
+    stretchFrom,
+    columnX: Number.isNaN(r.columnX) ? spec.anchorX : r.columnX,
+    core: split(sway ? subdivideRows(hull.core, SWAY_ROW_STEP) : hull.core),
+    soft: split(sway ? subdivideRows(hull.soft, SWAY_ROW_STEP) : hull.soft),
+    coreArea: hull.coreArea,
+    softArea: hull.softArea,
+  };
+}
+
+function copyAlpha(pixels: Uint8Array, width: number, x: number, y: number, w: number, h: number, out: Uint8Array): void {
+  for (let row = 0; row < h; row++) {
+    let src = ((y + row) * width + x) * 4 + 3;
+    const o = row * w;
+    for (let col = 0; col < w; col++, src += 4) out[o + col] = pixels[src] as number;
+  }
+}
+
+/**
  * Deterministic kit generation as a step generator: one element per step, so the async variant can
  * yield to the event loop between elements and keep the boot screen responsive.
  */
@@ -436,44 +545,12 @@ function* kitSteps(seed: number, width: number, height: number, specs: readonly 
   const noise = new NoiseTable(seed ^ 0x5eed);
   const elements: KitElement[] = [];
   const byCategory = Object.fromEntries(KIT_CATEGORIES.map((c) => [c, [] as KitElement[]])) as Record<KitCategory, KitElement[]>;
+  const scratch = new Scratch();
   yield;
   for (let i = 0; i < jobs.length; i++) {
-    const { spec, variant, item } = jobs[i] as Job;
-    const rng = new Rng((hashString(`${spec.category}:${variant}`) ^ seed) >>> 0);
-    const r = new ElementRaster(spec.w, spec.h, noise, i + 1);
-    spec.draw(r, rng, variant);
-    const x = item.x as number;
-    const y = item.y as number;
-    r.finalize(pixels, width, x, y, { edgeFade: ELEMENT_MARGIN, cut: spec.cut, ...spec.finalize });
-    const alphaBytes = new Uint8Array(spec.w * spec.h);
-    for (let row = 0; row < spec.h; row++) {
-      let src = ((y + row) * width + x) * 4 + 3;
-      for (let col = 0; col < spec.w; col++, src += 4) alphaBytes[row * spec.w + col] = pixels[src] as number;
-    }
-    const hull = computeSplitHullHalf(alphaBytes, spec.w, spec.h, KIT_HULL);
-    const sway = spec.sway !== 'none';
-    const stretchFrom = spec.stretchFrom ?? spec.anchorY;
-    const split = (rects: number[]): number[] => (spec.cut === 'top' ? splitRowsAt(rects, stretchFrom) : rects);
-    const el: KitElement = {
-      index: elements.length,
-      category: spec.category,
-      variant,
-      x, y, w: spec.w, h: spec.h,
-      unitsPerTexel: spec.unitsPerTexel,
-      anchorX: spec.anchorX,
-      anchorY: spec.anchorY,
-      sway: spec.sway,
-      swayScale: spec.swayScale,
-      emissive: spec.emissive,
-      cut: spec.cut,
-      stretchFrom,
-      core: split(sway ? subdivideRows(hull.core, SWAY_ROW_STEP) : hull.core),
-      soft: split(sway ? subdivideRows(hull.soft, SWAY_ROW_STEP) : hull.soft),
-      coreArea: hull.coreArea,
-      softArea: hull.softArea,
-    };
+    const el = buildElement(jobs[i] as Job, i, elements.length, seed, noise, scratch, pixels, width);
     elements.push(el);
-    byCategory[spec.category].push(el);
+    byCategory[el.category].push(el);
     yield;
   }
   return { width, height, pixels, elements, byCategory, ms: 0 };
@@ -505,7 +582,7 @@ export async function generateKitAsync(
 
 The TS version is kept in sync with the GLSL and serves CPU previews and tests.
 
-`src/render/layers/kitShading.ts` lines 1–101:
+`src/render/layers/kitShading.ts` lines 1–110:
 
 ```ts
 import { PALETTE } from '../../config.ts';
@@ -529,6 +606,8 @@ export interface KitShadeParams {
   mistY: number;
   mistDepth: number;
   mist: number;
+  /** Colour of the height mist (defaults to fogColor): lets a layer's base dissolve into a different mist. */
+  mistColor?: RGB;
 }
 
 export const KIT_MODE = {
@@ -545,11 +624,12 @@ export const KIT_MODE = {
 } as const;
 export type KitMode = (typeof KIT_MODE)[keyof typeof KIT_MODE];
 
-/** Moonlight rim colour (cool, slightly cyan). */
+/** Moonlight rim colour: cold cyan (moonlight leaning toward the spirit and flora glows). */
 export const KIT_RIM_COLOR: RGB = (() => {
   const m = hexToRgb(PALETTE.moonlight);
   const s = hexToRgb(PALETTE.spiritGlow);
-  return [m[0] * 0.7 + s[0] * 0.3, m[1] * 0.7 + s[1] * 0.3, m[2] * 0.7 + s[2] * 0.3];
+  const f = hexToRgb(PALETTE.floraGlow);
+  return [m[0] * 0.45 + s[0] * 0.4 + f[0] * 0.15, m[1] * 0.45 + s[1] * 0.4 + f[1] * 0.15, m[2] * 0.45 + s[2] * 0.4 + f[2] * 0.15];
 })();
 
 /** Rim light scale (the manifest `rim` is a 0..1 artistic strength). */
@@ -578,11 +658,17 @@ export function shadeKit(
   r += (l - r) * p.desaturate;
   g += (l - g) * p.desaturate;
   b += (l - b) * p.desaturate;
+  // Aerial perspective toward the layer's fog colour, then the mist rising from its base.
+  r += (p.fogColor[0] - r) * p.fog;
+  g += (p.fogColor[1] - g) * p.fog;
+  b += (p.fogColor[2] - b) * p.fog;
   const mistT = Math.min(1, Math.max(0, (layerY - p.mistY) / Math.max(1e-3, p.mistDepth)));
-  const f = Math.min(1, p.fog + (1 - p.fog) * mistT * mistT * p.mist);
-  r += (p.fogColor[0] - r) * f;
-  g += (p.fogColor[1] - g) * f;
-  b += (p.fogColor[2] - b) * f;
+  const m = Math.min(1, mistT * mistT * p.mist);
+  const mc = p.mistColor ?? p.fogColor;
+  r += (mc[0] - r) * m;
+  g += (mc[1] - g) * m;
+  b += (mc[2] - b) * m;
+  const f = p.fog + (1 - p.fog) * m;
   const e = em * (1 - f * 0.6) * (p.glow > 0 ? 1 : 0);
   const gr = glowRgb[0] * p.glow;
   const gg = glowRgb[1] * p.glow;
@@ -611,7 +697,7 @@ export function shadeKit(
 }
 ```
 
-## 8. Shared GLSL chunks (header, Pixi transform, dither)
+## 8. Shared GLSL chunks (header, Pixi transform, dither, luma)
 
 `src/render/shaders/common.ts` lines 14–48:
 
@@ -653,11 +739,23 @@ vec3 sw_dither(vec2 fragCoord) {
 `;
 ```
 
+`src/render/shaders/common.ts` lines 79–83:
+
+```ts
+/** Rec.709 luma and saturation helpers. */
+export const GLSL_COLOR = /* glsl */ `
+float sw_luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+vec3 sw_saturate(vec3 c, float s) { return mix(vec3(sw_luma(c)), c, s); }
+`;
+```
+
 ## 9. The kit program: one program for cores, bands, plates and glow twins
 
 The mode is selected by `uMode`. The LOD is clamped to `KIT_MAX_MIP`. Plates branch on `uStraight` (KTX2 is straight; PNG/WebP are premultiplied).
+Fog is flat per layer (`uFog` toward `uFogColor`); the height mist then mixes toward `uMistColor` (for kit layers, the fog colour plus the
+recipe's `mistLift`), and the emissive term fades with their combined amount.
 
-`src/render/layers/kit.glsl.ts` lines 1–104:
+`src/render/layers/kit.glsl.ts` lines 1–106:
 
 ```ts
 import { GLSL_COLOR, GLSL_DITHER, GLSL_FRAGMENT_HEADER, GLSL_VERSION, GLSL_VERTEX_TRANSFORM } from '../shaders/common.ts';
@@ -706,6 +804,7 @@ in vec4 vTint;
 uniform sampler2D uTexture;
 uniform vec3 uTint;
 uniform vec3 uFogColor;
+uniform vec3 uMistColor;
 uniform vec3 uRimColor;
 uniform float uFog;
 uniform float uDesat;
@@ -728,9 +827,9 @@ vec4 sampleClamped(vec2 uv) {
   return textureLod(uTexture, uv, lod);
 }
 
-float fogAmount() {
+float mistAmount() {
   float t = clamp((vLayerY - uMistY) / max(uMistDepth, 1e-3), 0.0, 1.0);
-  return min(1.0, uFog + (1.0 - uFog) * t * t * uMist);
+  return min(1.0, t * t * uMist);
 }
 
 void main() {
@@ -742,7 +841,7 @@ void main() {
     vec3 c = uStraight > 0.5 ? t.rgb : t.rgb / max(a, 1e-4);
     c *= uTint;
     c = mix(c, vec3(sw_luma(c)), uDesat);
-    c = mix(c, uFogColor, fogAmount()) + dither;
+    c = mix(mix(c, uFogColor, uFog), uMistColor, mistAmount()) + dither;
     finalColor = uMode > 2.5 ? vec4(c, 1.0) : vec4(c * a, a);
     return;
   }
@@ -750,8 +849,9 @@ void main() {
   float k = (0.5 + ch.r) * (0.8 + 0.4 * vTint.a);
   vec3 c = uTint * k + uRimColor * (ch.g * uRim * ${f(KIT_RIM_SCALE)});
   c = mix(c, vec3(sw_luma(c)), uDesat);
-  float fog = fogAmount();
-  c = mix(c, uFogColor, fog);
+  float m = mistAmount();
+  c = mix(mix(c, uFogColor, uFog), uMistColor, m);
+  float fog = uFog + (1.0 - uFog) * m;
   vec3 g = vTint.rgb * uGlow;
   float e = ch.b * (1.0 - fog * 0.6) * step(1e-4, uGlow);
   c = mix(c, g * 1.25, e);
@@ -772,7 +872,7 @@ Every shader declares the same resources in the same order. In `parallaxStack.ts
 that layer's core and band shaders. The glow twins in `decor.ts` use a second group, because their `glow` differs (0.9 vs 1).
 The code comment below says "core, band and twin"; read it as "every shader that needs the same values".
 
-`src/render/layers/kitShader.ts` lines 1–52:
+`src/render/layers/kitShader.ts` lines 1–53:
 
 ```ts
 import { GlProgram, Shader, UniformGroup, type TextureSource } from 'pixi.js';
@@ -797,6 +897,7 @@ export function createKitLayerUniforms(p: KitShadeParams) {
     uSway: { value: 0, type: 'f32' },
     uTint: { value: vec3(p.tint), type: 'vec3<f32>' },
     uFogColor: { value: vec3(p.fogColor), type: 'vec3<f32>' },
+    uMistColor: { value: vec3(p.mistColor ?? p.fogColor), type: 'vec3<f32>' },
     uRimColor: { value: vec3(p.rimColor), type: 'vec3<f32>' },
     uFog: { value: p.fog, type: 'f32' },
     uDesat: { value: p.desaturate, type: 'f32' },

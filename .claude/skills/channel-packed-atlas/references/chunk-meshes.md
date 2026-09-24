@@ -1,7 +1,7 @@
 # Chunk mesh listings (channel-packed-atlas)
 
 This file shows how instances of atlas elements become static per-chunk meshes: one draw per chunk per pass, with Uint16 indices and
-per-vertex sway, depth and tint. The listings are verbatim from commit `49a1da2`.
+per-vertex sway, depth and tint. The listings are verbatim from commit `2ef9428` (the art pass).
 
 ## 1. Depth per layer and per instance
 
@@ -369,13 +369,14 @@ export function createTransparentState(): State {
 ## 6. Wiring a depth-tested layer: core and band containers, one mesh per chunk per pass
 
 This is from `src/render/layers/parallaxStack.ts`. The core containers are sorted near → far (zIndex = depth) and the band containers far → near.
-Layers with fx > 1 (foreground) are blend-only with `State.for2d()`.
+Layers with fx > 1 (foreground) are blend-only with `State.for2d()`. `clearingHints` hands placement the goal and lantern x positions, where the mid and near trunk streams leave clearings.
 
-`src/render/layers/parallaxStack.ts` lines 91–150:
+`src/render/layers/parallaxStack.ts` lines 91–151:
 
 ```ts
     const coreState = createOpaqueState();
     const bandState = createTransparentState();
+    const clearings = clearingHints(ctx.level);
     const fgState = State.for2d();
 
     for (const def of defs) {
@@ -398,7 +399,7 @@ Layers with fx > 1 (foreground) are blend-only with `State.for2d()`.
           console.warn(`[world] layer ${def.id}: only the procedural '${PROCEDURAL_KIT}' atlas is supported in M1; skipped`);
           continue;
         }
-        const prepared = prepareKitLayer(def, kit, W, H);
+        const prepared = prepareKitLayer(def, kit, W, H, clearings);
         const uniforms = createKitLayerUniforms(prepared.params);
         const coreShader = createKitShader(texture.source, uniforms, KIT_MODE.Core);
         const bandShader = createKitShader(texture.source, uniforms, KIT_MODE.Band);

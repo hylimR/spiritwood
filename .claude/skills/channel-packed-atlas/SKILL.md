@@ -6,9 +6,9 @@ description: Channel-packed material atlas plus tight hull meshes for layered 2D
 # Channel-packed atlas and tight hull meshes
 
 With this technique, one texture and one shader program draw every silhouette in a layered 2D scene. In Spiritwood,
-75 procedural elements in a 2048×1792 atlas (19.6 MB with mips) feed 10 parallax layers (8 depth-tested, 2 blended
-foreground frames; 43 static meshes), plus decor and its glow twins. The debug overlay counted 58–85 draw calls for a
-whole High-quality frame (a software-renderer capture, so there are no GPU timings).
+79 procedural elements in a 2048×2048 atlas (22.4 MB with mips) feed 10 parallax layers (8 depth-tested, 2 blended
+foreground frames; 43 static meshes), plus decor and its glow twins. Before the art pass (not re-measured since; the mesh
+count is unchanged), the debug overlay counted 58–85 draw calls for a whole High-quality frame (a software-renderer capture, so there are no GPU timings).
 
 ## When to use
 
@@ -22,13 +22,13 @@ whole High-quality frame (a software-renderer capture, so there are no GPU timin
 ## Core idea
 
 - **Shading = shape × material × light, and only the per-texel part goes in the texture.** The per-layer
-  palette (tint, fog, rim colour, glow colour) is a set of uniforms. The texture stores only what varies per texel:
+  palette (tint, fog and mist colours, rim colour, glow strength) is a set of uniforms. The texture stores only what varies per texel:
   R brightness detail (0.5 = neutral), G how strongly this edge faces the light, B which parts glow, A coverage.
   The same atlas then reads as pale, foggy and soft at the back and as dark, crisp and rim-lit at the front.
-- **Hug the alpha, and split opaque from soft.** Each element becomes a few dozen axis-aligned rects (69 on average here)
+- **Hug the alpha, and split opaque from soft.** Each element becomes several dozen axis-aligned rects (89 on average here)
   covering its visible texels. The rects wholly on opaque texels form the *core*, drawn with blending off and depth write on,
   near → far, so early-Z rejects everything behind it. The rest form the *soft band*, blended far → near and depth-tested.
-  The rects cover 34% of the element rect area (measured), so the GPU never rasterises the other 66%, and opaque interiors are shaded about once per pixel.
+  The rects cover 32% of the element rect area (measured), so the GPU never rasterises the other 68%, and opaque interiors are shaded about once per pixel.
 - **Merge everything static at load time.** Instances become one static mesh per chunk per pass. Per-instance data
   (depth, sway, glow colour, brightness) goes into vertex attributes, so drawing a chunk takes one draw call per pass.
 
@@ -36,12 +36,13 @@ whole High-quality frame (a software-renderer capture, so there are no GPU timin
 
 ### A. Bake the channels (engine-agnostic)
 
-1. Rasterise each element into a signed-distance buffer (negative inside) with a material id, an emissive
-   buffer and a halo buffer (see sdf-silhouettes). Give every element rect a transparent margin
+1. Rasterise each element into a signed-distance buffer (negative inside) with a material id, a volume-shade
+   buffer, an emissive buffer and a halo buffer (see sdf-silhouettes). Give every element rect a transparent margin
    (`ELEMENT_MARGIN = 6`, at least the hull `pad`), and fade alpha to 0 across it, except on a deliberately cut edge.
 2. Finalize every texel into straight RGBA8 in one row-major pass:
    - **A** = `coverage(d + noise·disp[mat], softness)` (smoothstep AA) × the vertical fade × the edge fade.
-   - **R** = `0.5 + (materialNoise + 0.07·(0.5 − y/h))·detail`. This is per-material grain plus a baked top-light gradient.
+   - **R** = `0.5 + (materialNoise + 0.07·(0.5 − y/h) + shade)·detail`. This is per-material grain, a baked top-light gradient,
+     and volume shading (`ElementRaster.volume`: lighter toward the moon across a clump's sphere, stored by the shape that owns the texel).
    - **G** = the rim, `a·((1 − s1)·0.7 + (1 − s2)·0.5)·RIM[mat]·rimStrength`, where s1 and s2 are the final coverage one
      rim-width and 0.45 rim-width *toward the light*. A texel lights up when it is covered and the texels toward the light are not.
    - **B** = emissive (max-blended discs). A baked halo extends A beyond the shape as "pure light": where the halo exceeds
@@ -63,10 +64,18 @@ const lx1 = Math.round(-0.55 * rimWidth);
 const ly1 = Math.min(-1, Math.round(-0.83 * rimWidth));
 const lx2 = Math.round(-0.55 * rimWidth * 0.45);
 const ly2 = Math.min(-1, Math.round(-0.83 * rimWidth * 0.45));
-// per texel, after alpha[i] = a (rows above are already final, so one pass suffices):
-const s1 = alphaAt(alpha, w, h, x + lx1, y + ly1);
-const s2 = alphaAt(alpha, w, h, x + lx2, y + ly2);
-rim = clamp01(a * ((1 - s1) * 0.7 + (1 - s2) * 0.5) * (RIM[m] as number) * rimStrength);
+// per row:
+const r1ok = y + ly1 >= 0;
+const r2ok = y + ly2 >= 0;
+const r1 = (y + ly1) * w;
+const r2 = (y + ly2) * w;
+// per texel, after alpha[i] = a (rows above are already final, so one pass suffices); rimM[m] = RIM[m] * rimStrength:
+const x1 = x + lx1;
+const x2 = x + lx2;
+const s1 = r1ok && x1 >= 0 && x1 < w ? (alpha[r1 + x1] as number) : 0;
+const s2 = r2ok && x2 >= 0 && x2 < w ? (alpha[r2 + x2] as number) : 0;
+rim = a * ((1 - s1) * 0.7 + (1 - s2) * 0.5) * (rimM[m] as number);
+if (rim > 1) rim = 1;
 ```
 
 ### B. Split every element into core and soft band (engine-agnostic)
@@ -122,7 +131,7 @@ A degenerate-UV quad that samples the centre of a solid block element fills flat
 
 ### Shader (GLSL ES 3.0, excerpt of `kit.glsl.ts` with the constants inlined and the plate branch omitted)
 
-Uniforms and the helpers `fogAmount`, `sw_dither`, `sw_luma` are in the full program ([atlas-and-shader §8–9](references/atlas-and-shader.md)).
+Uniforms and the helpers `mistAmount`, `sw_dither`, `sw_luma` are in the full program ([atlas-and-shader §8–9](references/atlas-and-shader.md)).
 
 ```glsl
 vec4 sampleClamped(vec2 uv) {
@@ -139,8 +148,9 @@ void main() {
   float k = (0.5 + ch.r) * (0.8 + 0.4 * vTint.a);
   vec3 c = uTint * k + uRimColor * (ch.g * uRim * 0.5);
   c = mix(c, vec3(sw_luma(c)), uDesat);
-  float fog = fogAmount();
-  c = mix(c, uFogColor, fog);
+  float m = mistAmount();                  // height mist rising from the layer's base
+  c = mix(mix(c, uFogColor, uFog), uMistColor, m);
+  float fog = uFog + (1.0 - uFog) * m;
   vec3 g = vTint.rgb * uGlow;
   float e = ch.b * (1.0 - fog * 0.6) * step(1e-4, uGlow);
   c = mix(c, g * 1.25, e);
@@ -185,15 +195,15 @@ Sway lives in the vertex stage: `p.x += (sin(uTime*1.35 + aSway.y + p.x*0.0045)*
 |---|---|
 | `KIT_MAX_MIP` (1) | A higher value aliases less when zoomed out or at low render scale, but needs wider gutters and insets, which shrink the cores. |
 | `KIT_GUTTER` (4), `ELEMENT_MARGIN` (6) | Together they stop neighbours bleeding at mips up to maxMip. The margin must be at least the hull pad (tested). |
-| hull `cell` (6) | Narrower columns give a tighter hull (less fill) but more rects and vertices. |
-| hull `maxSpans` (4), `minGap` (4) | These cap the quads per column. Filled gaps become soft overdraw. |
+| hull `cell` (4) | Narrower columns give a tighter hull (less fill) but more rects and vertices. |
+| hull `maxSpans` (6), `minGap` (4) | These cap the quads per column. Filled gaps become soft overdraw. |
 | hull `coreInset` (1 + 2^maxMip), `pad` (2^maxMip) | The mip-safety margins. Don't lower them. |
-| hull `minCore` (8), `snap` (2) | Larger values mean fewer, bigger rects and less core. |
+| hull `minCore` (6), `snap` (2) | Larger values mean fewer, bigger rects and less core. |
 | `SWAY_ROW_STEP` (24) | Smaller steps give a smoother bend at the cost of more vertices. |
-| finalize `softness` (1.25; 9 on foreground frames, 6 on their vines) | The AA width in texels. Large values bake a blur, which is cheaper than a filter. |
+| finalize `softness` (1.25; far trees 1.3; 6 on foreground frames, 4 on their vines) | The AA width in texels. Large values bake a blur, which is cheaper than a filter. |
 | finalize `rimWidth` / `rimStrength`, `RIM[mat]` | Rim thickness in texels and per-material response. Use 0 for dark foreground frames. |
-| `DISP[mat]` / `FREQ[mat]`, `dispScale` | Edge raggedness per material (leaves 4.5 texels, bark 1.2). |
-| `unitsPerTexel` (far/mid 2, near 1–1.4, blurred fg 2.2) | Texel density per element. Coarse far texels give softer edges for free, which is aerial perspective. Give near layers their own finer elements instead of scaling up far ones. Stay within 2× minification, because the LOD clamp stops at mip 1 (inferred from the clamp, not measured; at the Low tier's floor, 720p × 0.5 render scale ≈ 0.33 px/u, 1 u/texel elements reach ~3×). |
+| `DISP[mat]` / `FREQ[mat]`, `dispScale` | Edge raggedness per material (leaves 3.2 texels, needles 2.2, bark 1.2). |
+| `unitsPerTexel` (far trees 2.5, far canopy and mid 2, near 1.1–1.6, decor 1–1.1, blurred fg 3.3) | Texel density per element. Coarse far texels give softer edges for free, which is aerial perspective. Give near layers their own finer elements instead of scaling up far ones. Stay within 2× minification, because the LOD clamp stops at mip 1 (inferred from the clamp, not measured; at the Low tier's floor, 720p × 0.5 render scale ≈ 0.33 px/u, 1 u/texel elements reach ~3×). |
 | layer `uRim` × 0.5, `uGlow`, instance `shade` (0.38–0.62) | Rim and glow per layer. Shade varies brightness by about ±5% so repeats don't read as clones. |
 | plate `CHUNK` (1024), `TEXEL_SCALE` (1.5), strip 16 / inset 5 | Chunk granularity, world units per texel, and hull tightness. |
 | WebP q84 / alpha 90, ETC1S `qualityLevel` 160, streamer margin 480, 2 in flight | Plate size, quality and prefetch behaviour. |
@@ -208,7 +218,7 @@ Sway lives in the vertex stage: `p.x += (sin(uTime*1.35 + aSway.y + p.x*0.0045)*
 - Store the channels straight, zero RGB where A = 0, premultiply once at upload, and divide by `max(a, 1e-4)` before using
   R, G or B as data. Filtering or mip-averaging straight channels pulls in the zero RGB of transparent neighbours and darkens the edges.
 - `textureFromRgba` premultiplies the caller's buffer in place. Keep only the metadata afterwards, or copy the buffer first.
-- The rim reads the *final* alpha, so vertical fades (`fadeBottom`) leak a faint false rim (G up to ≈ 0.2, measured) across the
+- The rim reads the *final* alpha, so vertical fades (`fadeBottom`) leak a faint false rim (G up to ≈ 0.22, measured) across the
   whole fade band. It is visible in the G dump at the bases of far trees. Hide those bases in fog, or compute the rim from the coverage before the fade.
   The single-pass rim also only works because the taps point to rows that are already final (light from above). A light from below needs a two-pass finalize or a bottom-up row order.
 - Core and band must be displaced identically, with the same attribute and the same formula, and split on the same global row grid. Otherwise seams open while
@@ -221,10 +231,11 @@ Sway lives in the vertex stage: `p.x += (sin(uTime*1.35 + aSway.y + p.x*0.0045)*
 
 ## Worked example in this repo
 
-- `src/render/gen/raster.ts` `ElementRaster.finalize`: channel packing, rim taps, halo-as-light, and zero RGB where A = 0.
-  Browse `src/render/gen/kitElements.ts` for per-element `finalize` options and `unitsPerTexel`.
-- `src/render/gen/kit.ts`: `KIT_MAX_MIP`, `KIT_HULL`, gutters, and the per-element pipeline (raster → pack → alpha copy →
-  `computeSplitHullHalf` → row splits). `generateKitAsync` yields between elements so the boot screen stays responsive (about 400 ms).
+- `src/render/gen/raster.ts` `ElementRaster.finalize`: channel packing, rim taps, halo-as-light, volume shading into R, and zero RGB where A = 0.
+  Browse `src/render/gen/kitElements.ts` for per-element `finalize` options and `unitsPerTexel` (the tree archetypes are drawn by `trees.ts`).
+- `src/render/gen/kit.ts`: `KIT_MAX_MIP`, `KIT_HULL`, gutters, and the per-element pipeline (pack every rect, then `buildElement`:
+  raster → finalize into the atlas → alpha copy → `computeSplitHullHalf` → row splits). `generateKitAsync` yields between elements
+  so the boot screen stays responsive (the cold run takes about 450 ms in Node).
   Also `pack.ts` (skyline packer), `hull.ts` (split hull), `polygon.ts` (ear clipping) and `particleAtlas.ts` (same packer, white tintable frames, pow2 height).
 - `src/render/util/texture.ts` (upload and budget), `src/render/layers/assets.ts` (mipmapped kit and particle atlases, and
   frame `Texture`s sharing one source), `src/render/util/states.ts` (core, sky and band `State`s), `src/render/util/camera.ts` (`depthForInstance`).
@@ -238,8 +249,8 @@ Sway lives in the vertex stage: `p.x += (sin(uTime*1.35 + aSway.y + p.x*0.0045)*
   `L3-plate-treeline` in `public/layers/forest.plates.manifest.json` (open it with `?manifest=plates`). Each chunk's hull covers about 63% of
   the chunk and its opaque core 10–11%.
 - Inspect the atlas without a browser: `node tools/preview/world/kit-preview.ts <outDir>` writes the composite, the R/G/B/A
-  dumps and `kit-hulls.png` (core green, soft red). Measured: 5161 rects, hull 34% of the element rect area, core 32% of
-  the hull, and at most 11k vertices per chunk mesh.
+  dumps and `kit-hulls.png` (core green, soft red). Measured: 7068 rects, hull 32% of the element rect area, core 25% of
+  the hull, and at most 12.7k vertices per chunk mesh.
 - Tests: `npx vitest run tests/world/{hull,kit,kitMesh,misc,textures,streamer}.test.ts --maxWorkers=2`.
 
 Full listings for reuse: [atlas and shader](references/atlas-and-shader.md), [split hull](references/split-hull.md),
