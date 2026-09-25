@@ -74,7 +74,9 @@ export function coverage(d: number, soft: number): number {           // == 1 - 
   return t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
 }
 
-// Excerpt, ElementRaster.put: smooth-union into the buffer; the nearer shape owns material and shading.
+// Excerpt, the M1 ElementRaster.put: smooth-union into the buffer; the nearer shape owns material and shading.
+// Since M2 this logic is written out inside each shape loop, which also records the texel's stroke frame
+// (see the painterly-strokes skill); the ownership rule is unchanged.
 if (k > 0 && old < FAR) {
   if (d < old) { this.mat[i] = mat; this.shade[i] = this.volOn ? this.volAt(x, y) : 0; }
   this.dist[i] = smin(old, d, k);
@@ -180,7 +182,8 @@ GLSL ES 3.0 port): [references/toolkit.md](references/toolkit.md). The repo's tr
 
 ## Budget and time-slicing
 
-Measured here (Node 22, one machine): forest kit, 79 elements into 2048×2048, ≈ 445–455 ms cold and
+Measured here in M1 (Node 22, one machine; the M2 painterly pass adds ≈ +136 ms cold, brush tables
+included; see painterly-strokes): forest kit, 79 elements into 2048×2048, ≈ 445–455 ms cold and
 ≈ 215–280 ms warm (target 400 ms on a laptop; `tests/world/kit.test.ts` fails above 4 s). Warm: draw
 ≈ 95 ms, finalize ≈ 60 ms (only touched row spans), hull extraction ≈ 55 ms; noise table ≈ 20 ms. The
 slowest element is ≈ 10 ms warm (`nearTrunk:2`); the first one ≈ 44 ms while the JIT is cold. Entity
@@ -249,3 +252,5 @@ atlas (14 images, fbm inside the SDFs) ≈ 160–210 ms; hero atlas (27 frames) 
   with a value ramp and fog gaps.
 - [glow-bloom-grade](../glow-bloom-grade/SKILL.md): turning the emissive channel and baked halos into
   bloom and a graded image.
+- [painterly-strokes](../painterly-strokes/SKILL.md): recording a local stroke frame per texel as these
+  shapes are drawn, and baking gouache brushwork into the atlas without speckle.
