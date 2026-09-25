@@ -1,7 +1,8 @@
-import { GAME_TITLE, SIM_DT } from '../config.ts';
+import { GAME_TITLE, MAX_RENDER_DT, SIM_DT } from '../config.ts';
 import { createInputFrame, type InputFrame } from '../contracts/input.ts';
 import type { UserSettings } from '../contracts/quality.ts';
 import { AudioSystem } from '../audio/audio.ts';
+import type { AudioFrame, AudioVolumes } from '../contracts/audio.ts';
 import type { FetchFn } from '../assets/embedded.ts';
 import { loadManifest } from '../assets/manifest.ts';
 import { FixedStepLoop } from '../core/loop.ts';
@@ -40,6 +41,16 @@ function applyChanges(base: UserSettings, prev: UserSettings, next: UserSettings
   if (next.fpsCap !== prev.fpsCap) out.fpsCap = next.fpsCap;
   if (next.dynamicResolution !== prev.dynamicResolution) out.dynamicResolution = next.dynamicResolution;
   if (next.debugOverlay !== prev.debugOverlay) out.debugOverlay = next.debugOverlay;
+  if (next.masterVolume !== prev.masterVolume) out.masterVolume = next.masterVolume;
+  if (next.musicVolume !== prev.musicVolume) out.musicVolume = next.musicVolume;
+  if (next.sfxVolume !== prev.sfxVolume) out.sfxVolume = next.sfxVolume;
+  return out;
+}
+
+function volumesOf(s: UserSettings, out: AudioVolumes): AudioVolumes {
+  out.master = s.masterVolume;
+  out.music = s.musicVolume;
+  out.sfx = s.sfxVolume;
   return out;
 }
 
@@ -60,7 +71,10 @@ export class Game {
   private readonly menu: SettingsMenu;
   private readonly overlay: DebugOverlay;
   private readonly frameTimer = new FrameTimer();
-  private readonly audio = new AudioSystem();
+  private readonly audio: AudioSystem;
+  private audioFailed = false;
+  private readonly audioVolumes: AudioVolumes = { master: 1, music: 1, sfx: 1 };
+  private readonly audioFrame: AudioFrame;
   private readonly tickInput: InputFrame = createInputFrame();
   private readonly emptyInput: InputFrame = createInputFrame();
   private readonly benchPos: BenchWaypoint = { x: 0, y: 0 };
@@ -93,6 +107,10 @@ export class Game {
     this.hud = new Hud(opts.uiRoot);
     this.overlay = new DebugOverlay(opts.uiRoot);
     this.overlay.setVisible(settings.debugOverlay);
+    this.audioFrame = { dt: 0, camX: 0, camY: 0, viewW: 0, viewH: 0, sim: world, paused: false };
+    const params = new URLSearchParams(opts.search);
+    this.audio = new AudioSystem({ enabled: !params.has('bench'), seed: world.level.seed });
+    this.setAudioVolumes(settings);
     this.menu = new SettingsMenu(
       opts.uiRoot,
       settings,
@@ -102,7 +120,6 @@ export class Game {
     );
     this.menu.setGpuLabel(pipeline.gpu.renderer);
 
-    const params = new URLSearchParams(opts.search);
     this.bench = params.has('bench') ? new BenchRunner(world.level, Number(params.get('bench')) || 30) : null;
     this.benchRunning = this.bench !== null;
     this.phase = this.bench ? 'bench' : 'title';
@@ -176,14 +193,51 @@ export class Game {
   };
 
   private readonly onVisibility = (): void => {
-    if (document.visibilityState === 'visible') this.loop.resetClock();
+    const visible = document.visibilityState === 'visible';
+    if (visible) this.loop.resetClock();
+    if (!this.audioFailed) {
+      try {
+        this.audio.setActive(visible);
+      } catch (err) {
+        this.disableAudio(err);
+      }
+    }
   };
+
+  /** The engine fails closed itself; this second guard keeps a stray throw out of the frame loop. */
+  private disableAudio(err: unknown): void {
+    if (this.audioFailed) return;
+    this.audioFailed = true;
+    console.error('[audio] disabled after an error', err);
+    try {
+      this.audio.destroy();
+    } catch {
+      // Already failing; nothing else to release.
+    }
+  }
+
+  private setAudioVolumes(s: UserSettings): void {
+    if (this.audioFailed) return;
+    try {
+      this.audio.setVolumes(volumesOf(s, this.audioVolumes));
+    } catch (err) {
+      this.disableAudio(err);
+    }
+  }
 
   private beginFrame(): void {
     this.input.beginFrame();
     const meta = this.input.meta;
     this.stepsThisFrame = 0;
     this.simMsThisFrame = 0;
+    // Chromium grants user activation from gamepad presses polled in this callback.
+    if (meta.anyPressed && !this.audioFailed) {
+      try {
+        this.audio.unlock();
+      } catch (err) {
+        this.disableAudio(err);
+      }
+    }
 
     if (meta.debugOverlayPressed) {
       this.applySettings({ ...this.settings, debugOverlay: !this.settings.debugOverlay });
@@ -208,7 +262,6 @@ export class Game {
         this.phase = 'play';
         this.hud.showTitle(false);
         this.hud.showControls(this.input.lastDevice);
-        this.audio.unlock();
         this.input.clearEdges();
       }
       return;
@@ -237,9 +290,25 @@ export class Game {
     const t0 = performance.now();
     this.pipeline.render(this.world, alpha, now, frameDt, lateFrames);
 
+    const cam = this.world.camera;
+    const af = this.audioFrame;
+    af.dt = Math.min(frameDt, MAX_RENDER_DT);
+    af.camX = cam.prevX + (cam.x - cam.prevX) * alpha;
+    af.camY = cam.prevY + (cam.y - cam.prevY) * alpha;
+    af.viewW = cam.viewW;
+    af.viewH = cam.viewH;
+    af.paused = this.menu.isOpen;
     const events = this.world.events;
-    for (let i = 0; i < events.count; i++) this.audio.onSimEvent(events.get(i));
+    if (!this.audioFailed) {
+      try {
+        for (let i = 0; i < events.count; i++) this.audio.onSimEvent(events.get(i), af);
+        this.audio.update(af);
+      } catch (err) {
+        this.disableAudio(err);
+      }
+    }
     events.clear();
+    this.hud.showSoundHint(this.phase === 'play' && !this.audioFailed && this.audio.stats.state === 'locked');
 
     if (this.world.completed && !this.completeShown) {
       this.completeShown = true;
@@ -256,7 +325,7 @@ export class Game {
         this.statsRefreshedAt = now;
       }
       this.overlay.update(
-        this.frameTimer.stats, this.pipeline.stats, this.world, this.pipeline.quality.level, now, frameMs,
+        this.frameTimer.stats, this.pipeline.stats, this.world, this.pipeline.quality.level, now, frameMs, this.audio.stats,
       );
     }
 
@@ -280,6 +349,7 @@ export class Game {
     this.loop.setFpsCap(this.pipeline.quality.fpsCap);
     this.overlay.setVisible(next.debugOverlay);
     this.menu.setSettings(next);
+    this.setAudioVolumes(next);
   }
 
   private closeMenu(): void {
@@ -305,7 +375,13 @@ export class Game {
     this.hud.destroy();
     this.menu.destroy();
     this.overlay.destroy();
-    this.audio.destroy();
+    if (!this.audioFailed) {
+      try {
+        this.audio.destroy();
+      } catch {
+        // Tearing down; nothing else to release.
+      }
+    }
     this.pipeline.destroy();
   }
 }

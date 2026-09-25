@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { TILE } from '../../src/config.ts';
 import { TileKind } from '../../src/contracts/level.ts';
 import { hashString } from '../../src/core/rng.ts';
+import { spitterVelocity } from '../../src/level/loader.ts';
 import { DEFAULT_WORLD_TUNING } from '../../src/sim/tuning.ts';
 import { buildLevel } from '../../tools/level/build-level.ts';
 import { iidFor } from '../../tools/level/ldtk-writer.ts';
@@ -102,4 +103,56 @@ describe('build-level', () => {
     expect(iidFor('a')).not.toBe(iidFor('b'));
     expect(iidFor('level:x')).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
+});
+
+describe('map file: Spitter and AbilityShrine lines (M2)', () => {
+  const M2 = MAP.replace('GradeZone 0 0 5 4 glade 2', [
+    'Spitter 6 2 fixed angle=60 speed=800 period=90 phase=30',
+    'Enemy 3 2 4 120',
+    'Spitter 4 2 player range=500 flight=24',
+    'AbilityShrine 7 1 1 2',
+    'AbilityShrine 8 0 2 3 launch',
+    'GradeZone 0 0 5 4 glade 2',
+  ].join('\n'));
+
+  test('spitters in cells (feet at the bottom-centre), key=value options, crawlers first in enemy ids', () => {
+    const l = parseMapFile(M2);
+    const wt = DEFAULT_WORLD_TUNING;
+    expect(l.enemies.map((e) => [e.id, e.kind])).toEqual([[0, 'gloomcrawler'], [1, 'gloomcrawler'], [2, 'thornSpitter'], [3, 'thornSpitter']]);
+    const v = spitterVelocity(60, 800);
+    expect(l.enemies[2]).toEqual({
+      id: 2, kind: 'thornSpitter', x: 6.5 * TILE, y: 3 * TILE, aim: 'fixed', fixedVx: v.vx, fixedVy: v.vy,
+      range: wt.spitterDefaultRange, period: 90, phase: 30, flightTicks: wt.spitterDefaultFlightTicks,
+    });
+    expect(l.enemies[3]).toEqual({
+      id: 3, kind: 'thornSpitter', x: 4.5 * TILE, y: 3 * TILE, aim: 'player', fixedVx: 0, fixedVy: 0,
+      range: 500, period: wt.spitterDefaultPeriod, phase: 0, flightTicks: 24,
+    });
+    expect(l.abilityShrines).toEqual([
+      { id: 0, x: 7 * TILE, y: TILE, w: TILE, h: 2 * TILE, ability: 'launch' },
+      { id: 1, x: 8 * TILE, y: 0, w: 2 * TILE, h: 3 * TILE, ability: 'launch' },
+    ]);
+  });
+
+  test('the LDtk file round-trips the map exactly', async () => {
+    const { parseLdtk } = await import('../../src/level/loader.ts');
+    const built = buildLevel(M2);
+    expect(parseLdtk(JSON.parse(built.text))).toEqual(built.level);
+  });
+
+  const bad: [string, string, RegExp][] = [
+    ['spitter glyph', MAP.replace('.o......L.', '.o..S...L.'), /declare "S" entities in \[entities\]/],
+    ['shrine glyph', MAP.replace('.o......L.', '.o..A...L.'), /declare "A" entities in \[entities\]/],
+    ['aim', MAP.replace('Goal 8 1 2 2', 'Goal 8 1 2 2\nSpitter 6 2 sideways'), /unknown spitter aim "sideways"/],
+    ['option', MAP.replace('Goal 8 1 2 2', 'Goal 8 1 2 2\nSpitter 6 2 fixed spin=3'), /expected key=value with a key of angle, speed, range, period, phase, flight, got "spin=3"/],
+    ['integer', MAP.replace('Goal 8 1 2 2', 'Goal 8 1 2 2\nSpitter 6 2 fixed period=1.5'), /"period=1.5" is not a valid period/],
+    ['player angle', MAP.replace('Goal 8 1 2 2', 'Goal 8 1 2 2\nSpitter 6 2 player angle=45'), /angle and speed apply to fixed aim only/],
+    ['ability', MAP.replace('Goal 8 1 2 2', 'Goal 8 1 2 2\nAbilityShrine 7 1 1 2 fly'), /unknown ability "fly"/],
+  ];
+  for (const [name, source, message] of bad) {
+    test(`rejects: ${name}`, () => {
+      expect(() => parseMapFile(source)).toThrow(MapFileError);
+      expect(() => parseMapFile(source)).toThrow(message);
+    });
+  }
 });

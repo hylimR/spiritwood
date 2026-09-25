@@ -7,7 +7,9 @@ import type { SimEventQueue } from '../core/events.ts';
 import { approach, sign } from '../core/math.ts';
 import type { CollisionGrid } from '../level/grid.ts';
 import { createSweepResult, groundKindUnder, isTouchingWall, overlapsSolid, sweepX, sweepY } from './physics.ts';
-import { DEFAULT_TUNING, deriveTuning, type DerivedTuning, type PlayerTuning } from './tuning.ts';
+import {
+  DEFAULT_LAUNCH_TUNING, DEFAULT_TUNING, deriveTuning, type DerivedTuning, type LaunchTuning, type PlayerTuning,
+} from './tuning.ts';
 
 const DT = SIM_DT;
 
@@ -15,17 +17,20 @@ const DT = SIM_DT;
 const DASH_END_TIMEOUT = 0;
 const DASH_END_JUMP = 1;
 const DASH_END_WALL = 2;
+const DASH_END_LAUNCH_GRAB = 3;
 
 /** WallSlideEnd `b` payloads. */
 const SLIDE_END_RELEASED = 0;
 const SLIDE_END_LANDED = 1;
 const SLIDE_END_WALL_JUMP = 2;
 const SLIDE_END_WALL_ENDED = 3;
+const SLIDE_END_LAUNCH_GRAB = 4;
 
 /**
- * Kinematic platformer controller (ARCHITECTURE.md §5.1). One `step` = one 60 Hz tick.
- * Emits Jump/AirJump/WallJump/Dash/DashEnd/Land/WallSlideStart/WallSlideEnd/DropThrough events.
- * Hazard/enemy deaths are decided by GameWorld, which calls `kill`.
+ * Kinematic platformer controller (ARCHITECTURE.md §5.1, Spirit Launch §5.1.1). One `step` = one 60 Hz
+ * tick. Emits Jump/AirJump/WallJump/Dash/DashEnd/Land/WallSlideStart/WallSlideEnd/DropThrough events.
+ * Hazard/enemy deaths are decided by GameWorld, which calls `kill`; GameWorld also drives the launch
+ * (`enterAim` at the grab, `release` at the release) and drops presses during the input lock.
  */
 export class PlayerController implements PlayerView {
   x = 0;
@@ -55,6 +60,7 @@ export class PlayerController implements PlayerView {
 
   readonly tuning: PlayerTuning;
   readonly derived: DerivedTuning;
+  readonly launchTuning: LaunchTuning;
 
   private readonly grid: CollisionGrid;
   private readonly sweep = createSweepResult();
@@ -90,10 +96,23 @@ export class PlayerController implements PlayerView {
   /** vy at the moment of this tick's landing (the Land impact speed). */
   private landingSpeed = 0;
 
-  constructor(grid: CollisionGrid, tuning: PlayerTuning = DEFAULT_TUNING) {
+  /** Flight ticks of the `launched` phase still to run (0 = not launched). */
+  private flightLeft = 0;
+  /** This tick integrated as a flight tick (read by the contact update). */
+  private flightTick = false;
+  /**
+   * The current mode was entered by GameWorld before this tick's step (grab or release), so the step
+   * keeps modeTicks at 0 instead of counting it (modeTicks is 0 on the entry tick).
+   */
+  private modeFresh = false;
+  /** Tick of the last death (the step on that tick doesn't advance deadTicks). */
+  private deathTick = -1;
+
+  constructor(grid: CollisionGrid, tuning: PlayerTuning = DEFAULT_TUNING, launch: LaunchTuning = DEFAULT_LAUNCH_TUNING) {
     this.grid = grid;
     this.tuning = tuning;
     this.derived = deriveTuning(tuning);
+    this.launchTuning = launch;
     this.width = tuning.width;
     this.height = tuning.height;
   }
@@ -126,6 +145,9 @@ export class PlayerController implements PlayerView {
     this.sliding = false;
     this.inJumpArc = false;
     this.jumpCuttable = false;
+    this.flightLeft = 0;
+    this.flightTick = false;
+    this.modeFresh = false;
     this.inputX = 0;
     this.airTicks = 0;
     this.runDistance = 0;
@@ -144,8 +166,15 @@ export class PlayerController implements PlayerView {
     this.prevX = this.x;
     this.prevY = this.y;
     if (!this.alive) {
-      this.deadTicks++;
-      this.modeTicks++;
+      if (tick !== this.deathTick) {
+        this.deadTicks++;
+        this.modeTicks++;
+      }
+      return;
+    }
+    if (this.mode === 'launchAim') {
+      // §5.1.1: while aiming only prev ← cur and modeTicks run; timers, presses, airTicks, inputX freeze.
+      this.countModeTick();
       return;
     }
     const t = this.tuning;
@@ -174,10 +203,13 @@ export class PlayerController implements PlayerView {
     if (holdDir !== 0 && !this.dashing && !this.sliding && this.wallJumpLock === 0) this.facing = holdDir;
 
     // 4–5. Jump resolution, then dash start (a same-tick jump stays buffered and cancels the dash next tick).
+    // A jump or a dash ends the launched phase.
     const dashStarts = input.dashPressed && !this.dashing && this.dashCooldown === 0
       && (wasGrounded || this.airDashesLeft > 0);
     if (this.jumpBuffer > 0 && !dashStarts) this.resolveJump(holdingDown);
     if (dashStarts) this.startDash(holdDir);
+    const inFlight = this.flightLeft > 0;
+    this.flightTick = inFlight;
 
     let airborne = this.groundKind === TileKind.Empty;
     let vxEnd: number;
@@ -193,6 +225,16 @@ export class PlayerController implements PlayerView {
       dy = 0;
       this.dashTick++;
       this.dashProgress = this.dashTick / t.dashTicks;
+    } else if (inFlight) {
+      // §5.1.1 launched phase: vx held, flight gravity replaces the table, the fall cap is max(cap, speed).
+      const lt = this.launchTuning;
+      this.flightLeft--;
+      vxEnd = this.vx;
+      let cap = holdingDown ? t.fastFallSpeed : t.maxFallSpeed;
+      if (cap < lt.speed) cap = lt.speed;
+      vyEnd = Math.min(this.vy + d.gravity * lt.flightGravityMult * DT, cap);
+      dx = (this.vx + vxEnd) * 0.5 * DT;
+      dy = (this.vy + vyEnd) * 0.5 * DT;
     } else {
       // 6. Horizontal velocity.
       let mx = moveX;
@@ -270,11 +312,16 @@ export class PlayerController implements PlayerView {
     this.airTicks = airborne ? this.airTicks + 1 : 0;
   }
 
-  /** Enter 'dead' mode (stops moving; deadTicks = 0). Emitting Died and hiding are GameWorld's job. */
-  kill(cause: DeathCause): void {
+  /**
+   * Enter 'dead' mode (stops moving; deadTicks = 0 through the end of `tick`, the death tick: a death
+   * before this tick's step, e.g. the step-2 debug death, doesn't count that step). Emitting Died and
+   * hiding are GameWorld's job.
+   */
+  kill(cause: DeathCause, tick: number = this.tick): void {
     void cause;
     if (!this.alive) return;
     this.alive = false;
+    this.deathTick = tick;
     this.deadTicks = 0;
     this.vx = 0;
     this.vy = 0;
@@ -282,10 +329,15 @@ export class PlayerController implements PlayerView {
     this.dashProgress = 0;
     this.sliding = false;
     this.jumpBuffer = 0;
+    this.flightLeft = 0;
+    this.modeFresh = false;
     this.setMode('dead');
   }
 
-  /** Enemy stomp: vy = −velocity (cuttable like a jump), restores air jump and dash, ends dash/wall slide. */
+  /**
+   * Enemy stomp: vy = −velocity (cuttable like a jump), restores air jump and dash, ends dash/wall slide.
+   * Like any impulse it also ends the launched phase.
+   */
   bounce(velocity: number): void {
     if (!this.alive) return;
     if (this.dashing) this.endDash(DASH_END_JUMP);
@@ -298,8 +350,60 @@ export class PlayerController implements PlayerView {
     this.groundKind = TileKind.Empty;
     this.grounded = false;
     this.coyote = 0;
+    this.flightLeft = 0;
     this.arcTopY = this.y;
     this.setMode('air');
+  }
+
+  /**
+   * Spirit Launch grab (§5.1.1, called by GameWorld at step 2 before this tick's step): velocity 0,
+   * position held, a dash ends (DashEnd b = 3), a wall slide ends (WallSlideEnd b = 4), mode `launchAim`.
+   */
+  enterAim(tick: number, events: SimEventQueue): void {
+    this.events = events;
+    this.tick = tick;
+    if (this.dashing) {
+      this.vx = 0;
+      this.endDash(DASH_END_LAUNCH_GRAB);
+    }
+    if (this.sliding) this.endSlide(SLIDE_END_LAUNCH_GRAB);
+    this.vx = 0;
+    this.vy = 0;
+    this.flightLeft = 0;
+    this.flightTick = false;
+    this.enterModeBeforeStep('launchAim');
+  }
+
+  /**
+   * Spirit Launch release (§5.1.1, called by GameWorld at step 2 of the release tick R): position
+   * unchanged, velocity = aim × speed, the `launched` phase for flightTicks ticks (R is flight tick 1),
+   * abilities restored and every jump/wall/dash timer cleared.
+   */
+  release(aimX: number, aimY: number): void {
+    const t = this.tuning;
+    const lt = this.launchTuning;
+    this.vx = aimX * lt.speed;
+    this.vy = aimY * lt.speed;
+    this.airJumpsLeft = t.airJumps;
+    this.airDashesLeft = t.airDashes;
+    this.inJumpArc = false;
+    this.jumpCuttable = false;
+    this.jumpBuffer = 0;
+    this.groundKind = TileKind.Empty;
+    this.grounded = false;
+    this.coyote = 0;
+    this.wallCoyote = 0;
+    this.wallStick = 0;
+    this.wallJumpLock = 0;
+    this.dashCooldown = 0;
+    this.dropThrough = 0;
+    this.dashing = false;
+    this.dashProgress = 0;
+    this.sliding = false;
+    if (Math.abs(aimX) >= t.dirThreshold) this.facing = aimX > 0 ? 1 : -1;
+    this.arcTopY = this.y;
+    this.flightLeft = lt.flightTicks;
+    this.enterModeBeforeStep('launched');
   }
 
   getBounds(out: Bounds): Bounds {
@@ -327,7 +431,7 @@ export class PlayerController implements PlayerView {
     if (this.groundKind !== TileKind.Empty || this.coyote > 0) {
       const cancelled = this.dashing;
       if (cancelled) this.endDash(DASH_END_JUMP);
-      this.launch(-this.derived.jumpVelocity);
+      this.impulse(-this.derived.jumpVelocity);
       this.coyote = 0;
       this.emit(SimEventType.Jump, this.x, this.y, this.facing, cancelled ? 1 : 0);
       return;
@@ -337,7 +441,7 @@ export class PlayerController implements PlayerView {
       if (this.dashing) this.endDash(DASH_END_JUMP);
       const faceX = this.wallProbeDir !== 0 ? this.wallFaceX(wall) : this.lastWallFaceX;
       if (this.sliding) this.endSlide(SLIDE_END_WALL_JUMP);
-      this.launch(-this.derived.wallJumpVelocity);
+      this.impulse(-this.derived.wallJumpVelocity);
       this.vx = -wall * t.wallJumpVx;
       this.facing = wall > 0 ? -1 : 1;
       this.wallJumpLock = t.wallJumpLockTicks;
@@ -351,18 +455,19 @@ export class PlayerController implements PlayerView {
     if (this.airJumpsLeft > 0 && this.vy >= -this.derived.airJumpVelocity) {
       if (this.dashing) this.endDash(DASH_END_JUMP);
       this.airJumpsLeft--;
-      this.launch(-this.derived.airJumpVelocity);
+      this.impulse(-this.derived.airJumpVelocity);
       this.emit(SimEventType.AirJump, this.x, this.y, this.facing, this.airJumpsLeft);
     }
   }
 
-  /** Common part of every jump impulse. */
-  private launch(vy: number): void {
+  /** Common part of every jump impulse (it also ends the launched phase). */
+  private impulse(vy: number): void {
     this.vy = vy;
     this.jumpBuffer = 0;
     this.groundKind = TileKind.Empty;
     this.inJumpArc = true;
     this.jumpCuttable = true;
+    this.flightLeft = 0;
   }
 
   private startDash(holdDir: -1 | 0 | 1): void {
@@ -377,6 +482,7 @@ export class PlayerController implements PlayerView {
     this.dashCooldown = t.dashCooldownTicks;
     this.wallStick = 0;
     this.wallJumpLock = 0;
+    this.flightLeft = 0;
     this.facing = dir;
     this.vx = dir * t.dashSpeed;
     this.vy = 0;
@@ -462,6 +568,8 @@ export class PlayerController implements PlayerView {
       // Also when a jump bonked on a flush ceiling and never left the ground (no Land): the arc is over.
       this.inJumpArc = false;
       this.jumpCuttable = false;
+      // Landing ends the launched phase.
+      this.flightLeft = 0;
     }
     if (this.grounded && !wasGrounded) {
       if (this.sliding) this.endSlide(SLIDE_END_LANDED);
@@ -472,8 +580,9 @@ export class PlayerController implements PlayerView {
     if (this.grounded) this.arcTopY = this.y;
     else if (this.y < this.arcTopY) this.arcTopY = this.y;
 
+    // No wall slide starts during the launched phase.
     let slide = false;
-    if (!this.grounded && !this.dashing && this.vy > 0 && flush !== 0) {
+    if (!this.grounded && !this.dashing && !this.flightTick && this.vy > 0 && flush !== 0) {
       if (moveX * flush >= t.dirThreshold) this.wallStick = t.wallStickTicks;
       slide = moveX * flush >= t.dirThreshold || this.wallStick > 0;
     }
@@ -504,7 +613,8 @@ export class PlayerController implements PlayerView {
     else if (this.sliding) this.facing = this.slideDir > 0 ? -1 : 1;
     else if (holdDir !== 0 && this.wallJumpLock === 0) this.facing = holdDir;
 
-    this.setMode(this.dashing ? 'dash' : this.grounded ? 'ground' : this.sliding ? 'wallSlide' : 'air');
+    const launched = this.flightTick && !this.grounded;
+    this.setMode(this.dashing ? 'dash' : this.grounded ? 'ground' : this.sliding ? 'wallSlide' : launched ? 'launched' : 'air');
   }
 
   private endSlide(reason: number): void {
@@ -514,11 +624,24 @@ export class PlayerController implements PlayerView {
 
   private setMode(mode: PlayerMode): void {
     if (mode === this.mode) {
-      this.modeTicks++;
+      this.countModeTick();
       return;
     }
     this.mode = mode;
     this.modeTicks = 0;
+    this.modeFresh = false;
+  }
+
+  /** modeTicks += 1, except on the tick a GameWorld-entered mode began (it stays 0 there). */
+  private countModeTick(): void {
+    if (this.modeFresh) this.modeFresh = false;
+    else this.modeTicks++;
+  }
+
+  private enterModeBeforeStep(mode: PlayerMode): void {
+    this.mode = mode;
+    this.modeTicks = 0;
+    this.modeFresh = true;
   }
 
   /** Side with a Solid tile flush against the body (1 u probe), 0 if none. */

@@ -42,15 +42,21 @@ export function createTestContext(level: LevelData): RenderContext & { textures:
 
 export function createFrame(sim: FakeSim, ctx: RenderContext): FrameInfo {
   return {
-    time: 0, dt: 1 / 60, alpha: 1, frame: 0, camera: computeCameraFrame(createCameraFrame(), sim.camera, 1),
+    time: 0, dt: 1 / 60, worldTime: 0, worldDt: 1 / 60, timeScale: 1, alpha: 1, frame: 0,
+    camera: computeCameraFrame(createCameraFrame(), sim.camera, 1),
     sim, quality: ctx.quality, renderScale: 1, pxPerUnit: 1,
   };
 }
 
-/** Advance the frame clock and camera like the pipeline does. */
+/**
+ * Advance the render clock, the world clock (at the frame's current timeScale; the pipeline's easing is
+ * tested separately) and the camera like the pipeline does.
+ */
 export function stepFrame(frame: FrameInfo, sim: FakeSim, dt = 1 / 60, alpha = 1): FrameInfo {
   frame.dt = dt;
   frame.time += dt;
+  frame.worldDt = dt * frame.timeScale;
+  frame.worldTime += frame.worldDt;
   frame.alpha = alpha;
   frame.frame++;
   computeCameraFrame(frame.camera, sim.camera, alpha);

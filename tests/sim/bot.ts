@@ -145,6 +145,52 @@ export class Bot {
     throw new BotError(this, `climb(${wall}) did not reach y ≤ ${topY} within ${max} ticks`);
   }
 
+  /**
+   * Spirit Launch: wait (holding `wait`, plus `extra` input) until the published candidate satisfies
+   * `ready`, press launch (the grab), then release on the next tick aiming (mx, my): one of the 8 keyboard
+   * directions, or (0, 0) for the neutral aim away from the target.
+   */
+  launch(mx: number, my: number, ready: (w: GameWorld) => boolean = () => true, max = 600, wait: Dir = 0, extra?: (f: InputFrame) => void): void {
+    this.hold(wait, (w) => w.launch.candidateKind !== 'none' && ready(w), max, extra);
+    this.step((f) => {
+      extra?.(f);
+      f.moveX = mx;
+      f.moveY = my;
+      f.launchPressed = true;
+      f.launchHeld = true;
+    });
+    if (this.p.mode !== 'launchAim') throw new BotError(this, 'launch: nothing grabbed');
+    this.step((f) => {
+      f.moveX = mx;
+      f.moveY = my;
+      f.launchReleased = true;
+    });
+  }
+
+  /**
+   * The flight after a launch: hold `dir` (jump held), air jump at the first tick past the launched phase
+   * with vy ≥ 0 (`'apex'`) or `airJump` ticks after the release, until grounded (or `until`).
+   */
+  fly(dir: Dir, o: { airJump?: 'apex' | number | false; until?: (w: GameWorld) => boolean; max?: number } = {}): void {
+    const max = o.max ?? 300;
+    let jumped = false;
+    for (let t = 0; t < max; t++) {
+      const p = this.p;
+      if ((t > 0 || p.mode !== 'launched') && (p.grounded || o.until?.(this.w))) return;
+      let jumpPressed = false;
+      if (!jumped && o.airJump !== undefined && o.airJump !== false && p.mode !== 'launched') {
+        jumpPressed = o.airJump === 'apex' ? p.vy >= 0 : t >= o.airJump;
+        jumped = jumpPressed;
+      }
+      this.step((f) => {
+        f.moveX = dir;
+        f.jumpHeld = true;
+        f.jumpPressed = jumpPressed;
+      });
+    }
+    throw new BotError(this, `fly(${dir}) did not land within ${max} ticks`);
+  }
+
   /** Down + jump on a one-way platform. */
   dropThrough(): void {
     this.step((f) => {

@@ -12,7 +12,10 @@
     "test:watch": "vitest --maxWorkers=2",
     "level": "node tools/level/build-level.ts",
     "plates": "node tools/plates/bake-plates.ts",
-    "artifact": "node tools/artifact/package-artifact.ts"
+    "artifact": "node tools/artifact/package-artifact.ts",
+    "art": "node tools/art/bake-art.ts",
+    "art:export": "node tools/art/export-templates.ts",
+    "audio:render": "node tools/audio/render-patches.ts"
   },
   "dependencies": {
     "pixi-filters": "^6.1.5",
@@ -21,6 +24,7 @@
   "devDependencies": {
     "@types/node": "^26.6.2",
     "ktx2-encoder": "^0.6.0",
+    "node-web-audio-api": "^2.2.0",
     "sharp": "^0.35.4",
     "typescript": "^7.0.2",
     "vite": "^8.3.0",

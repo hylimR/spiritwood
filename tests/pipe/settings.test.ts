@@ -197,7 +197,7 @@ describe('URL overrides', () => {
 
   test('combined, without the leading ?', () => {
     expect(applyUrlOverrides(settings(), 'quality=medium&fps=0&dpr=2&dynres=0&debug=1')).toEqual({
-      preset: 'medium', pixelRatioCap: 2, fpsCap: 0, dynamicResolution: false, debugOverlay: true,
+      ...DEFAULT_SETTINGS, preset: 'medium', pixelRatioCap: 2, fpsCap: 0, dynamicResolution: false, debugOverlay: true,
     });
   });
 

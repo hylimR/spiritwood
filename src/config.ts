@@ -52,3 +52,13 @@ export const PALETTE = {
 export type PaletteKey = keyof typeof PALETTE;
 
 export const STORAGE_KEY = 'spiritwood.settings.v1';
+
+/** Size of the SimView.projectiles pool (Thorn Spitter seeds). */
+export const MAX_PROJECTILES = 32;
+/**
+ * Render world-clock scale while the sim is frozen for a Spirit Launch aim, the ease time constant into
+ * the freeze and the (fast) one back out (s). See FrameInfo.worldTime.
+ */
+export const TIME_SCALE_FROZEN = 0.08;
+export const TIME_SCALE_EASE = 0.12;
+export const TIME_SCALE_RELEASE = 0.03;

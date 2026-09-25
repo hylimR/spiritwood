@@ -1,5 +1,6 @@
 import type { AreaGradeId, GradeZoneDef } from '../../contracts/level.ts';
 import type { GradeParams } from '../../contracts/render.ts';
+import { zoneWeight } from '../../core/zones.ts';
 
 export function createGradeParams(): GradeParams {
   return {
@@ -19,19 +20,7 @@ export function copyGrade(out: GradeParams, src: GradeParams): GradeParams {
   return out;
 }
 
-/**
- * Weight of a zone at (x, y): 1 inside the rect, smoothstep falloff to 0 at `blend` units outside
- * (Euclidean distance to the rect). A zone with blend ≤ 0 has a hard edge.
- */
-export function zoneWeight(z: GradeZoneDef, x: number, y: number): number {
-  const dx = Math.max(z.x - x, 0, x - (z.x + z.w));
-  const dy = Math.max(z.y - y, 0, y - (z.y + z.h));
-  const d = Math.sqrt(dx * dx + dy * dy);
-  if (d <= 0) return 1;
-  if (z.blend <= 0 || d >= z.blend) return 0;
-  const t = 1 - d / z.blend;
-  return t * t * (3 - 2 * t);
-}
+export { zoneWeight };
 
 function accumulate(out: GradeParams, g: GradeParams, w: number): void {
   out.exposure += g.exposure * w;

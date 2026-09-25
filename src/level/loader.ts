@@ -1,6 +1,6 @@
 import {
-  AREA_GRADES, TileKind, type AreaGradeId, type CheckpointDef, type DecorHintDef, type EnemyDef, type GoalDef,
-  type GradeZoneDef, type LevelData, type LightShaftDef, type OrbDef,
+  AREA_GRADES, TileKind, type AbilityShrineDef, type AreaGradeId, type CheckpointDef, type DecorHintDef, type EnemyDef,
+  type GoalDef, type GradeZoneDef, type LevelData, type LightShaftDef, type OrbDef, type SpitterDef,
 } from '../contracts/level.ts';
 import { hashString } from '../core/rng.ts';
 import { DEFAULT_WORLD_TUNING } from '../sim/tuning.ts';
@@ -22,7 +22,13 @@ export const LDTK_ENTITY = {
   GradeZone: 'GradeZone',
   Lantern: 'Lantern',
   Flora: 'Flora',
+  Spitter: 'Spitter',
+  AbilityShrine: 'AbilityShrine',
 } as const;
+
+/** LDtk enums besides AreaGrade: their value ids, and the LevelData value each maps to. */
+export const LDTK_SPITTER_AIM = { Player: 'player', Fixed: 'fixed' } as const;
+export const LDTK_ABILITY = { Launch: 'launch' } as const;
 
 /** Field defaults when an instance lacks the field (the LDtk defs carry the same defaults). */
 export const LDTK_DEFAULTS = {
@@ -32,7 +38,26 @@ export const LDTK_DEFAULTS = {
   shaftIntensity: 0.6,
   /** Grade-zone cross-fade, in grid cells. */
   gradeBlendCells: 6,
+  spitterAim: 'player',
+  /** Fixed-aim spitter angle from +x toward screen-up (90 = straight up). */
+  spitterAngleDeg: 90,
+  spitterPhase: 0,
+  ability: 'launch',
 } as const;
+
+/** Velocity components smaller than this snap to 0, so 90° is exactly vertical. */
+const SNAP_EPSILON = 1e-9;
+
+/**
+ * A fixed-aim spitter's seed velocity from the LDtk fields: `angleDeg` from +x turning toward screen-up
+ * (+y is down), `speed` in u/s; components with |c| < 1e-9 snap to 0.
+ */
+export function spitterVelocity(angleDeg: number, speed: number): { vx: number; vy: number } {
+  const a = (angleDeg * Math.PI) / 180;
+  const vx = speed * Math.cos(a);
+  const vy = -speed * Math.sin(a);
+  return { vx: Math.abs(vx) < SNAP_EPSILON ? 0 : vx, vy: Math.abs(vy) < SNAP_EPSILON ? 0 : vy };
+}
 
 const LAYER_TYPES: readonly LdtkLayerType[] = ['IntGrid', 'Entities', 'Tiles', 'AutoLayer'];
 
@@ -187,6 +212,45 @@ function gradeField(e: LdtkEntityInstance, path: string): AreaGradeId {
   return grade;
 }
 
+/** An enum field matched case-insensitively against `values` (LDtk id → LevelData value); `fallback` when unset. */
+function enumField<V extends string>(
+  e: LdtkEntityInstance, name: string, enumName: string, values: Readonly<Record<string, V>>, fallback: V, path: string,
+): V {
+  const f = field(e, name);
+  if (!f || f.__value === null || f.__value === undefined) return fallback;
+  const raw = asString(f.__value, `${path}.${name}`);
+  for (const id of Object.keys(values)) if (id.toLowerCase() === raw.toLowerCase()) return values[id] as V;
+  return fail(`${path}.${name}`, `unknown ${enumName} "${raw}" (expected one of ${Object.keys(values).join(', ')})`);
+}
+
+/** A numeric field that must be at least `min`. */
+function boundedField(e: LdtkEntityInstance, name: string, fallback: number, min: number, path: string, int = false): number {
+  const v = numberField(e, name, fallback, path, int);
+  if (v < min) fail(`${path}.${name}`, `expected at least ${min}, got ${v}`);
+  return v;
+}
+
+function spitterDef(e: LdtkEntityInstance, x: number, y: number, path: string): SpitterDef {
+  const wt = DEFAULT_WORLD_TUNING;
+  const aim = enumField(e, 'aim', 'SpitterAim', LDTK_SPITTER_AIM, LDTK_DEFAULTS.spitterAim, path);
+  const angleDeg = numberField(e, 'angleDeg', LDTK_DEFAULTS.spitterAngleDeg, path);
+  const speed = boundedField(e, 'speed', wt.spitterDefaultSpeed, 0, path);
+  const v = aim === 'fixed' ? spitterVelocity(angleDeg, speed) : { vx: 0, vy: 0 };
+  return {
+    id: 0,
+    kind: 'thornSpitter',
+    x,
+    y,
+    aim,
+    fixedVx: v.vx,
+    fixedVy: v.vy,
+    range: boundedField(e, 'range', wt.spitterDefaultRange, 0, path),
+    period: boundedField(e, 'period', wt.spitterDefaultPeriod, 1, path, true),
+    phase: numberField(e, 'phase', LDTK_DEFAULTS.spitterPhase, path, true),
+    flightTicks: boundedField(e, 'flightTicks', wt.spitterDefaultFlightTicks, 1, path, true),
+  };
+}
+
 /**
  * Convert an LDtk 1.5.x project (parsed JSON) into LevelData. Reads only the exported "__" fields
  * (__identifier, __type, __cWid, __cHei, __gridSize, intGridCsv, entityInstances with px/__pivot/
@@ -244,6 +308,7 @@ export function parseLdtk(project: unknown, levelIdentifier?: string): LevelData
     orbs: [],
     checkpoints: [],
     enemies: [],
+    abilityShrines: [],
     goal: null,
     lightShafts: [],
     gradeZones: [],
@@ -260,6 +325,7 @@ export function parseLdtk(project: unknown, levelIdentifier?: string): LevelData
   let goals = 0;
   let lanterns = 0;
   let flora = 0;
+  const spitters: SpitterDef[] = [];
   const enemyHalf = DEFAULT_WORLD_TUNING.enemyWidth / 2;
   for (let li = 0; li < layers.length; li++) {
     const layer = layers[li] as LdtkLayerInstance;
@@ -345,12 +411,29 @@ export function parseLdtk(project: unknown, levelIdentifier?: string): LevelData
           out.decorHints.push(hint);
           break;
         }
+        case LDTK_ENTITY.Spitter:
+          spitters.push(spitterDef(e, feetX, feetY, ep));
+          break;
+        case LDTK_ENTITY.AbilityShrine: {
+          const shrine: AbilityShrineDef = {
+            id: out.abilityShrines.length,
+            ...rect,
+            ability: enumField(e, 'ability', 'Ability', LDTK_ABILITY, LDTK_DEFAULTS.ability, ep),
+          };
+          out.abilityShrines.push(shrine);
+          break;
+        }
         default:
           break;
       }
     }
   }
   if (starts !== 1) fail(path, `expected exactly one PlayerStart, found ${starts}`);
+  // Every Enemy (crawlers) first, then every Spitter, each in layer order; id = index.
+  for (const s of spitters) {
+    s.id = out.enemies.length;
+    out.enemies.push(s);
+  }
   return out;
 }
 

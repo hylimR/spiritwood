@@ -272,3 +272,86 @@ describe('CameraController', () => {
     expect(cam.prevZoom).toBe(cam.zoom);
   });
 });
+
+describe('CameraController while aiming (§5.2, M2)', () => {
+  test('zoom smooth-damps toward aimZoom while in launchAim, then back; prevZoom interpolates it', () => {
+    const t = target(5000, 5000);
+    const cam = bigCamera(t);
+    expect(cam.zoom).toBe(ct.zoom);
+    t.mode = 'launchAim';
+    let prev = cam.zoom;
+    for (let i = 0; i < 20; i++) {
+      cam.step(t, SIM_DT);
+      expect(cam.prevZoom).toBe(prev);
+      expect(cam.zoom).toBeGreaterThan(prev);
+      expect(cam.zoom).toBeLessThanOrEqual(ct.aimZoom);
+      prev = cam.zoom;
+    }
+    // About zoomSmoothTime to get most of the way there.
+    const half = new CameraController();
+    half.setBounds(0, 0, 20000, 10000);
+    half.snapTo(target(5000, 5000), 0);
+    const aimT = { ...target(5000, 5000), mode: 'launchAim' as const };
+    for (let i = 0; i < Math.round(ct.zoomSmoothTime / SIM_DT); i++) half.step(aimT, SIM_DT);
+    expect(half.zoom - ct.zoom).toBeGreaterThan(0.5 * (ct.aimZoom - ct.zoom));
+    settle(cam, t, 240);
+    expect(cam.zoom).toBeCloseTo(ct.aimZoom, 6);
+    t.mode = 'air';
+    settle(cam, t, 240);
+    expect(cam.zoom).toBeCloseTo(ct.zoom, 6);
+  });
+
+  test('the look-ahead holds while aiming: direction, timers and value freeze', () => {
+    const t = target(5000, 5000);
+    const cam = bigCamera(t);
+    t.vx = 400;
+    for (let i = 0; i < 180; i++) {
+      t.x += t.vx * SIM_DT;
+      cam.step(t, SIM_DT);
+    }
+    // Aim (zero velocity) for longer than lookAheadHoldTicks: the look-ahead doesn't decay.
+    t.vx = 0;
+    t.mode = 'launchAim';
+    const lead = cam.x - (t.x - ct.deadZoneW / 2);
+    for (let i = 0; i < ct.lookAheadHoldTicks * 3; i++) cam.step(t, SIM_DT);
+    const held = cam.x - (t.x - ct.deadZoneW / 2);
+    expect(held).toBeGreaterThanOrEqual(lead - 1e-6);
+    // Released: the timers resume from where they were (the look-ahead decays after lookAheadHoldTicks).
+    t.mode = 'air';
+    settle(cam, t, 400);
+    expect(Math.abs(cam.x - (t.x - ct.deadZoneW / 2))).toBeLessThan(1);
+  });
+
+  test('snapTo snaps the zoom to its target with zero zoom velocity', () => {
+    const t = { ...target(5000, 5000), mode: 'launchAim' as const };
+    const cam = bigCamera(target(5000, 5000));
+    cam.snapTo(t, 7);
+    expect(cam.zoom).toBe(ct.aimZoom);
+    expect(cam.prevZoom).toBe(ct.aimZoom);
+    cam.step(t, SIM_DT);
+    expect(cam.zoom).toBe(ct.aimZoom);
+    cam.snapTo(target(5000, 5000), 8);
+    expect(cam.zoom).toBe(ct.zoom);
+    expect(cam.prevZoom).toBe(ct.zoom);
+    cam.step(target(5000, 5000), SIM_DT);
+    expect(cam.zoom).toBe(ct.zoom);
+  });
+
+  test('in the world: the camera zooms in during an aim and snaps back on respawn', async () => {
+    const { Ability } = await import('../../src/contracts/sim.ts');
+    const { anchorSeed, press, aim } = await import('./launchKit.ts');
+    const rig = new WorldRig(new MapBuilder(80, 40).put(40, 38, 'P').rows());
+    const w = rig.world;
+    w.unlock(Ability.Launch);
+    anchorSeed(w, w.player.x + 80, w.player.y - 29);
+    rig.step();
+    rig.step(press());
+    rig.run(30, aim());
+    expect(w.camera.zoom).toBeGreaterThan(ct.zoom + 0.5 * (ct.aimZoom - ct.zoom));
+    w.respawn();
+    rig.step(aim());
+    rig.run(42);
+    expect(w.player.alive).toBe(true);
+    expect(w.camera.zoom).toBe(ct.zoom);
+  });
+});

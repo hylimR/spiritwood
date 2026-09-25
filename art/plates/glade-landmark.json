@@ -1,0 +1,13 @@
+{
+  "_note": "Stand-in painted by tools/art/paint-example.ts: a far crag with a moonlit waterfall, between L2 and L3 on the value ramp.",
+  "parallax": [0.2, 0.2],
+  "replaces": null,
+  "origin": [201, -25],
+  "texelScale": 1.5,
+  "minQuality": "low",
+  "fog": 0.567,
+  "fogColor": "#25426c",
+  "desaturate": 0.183,
+  "tint": "#ffffff",
+  "area": "glade"
+}

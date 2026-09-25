@@ -1,6 +1,8 @@
 /**
  * CPU atlas helpers shared by the hero and entity generators (init-time only; allocation is fine).
- * Images are straight-alpha RGBA float rasters until they are packed into one RGBA8 atlas.
+ * Images are straight-alpha RGBA float rasters until they are packed into one RGBA8 atlas, except
+ * `premultiplied` images, whose colour is already premultiplied and may exceed alpha: emissive light
+ * that adds under premultiplied normal blending (a texel with alpha 0 and colour > 0 is pure light).
  */
 
 export interface Raster {
@@ -33,21 +35,28 @@ export interface AtlasImage {
   pivotX: number;
   pivotY: number;
   density: number;
+  /** The raster's colour is premultiplied (and may exceed alpha: emission). Needs a premultiplied atlas. */
+  premultiplied?: boolean;
 }
 
 export interface Atlas {
   width: number;
   height: number;
-  /** Straight-alpha RGBA8 pixels. */
+  /** RGBA8 pixels: straight alpha, or premultiplied (with emissive texels) when `premultiplied`. */
   pixels: Uint8Array;
   frames: Record<string, AtlasFrame>;
+  /** Pixels are premultiplied: upload them as they are (textureFromRgba `premultiply: false`). */
+  premultiplied: boolean;
 }
 
 /**
  * Shelf-pack images (tallest first, deterministic) into a `width`-wide atlas with `gutter` transparent
  * texels around every image (≥ 2^mipLevels for mipmapped sampling). Height rounds up to a multiple of 4.
+ * A `premultiplied` atlas stores premultiplied colour (straight images are multiplied by their alpha,
+ * premultiplied images are copied, emission included); otherwise it is straight alpha and may not hold
+ * premultiplied images.
  */
-export function packAtlas(images: readonly AtlasImage[], width: number, gutter: number): Atlas {
+export function packAtlas(images: readonly AtlasImage[], width: number, gutter: number, premultiplied = false): Atlas {
   const order = images.map((img, i) => ({ img, i })).sort((a, b) => b.img.raster.h - a.img.raster.h || a.i - b.i);
   const frames: Record<string, AtlasFrame> = {};
   let x = gutter;
@@ -69,22 +78,28 @@ export function packAtlas(images: readonly AtlasImage[], width: number, gutter: 
   const height = Math.ceil((y + rowH + gutter) / 4) * 4;
   const pixels = new Uint8Array(width * height * 4);
   for (const img of images) {
+    if (img.premultiplied && !premultiplied) throw new Error(`Atlas image ${img.name} is premultiplied; pack a premultiplied atlas`);
     const f = frames[img.name] as AtlasFrame;
     const src = img.raster.data;
+    const k = premultiplied && !img.premultiplied;
     for (let py = 0; py < f.h; py++) {
       for (let px = 0; px < f.w; px++) {
         const s = (py * f.w + px) * 4;
         const d = ((f.y + py) * width + f.x + px) * 4;
         const a = src[s + 3] as number;
-        if (a <= 0) continue;
-        pixels[d] = toByte(src[s] as number);
-        pixels[d + 1] = toByte(src[s + 1] as number);
-        pixels[d + 2] = toByte(src[s + 2] as number);
+        const r = src[s] as number;
+        const g = src[s + 1] as number;
+        const b = src[s + 2] as number;
+        if (a <= 0 && !(img.premultiplied && (r > 0 || g > 0 || b > 0))) continue;
+        const m = k ? Math.max(0, a) : 1;
+        pixels[d] = toByte(r * m);
+        pixels[d + 1] = toByte(g * m);
+        pixels[d + 2] = toByte(b * m);
         pixels[d + 3] = toByte(a);
       }
     }
   }
-  return { width, height, pixels, frames };
+  return { width, height, pixels, frames, premultiplied };
 }
 
 export function toByte(v: number): number {

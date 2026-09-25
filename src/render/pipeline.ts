@@ -19,6 +19,7 @@ import { blendGrades, createGradeParams } from './post/grade.ts';
 import { PostChain, type PassOptions } from './post/postChain.ts';
 import { ScreenShake, traumaForEvent } from './post/shake.ts';
 import { createCanvasFit, fitCanvas, renderScaleCap, type CanvasFit } from './post/viewport.ts';
+import { applyFreezeGrade, freezeAmount, WorldClock } from './post/worldClock.ts';
 import { applyParallax, computeCameraFrame, createCameraFrame } from './util/camera.ts';
 import { SimpleTextureBudget } from './util/texture.ts';
 
@@ -114,6 +115,7 @@ export class RenderPipeline {
   private readonly draws: DrawCounter;
   private readonly dynres = new DynamicResolution();
   private readonly shake = new ScreenShake();
+  private readonly clock = new WorldClock();
   private readonly fit: CanvasFit = createCanvasFit();
   private readonly frame: FrameInfo;
   private readonly grade: GradeParams = createGradeParams();
@@ -161,8 +163,8 @@ export class RenderPipeline {
     this.draws = new DrawCounter(gl);
 
     this.frame = {
-      time: 0, dt: 0, alpha: 1, frame: 0, camera: createCameraFrame(), sim: null as unknown as SimView,
-      quality: this._quality, renderScale: 1, pxPerUnit: 1,
+      time: 0, dt: 0, worldTime: 0, worldDt: 0, timeScale: 1, alpha: 1, frame: 0, camera: createCameraFrame(),
+      sim: null as unknown as SimView, quality: this._quality, renderScale: 1, pxPerUnit: 1,
     };
     this._ctx = {
       renderer, scene: this.scene, glow: this.glow, level: options.level, manifest: options.manifest,
@@ -260,9 +262,10 @@ export class RenderPipeline {
   }
 
   /**
-   * One frame: (a) advance the render clock by min(dt, MAX_RENDER_DT) and fill FrameInfo (camera with
-   * shake, quality, sim); (b) for each queued sim event: add shake (Land with fall height ≥ 240, Died,
-   * EnemyStomped) and call every view's onSimEvent; (c) views update; (d) passes. Does not clear the
+   * One frame: (a) advance the render clock by min(dt, MAX_RENDER_DT) and the world clock (eased toward
+   * TIME_SCALE_FROZEN while `sim.frozen`), and fill FrameInfo (camera with shake, quality, sim); (b) for
+   * each queued sim event: add shake (traumaForEvent) and call every view's onSimEvent; (c) views update;
+   * (d) the blended area grade plus the freeze grade, then the passes. Does not clear the
    * queue (the orchestrator does, after audio/HUD). `nowSec` = wall time (dynres cooldown, GPU timing),
    * `dt` = unclamped frame dt, `lateFrames` from the loop.
    */
@@ -296,6 +299,11 @@ export class RenderPipeline {
     const f = this.frame;
     f.time = this.time;
     f.dt = rdt;
+    const clock = this.clock;
+    clock.advance(rdt, sim.frozen);
+    f.timeScale = clock.scale;
+    f.worldDt = clock.dt;
+    f.worldTime = clock.time;
     f.alpha = alpha;
     f.frame = this.frameIndex;
     f.sim = sim;
@@ -313,6 +321,7 @@ export class RenderPipeline {
     for (let v = 0; v < views.length; v++) (views[v] as RenderView).update(f);
 
     blendGrades(this.grade, this.level.gradeZones, cam.cx, cam.cy, AREA_GRADE_TABLE, DEFAULT_GRADE);
+    applyFreezeGrade(this.grade, freezeAmount(clock.scale));
     const fade = sim.prevFade + (sim.fade - sim.prevFade) * alpha;
     this.post.setGrade(this.grade, fade, this.fog, this.fit.aspect, q.bloom);
 

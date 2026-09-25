@@ -1,0 +1,29 @@
+{
+  "tool": "spiritwood-art/2",
+  "chunks": [
+    {
+      "col": 0,
+      "row": 0,
+      "hash": "bad7a65d77e4def2",
+      "files": { "ktx2": "12f7411b110ef95a", "webp": "c21fe32994931763", "png": "d0c14697b0f40d53" }
+    },
+    {
+      "col": 1,
+      "row": 0,
+      "hash": "6e40b0e166568927",
+      "files": { "ktx2": "540c67fb3496e66a", "webp": "61ed7e3818627ec8", "png": "618330c272a37291" }
+    },
+    {
+      "col": 2,
+      "row": 0,
+      "hash": "be596dd9410e3707",
+      "files": { "ktx2": "65efe3836463b30b", "webp": "9276537c523379d8", "png": "f48202a9e5804d74" }
+    },
+    {
+      "col": 3,
+      "row": 0,
+      "hash": "4e634efe4753cbc4",
+      "files": { "ktx2": "6f3faf845542afff", "webp": "c331719d9d8d181c", "png": "e9035126dcf8f13d" }
+    }
+  ]
+}

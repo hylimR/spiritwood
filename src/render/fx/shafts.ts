@@ -138,7 +138,7 @@ export class ShaftsView implements RenderView {
   update(frame: FrameInfo): void {
     const ctx = this.ctx;
     if (!ctx || !this.uniforms || !this.enabled) return;
-    (this.uniforms.uniforms as { uTime: number }).uTime = frame.time % 3600;
+    (this.uniforms.uniforms as { uTime: number }).uTime = frame.worldTime % 3600;
     const cam = frame.camera;
     const v = this.view;
     v.x0 = cam.left;

@@ -1,3 +1,4 @@
+import type { Bounds } from '../contracts/common.ts';
 import { TileKind } from '../contracts/level.ts';
 import type { CollisionGrid } from '../level/grid.ts';
 
@@ -187,4 +188,69 @@ export function overlapsThorns(grid: CollisionGrid, body: Body, inset: number): 
   const bottom = body.y - inset;
   if (!(half > 0) || !(bottom > top)) return false;
   return tilesHave(grid, firstTile(body.x - half, t), firstTile(top, t), lastTile(body.x + half, t), lastTile(bottom, t), TileKind.Thorns);
+}
+
+/** A segment passing within this distance (u) of a tile's edge or corner counts as touching it. */
+const LOS_EPSILON = 1e-6;
+
+/**
+ * Line of sight (§5.1.1): true when the segment (x0, y0)–(x1, y1) touches no Solid tile. A supercover
+ * walk: every tile whose closed square the segment touches is tested, so a segment through a tile
+ * corner tests both neighbours (and a segment along a tile edge both sides). OneWay and Thorns never
+ * block; outside the level the §2.1 rule applies (left, right and top are Solid). Column by column: the
+ * segment's y-range inside each column's closed x-interval gives the rows to test.
+ */
+export function lineOfSight(grid: CollisionGrid, x0: number, y0: number, x1: number, y1: number): boolean {
+  const t = grid.tileSize;
+  let ax = x0;
+  let ay = y0;
+  let bx = x1;
+  let by = y1;
+  if (bx < ax) {
+    ax = x1;
+    ay = y1;
+    bx = x0;
+    by = y0;
+  }
+  const dx = bx - ax;
+  const c0 = Math.ceil((ax - LOS_EPSILON) / t) - 1;
+  const c1 = Math.floor((bx + LOS_EPSILON) / t);
+  for (let c = c0; c <= c1; c++) {
+    let xa = c * t;
+    let xb = xa + t;
+    if (xa < ax) xa = ax;
+    if (xb > bx) xb = bx;
+    if (xa > xb) {
+      // The column touches the segment only within the tolerance, at one of its ends.
+      if (c * t > bx) xa = xb = bx;
+      else xa = xb = ax;
+    }
+    let ya: number;
+    let yb: number;
+    if (dx > 0) {
+      ya = ay + (by - ay) * ((xa - ax) / dx);
+      yb = ay + (by - ay) * ((xb - ax) / dx);
+    } else {
+      ya = ay;
+      yb = by;
+    }
+    if (ya > yb) {
+      const s = ya;
+      ya = yb;
+      yb = s;
+    }
+    const r0 = Math.ceil((ya - LOS_EPSILON) / t) - 1;
+    const r1 = Math.floor((yb + LOS_EPSILON) / t);
+    for (let r = r0; r <= r1; r++) if (grid.get(c, r) === TileKind.Solid) return false;
+  }
+  return true;
+}
+
+/** Does the circle (cx, cy, r) touch the box (closest-point distance ≤ r)? */
+export function circleTouchesBox(cx: number, cy: number, r: number, b: Bounds): boolean {
+  const qx = cx < b.minX ? b.minX : cx > b.maxX ? b.maxX : cx;
+  const qy = cy < b.minY ? b.minY : cy > b.maxY ? b.maxY : cy;
+  const dx = cx - qx;
+  const dy = cy - qy;
+  return dx * dx + dy * dy <= r * r;
 }

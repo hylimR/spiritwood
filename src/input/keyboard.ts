@@ -13,8 +13,9 @@ interface KeyEventLike extends Event {
 /**
  * Keyboard state from DOM key events on `target` (window in the game, a plain EventTarget in tests —
  * tests dispatch `Object.assign(new Event('keydown'), { code: 'Space' })`).
- * Presses are counted between `takePresses` calls, so a tap shorter than a frame is never lost.
- * Auto-repeat keydowns (`repeat: true`) are not presses. Game keys call preventDefault().
+ * Presses are counted between `takePresses` calls, so a tap shorter than a frame is never lost;
+ * releases likewise between `takeReleases` calls. Auto-repeat keydowns (`repeat: true`) are not
+ * presses. Game keys call preventDefault().
  * Clears held keys on `blur`.
  */
 export class KeyboardSource {
@@ -26,6 +27,8 @@ export class KeyboardSource {
   /** Bound keys currently held, per action. */
   private readonly held: Uint8Array;
   private readonly presses: Uint16Array;
+  /** Held → released transitions of an action (its last bound key went up, or blur). */
+  private readonly releases: Uint16Array;
   private anyPress = false;
   private activity = false;
 
@@ -34,6 +37,7 @@ export class KeyboardSource {
     this.actions = Object.keys(bindings) as GameAction[];
     this.held = new Uint8Array(this.actions.length);
     this.presses = new Uint16Array(this.actions.length);
+    this.releases = new Uint16Array(this.actions.length);
     const byCode = new Map<string, number[]>();
     for (let i = 0; i < this.actions.length; i++) {
       for (const code of bindings[this.actions[i] as GameAction]) {
@@ -62,6 +66,18 @@ export class KeyboardSource {
     return n;
   }
 
+  /**
+   * Releases of `action` since the previous call for that action: transitions from held to not held
+   * (the last of its bound keys went up, or the window lost focus while it was held).
+   */
+  takeReleases(action: GameAction): number {
+    const i = this.actions.indexOf(action);
+    if (i < 0) return 0;
+    const n = this.releases[i] as number;
+    this.releases[i] = 0;
+    return n;
+  }
+
   /** True if any key (bound or not) went down since the previous call. Auto-repeat does not count. */
   takeAnyPress(): boolean {
     const any = this.anyPress;
@@ -80,6 +96,7 @@ export class KeyboardSource {
     this.downCodes.clear();
     this.held.fill(0);
     this.presses.fill(0);
+    this.releases.fill(0);
     this.anyPress = false;
     this.activity = false;
   }
@@ -120,12 +137,20 @@ export class KeyboardSource {
     if (!bound) return;
     for (let k = 0; k < bound.length; k++) {
       const i = bound[k] as number;
-      if ((this.held[i] as number) > 0) this.held[i] = (this.held[i] as number) - 1;
+      const h = this.held[i] as number;
+      if (h === 0) continue;
+      this.held[i] = h - 1;
+      if (h === 1) this.countRelease(i);
     }
   };
 
   private readonly onBlur = (): void => {
     this.downCodes.clear();
+    for (let i = 0; i < this.held.length; i++) if ((this.held[i] as number) > 0) this.countRelease(i);
     this.held.fill(0);
   };
+
+  private countRelease(i: number): void {
+    if ((this.releases[i] as number) < 0xffff) this.releases[i] = (this.releases[i] as number) + 1;
+  }
 }

@@ -1,8 +1,11 @@
 import type { Facing } from './common.ts';
 import type { LevelData } from './level.ts';
 
-/** Movement mode of the player controller. */
-export type PlayerMode = 'ground' | 'air' | 'wallSlide' | 'dash' | 'dead';
+/**
+ * Movement mode of the player controller. `launchAim`: frozen in place while aiming a Spirit Launch
+ * (the world is frozen too, SimView.frozen); `launched`: the launch flight (§5.1.1).
+ */
+export type PlayerMode = 'ground' | 'air' | 'wallSlide' | 'dash' | 'launchAim' | 'launched' | 'dead';
 
 /**
  * Read-only player state for rendering. Positions are feet (bottom-centre).
@@ -48,11 +51,18 @@ export interface PlayerView {
   readonly warpTick: number;
 }
 
-export type EnemyMode = 'patrol' | 'stunned';
+export type EnemyKind = 'gloomcrawler' | 'thornSpitter';
+
+/**
+ * Gloomcrawler: `patrol` | `stunned`. Thorn Spitter: `idle` (inactive) | `windup` (telegraph) | `cooldown`
+ * (entered on the fire tick: SeedFired comes on the step after the windup's last tick) | `stunned` (§5.3).
+ */
+export type EnemyMode = 'patrol' | 'idle' | 'windup' | 'cooldown' | 'stunned';
 
 export interface EnemyView {
   readonly id: number;
-  /** Length of the current mode in ticks (stunTicks while stunned, 0 on patrol). */
+  readonly kind: EnemyKind;
+  /** Length of the current mode in ticks (stun or windup length; 0 for open-ended modes). */
   readonly modeDuration: number;
   readonly x: number;
   readonly y: number;
@@ -64,6 +74,68 @@ export interface EnemyView {
   readonly height: number;
   readonly mode: EnemyMode;
   readonly modeTicks: number;
+}
+
+/** Who a seed can hurt: `hostile` seeds kill the player; `reflected` seeds (launched off) stun enemies. */
+export type ProjectileOwner = 'hostile' | 'reflected';
+
+/**
+ * A Thorn Spitter seed. SimView.projectiles is a fixed pool: slots are reused, `active` says whether a
+ * slot is live, and `spawnTick` changes whenever a slot is (re)fired or reflected, so views reset trails.
+ */
+export interface ProjectileView {
+  /** Pool slot index. */
+  readonly id: number;
+  readonly active: boolean;
+  readonly owner: ProjectileOwner;
+  /** Centre. */
+  readonly x: number;
+  readonly y: number;
+  readonly prevX: number;
+  readonly prevY: number;
+  readonly vx: number;
+  readonly vy: number;
+  readonly radius: number;
+  /** Tick of the last fire or reflection (−1 = never used). With `id` it identifies one flight. */
+  readonly spawnTick: number;
+  /** Enemy id that fired it. */
+  readonly sourceId: number;
+  /** Ticks stepped since the last fire or reflection (frozen ticks don't count). */
+  readonly age: number;
+  /** The seed expires when age reaches this (seedLifetimeTicks, or reflectedLifetimeTicks after a reflection). */
+  readonly lifetime: number;
+}
+
+export type LaunchTargetKind = 'none' | 'seed' | 'enemy';
+
+/**
+ * Spirit Launch state for rendering and the HUD (§5.1.1). Target ids are ProjectileView.id (seed) or
+ * EnemyView.id (enemy). Positions are target centres. Updated in place every tick.
+ */
+export interface LaunchView {
+  /** The ability has been acquired this run (an AbilityShrine was touched). */
+  readonly unlocked: boolean;
+  /**
+   * The target a press would grab now (nearest valid in range); `none` while aiming, dead or locked.
+   * candidateId/X/Y are meaningful only while candidateKind ≠ 'none' (stale otherwise).
+   */
+  readonly candidateKind: LaunchTargetKind;
+  readonly candidateId: number;
+  readonly candidateX: number;
+  readonly candidateY: number;
+  /** The grabbed target while aiming, then the last launched target during the flight; X/Y = its centre at the grab. */
+  readonly targetKind: LaunchTargetKind;
+  readonly targetId: number;
+  readonly targetX: number;
+  readonly targetY: number;
+  /** Unit aim direction (while aiming), then the launch direction (while launched). */
+  readonly aimX: number;
+  readonly aimY: number;
+  /** Ticks spent aiming (0 on the LaunchAim tick) and the auto-release limit. */
+  readonly aimTicks: number;
+  readonly aimMaxTicks: number;
+  /** Grab radius around the player's centre, world units (for the debug draw and range hints). */
+  readonly range: number;
 }
 
 export interface OrbView {
@@ -128,10 +200,10 @@ export interface CameraView {
  * | AirJump | feet | facing | airJumpsLeft after | |
  * | WallJump | wall face x, feet y | launch dir (−wallDir) | | |
  * | Dash | feet | dashDir | 1 if airborne | |
- * | DashEnd | feet | dashDir | 0 timed out, 1 jump-cancel, 2 hit wall | |
+ * | DashEnd | feet | dashDir | 0 timed out, 1 jump-cancel, 2 hit wall, 3 launch grab | |
  * | Land | feet | impact speed u/s | fall height u (apex y of the airborne arc → landing y) | |
  * | WallSlideStart | wall face x, feet y | wallDir | | |
- * | WallSlideEnd | wall face x, feet y | wallDir | 0 released, 1 landed, 2 wall-jumped, 3 wall ended | |
+ * | WallSlideEnd | wall face x, feet y | wallDir | 0 released, 1 landed, 2 wall-jumped, 3 wall ended, 4 launch grab | |
  * | OrbCollected | orb centre | value | | orb id |
  * | CheckpointActivated | respawn feet | | | checkpoint id |
  * | Died | body centre | DeathCause | | |
@@ -142,6 +214,14 @@ export interface CameraView {
  * | DropThrough | feet | | | |  (once, when the drop starts)
  * | Reset | new player feet | | | |  (GameWorld.reset, emitted after clearing the queue)
  * | Teleported | new player feet | | | |  (GameWorld.teleport)
+ * | AbilityUnlocked | shrine bottom-centre | Ability | | shrine id |
+ * | LaunchAim | target centre | LaunchTargetCode | | target id |
+ * | Launch | player feet | launch angle (rad, atan2(aimY, aimX)) | LaunchTargetCode | target id |
+ * | LaunchFizzle | player centre | | | |  (launch pressed with nothing in range)
+ * | SeedFired | seed centre | vx | vy | seed id |
+ * | SeedBurst | seed centre | SeedBurstCause | owner (0 hostile, 1 reflected) | seed id |
+ * | SpitterWindup | spitter muzzle | windup ticks | | enemy id |
+ * | EnemyHit | enemy centre | EnemyHitCause | | enemy id |
  *
  * Views reset per-run render state (springs, scarf, trails, bursts) on Respawned, Reset and Teleported.
  */
@@ -164,6 +244,14 @@ export const SimEventType = {
   DropThrough: 16,
   Reset: 17,
   Teleported: 18,
+  AbilityUnlocked: 19,
+  LaunchAim: 20,
+  Launch: 21,
+  LaunchFizzle: 22,
+  SeedFired: 23,
+  SeedBurst: 24,
+  SpitterWindup: 25,
+  EnemyHit: 26,
 } as const;
 export type SimEventType = (typeof SimEventType)[keyof typeof SimEventType];
 
@@ -172,8 +260,40 @@ export const DeathCause = {
   Enemy: 2,
   Fall: 3,
   Debug: 4,
+  Seed: 5,
 } as const;
 export type DeathCause = (typeof DeathCause)[keyof typeof DeathCause];
+
+/** AbilityUnlocked `a`. */
+export const Ability = {
+  Launch: 1,
+} as const;
+export type Ability = (typeof Ability)[keyof typeof Ability];
+
+/** LaunchAim `a` / Launch `b`: the grabbed target's kind. */
+export const LaunchTargetCode = {
+  Seed: 1,
+  Enemy: 2,
+} as const;
+export type LaunchTargetCode = (typeof LaunchTargetCode)[keyof typeof LaunchTargetCode];
+
+/** SeedBurst `a`. */
+export const SeedBurstCause = {
+  Terrain: 1,
+  Player: 2,
+  Enemy: 3,
+  Expired: 4,
+} as const;
+export type SeedBurstCause = (typeof SeedBurstCause)[keyof typeof SeedBurstCause];
+
+/** EnemyHit `a`. */
+export const EnemyHitCause = {
+  /** Struck by a reflected seed. */
+  Seed: 1,
+  /** Launched off. */
+  Launch: 2,
+} as const;
+export type EnemyHitCause = (typeof EnemyHitCause)[keyof typeof EnemyHitCause];
 
 /** A pooled event record. Consumers must copy what they need; records are reused. */
 export interface SimEvent {
@@ -195,9 +315,10 @@ export interface SimEventQueueView {
 /**
  * Everything the renderer / HUD may read from the simulation.
  * `orbs`, `checkpoints` and `enemies` are allocated once in LevelData order
- * (sim.orbs[i].id === level.orbs[i].id); the arrays and their element objects are never replaced,
- * reordered or resized — not even by reset(). `goal` keeps its identity. Implementations may use their
- * own mutable classes for the elements.
+ * (sim.orbs[i].id === level.orbs[i].id, sim.enemies[i].id === level.enemies[i].id === i); `projectiles`
+ * is a fixed pool (ProjectileView). The arrays and their element objects are never replaced, reordered
+ * or resized — not even by reset(). `goal`, `launch` and `camera` keep their identity. Implementations
+ * may use their own mutable classes for the elements.
  */
 export interface SimView {
   readonly tick: number;
@@ -206,6 +327,13 @@ export interface SimView {
   readonly orbs: readonly OrbView[];
   readonly checkpoints: readonly CheckpointView[];
   readonly enemies: readonly EnemyView[];
+  readonly projectiles: readonly ProjectileView[];
+  readonly launch: LaunchView;
+  /**
+   * True while the world is frozen for a Spirit Launch aim: enemies, projectiles and orbs do not step
+   * (the tick counter, timer and camera do). Render eases its world clock toward a crawl (FrameInfo.timeScale).
+   */
+  readonly frozen: boolean;
   readonly goal: GoalView | null;
   readonly camera: CameraView;
   readonly events: SimEventQueueView;

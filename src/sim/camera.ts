@@ -16,7 +16,8 @@ export interface CameraTarget {
 
 /**
  * Platformer camera (ARCHITECTURE.md §5.2): dead zone, look-ahead, landing-based vertical follow,
- * look-down when falling fast, smoothDamp per axis, clamped to bounds. Simulated at 60 Hz.
+ * look-down when falling fast, smoothDamp per axis, clamped to bounds. Simulated at 60 Hz. While the
+ * target is in `launchAim` the zoom eases toward aimZoom and the look-ahead is held (M2).
  */
 export class CameraController implements CameraView {
   x = 0;
@@ -48,6 +49,7 @@ export class CameraController implements CameraView {
   private readonly lookAhead: SmoothDampState = { value: 0, velocity: 0 };
   private readonly sx: SmoothDampState = { value: 0, velocity: 0 };
   private readonly sy: SmoothDampState = { value: 0, velocity: 0 };
+  private readonly sz: SmoothDampState = { value: 1, velocity: 0 };
 
   private overridden = false;
   private overrideX = 0;
@@ -55,7 +57,13 @@ export class CameraController implements CameraView {
 
   constructor(tuning: CameraTuning = DEFAULT_CAMERA_TUNING) {
     this.tuning = tuning;
-    this.zoom = this.prevZoom = Math.max(MIN_CAMERA_ZOOM, tuning.zoom);
+    this.zoom = this.prevZoom = this.sz.value = this.zoomTarget('ground');
+  }
+
+  /** The zoom the camera eases toward for a target in `mode` (never below MIN_CAMERA_ZOOM). */
+  zoomTarget(mode: PlayerMode): number {
+    const t = this.tuning;
+    return Math.max(MIN_CAMERA_ZOOM, mode === 'launchAim' ? t.aimZoom : t.zoom);
   }
 
   setViewSize(viewW: number, viewH: number): void {
@@ -74,10 +82,12 @@ export class CameraController implements CameraView {
   }
 
   /**
-   * Jump straight to framing `target`: value = target, velocities 0, prev = cur, snapTick = tick.
-   * While an override is set, snaps to the override point instead.
+   * Jump straight to framing `target`: value = target, velocities 0, zoom = its target with zero zoom
+   * velocity, prev = cur, snapTick = tick. While an override is set, snaps to the override point instead.
    */
   snapTo(target: CameraTarget, tick: number): void {
+    this.zoom = this.prevZoom = this.sz.value = this.zoomTarget(target.mode);
+    this.sz.velocity = 0;
     this.focusX = target.x;
     this.focusY = target.y;
     this.groundRef = target.y;
@@ -94,7 +104,6 @@ export class CameraController implements CameraView {
     this.sy.velocity = 0;
     this.x = this.prevX = this.sx.value;
     this.y = this.prevY = this.sy.value;
-    this.prevZoom = this.zoom;
     this.snapTick = tick;
   }
 
@@ -114,6 +123,7 @@ export class CameraController implements CameraView {
     this.prevX = this.x;
     this.prevY = this.y;
     this.prevZoom = this.zoom;
+    this.zoom = smoothDamp(this.sz, this.zoomTarget(target.mode), t.zoomSmoothTime, dt);
 
     this.follow(target);
     let tx: number;
@@ -122,8 +132,11 @@ export class CameraController implements CameraView {
       tx = this.overrideX;
       ty = this.overrideY;
     } else {
-      this.updateLookAhead(target.vx);
-      smoothDamp(this.lookAhead, this.lookDir * t.lookAheadX, t.lookAheadSmoothTime, dt);
+      // While aiming the look-ahead holds: its direction, timers and value all freeze.
+      if (target.mode !== 'launchAim') {
+        this.updateLookAhead(target.vx);
+        smoothDamp(this.lookAhead, this.lookDir * t.lookAheadX, t.lookAheadSmoothTime, dt);
+      }
       const drop = target.y - this.lastGroundedY;
       const lookDown = target.vy >= t.lookDownFallSpeed && drop >= t.lookDownMinDrop ? t.lookDownMax : 0;
       tx = this.focusX + this.lookAhead.value;

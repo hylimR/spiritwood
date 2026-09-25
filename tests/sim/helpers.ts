@@ -55,7 +55,21 @@ export function copyEvent(e: SimEvent): SimEvent {
   return { type: e.type, tick: e.tick, x: e.x, y: e.y, a: e.a, b: e.b, id: e.id };
 }
 
-/** A lone PlayerController on a grid, stepped tick by tick with a recorded event log. */
+/** Reset every field of `f` to neutral input (no movement, nothing held or pressed). */
+export function neutral(f: InputFrame): InputFrame {
+  f.moveX = 0;
+  f.moveY = 0;
+  f.jumpHeld = false;
+  f.jumpPressed = false;
+  f.dashHeld = false;
+  f.dashPressed = false;
+  f.launchHeld = false;
+  f.launchPressed = false;
+  f.launchReleased = false;
+  return f;
+}
+
+/** A lone PlayerController on a grid (ASCII rows or a level), stepped tick by tick with a recorded event log. */
 export class PlayerRig {
   readonly grid: CollisionGrid;
   readonly player: PlayerController;
@@ -64,8 +78,8 @@ export class PlayerRig {
   readonly input: InputFrame = createInputFrame();
   tick = 0;
 
-  constructor(rows: readonly string[], tuning: Partial<PlayerTuning> = {}) {
-    const level = levelFromAscii(rows);
+  constructor(rows: readonly string[] | LevelData, tuning: Partial<PlayerTuning> = {}) {
+    const level = Array.isArray(rows) ? levelFromAscii(rows as readonly string[]) : (rows as LevelData);
     this.grid = CollisionGrid.fromLevel(level);
     this.player = new PlayerController(this.grid, { ...DEFAULT_TUNING, ...tuning });
     this.player.reset(level.playerStart.x, level.playerStart.y, 0);
@@ -73,13 +87,7 @@ export class PlayerRig {
 
   /** One tick with `set` applied to a fresh neutral input. */
   step(set?: (f: InputFrame) => void): PlayerController {
-    const f = this.input;
-    f.moveX = 0;
-    f.moveY = 0;
-    f.jumpHeld = false;
-    f.jumpPressed = false;
-    f.dashHeld = false;
-    f.dashPressed = false;
+    const f = neutral(this.input);
     set?.(f);
     this.tick++;
     this.player.step(f, this.tick, this.events);
@@ -124,14 +132,9 @@ export class WorldRig {
     this.drain();
   }
 
+  /** One tick with `set` applied to a fresh neutral input (launch inputs included). */
   step(set?: (f: InputFrame) => void): GameWorld {
-    const f = this.input;
-    f.moveX = 0;
-    f.moveY = 0;
-    f.jumpHeld = false;
-    f.jumpPressed = false;
-    f.dashHeld = false;
-    f.dashPressed = false;
+    const f = neutral(this.input);
     set?.(f);
     this.world.step(f);
     this.drain();

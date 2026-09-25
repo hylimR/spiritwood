@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'vitest';
-import { TileKind, type LevelData } from '../../src/contracts/level.ts';
+import { TileKind, type CrawlerDef, type LevelData, type SpitterDef } from '../../src/contracts/level.ts';
 import { hashString } from '../../src/core/rng.ts';
 import { levelFromAscii } from '../../src/level/ascii.ts';
-import { LDTK_DEFAULTS, LevelParseError, loadLevel, parseLdtk } from '../../src/level/loader.ts';
+import { LDTK_DEFAULTS, LevelParseError, loadLevel, parseLdtk, spitterVelocity } from '../../src/level/loader.ts';
 import { DEFAULT_WORLD_TUNING } from '../../src/sim/tuning.ts';
 import { buildLdtkProject } from '../../tools/level/ldtk-writer.ts';
 
@@ -83,7 +83,7 @@ describe('parseLdtk', () => {
     const raw = entities(p).find((x) => x['__identifier'] === 'Enemy') as Obj;
     raw['fieldInstances'] = [];
     raw['width'] = 40;
-    const narrow = parseLdtk(p).enemies[0];
+    const narrow = parseLdtk(p).enemies[0] as CrawlerDef | undefined;
     expect(narrow?.speed).toBe(DEFAULT_WORLD_TUNING.enemyDefaultSpeed);
     expect(narrow?.patrolMinX).toBe(narrow?.patrolMaxX);
     expect(narrow?.x).toBe(narrow?.patrolMinX);
@@ -215,5 +215,96 @@ describe('loadLevel', () => {
   test('HTTP errors become LevelParseError', async () => {
     const fake = (async () => new Response('nope', { status: 404 })) as unknown as typeof fetch;
     await expect(loadLevel('levels/missing.ldtk', undefined, fake)).rejects.toThrow(/HTTP 404/);
+  });
+});
+
+describe('parseLdtk: Spitter and AbilityShrine (M2)', () => {
+  /** Crawler, a player-aimed and a fixed-aim spitter, two shrines. */
+  function m2Fixture(): LevelData {
+    const level = levelFromAscii([
+      '..........................',
+      '..........................',
+      '.P.....A...S.......U..EEE.',
+      '##########################',
+    ], { id: 'M2' });
+    level.seed = 7;
+    const fixed = level.enemies[2];
+    if (fixed?.kind === 'thornSpitter') {
+      const v = spitterVelocity(60, 900);
+      Object.assign(fixed, { fixedVx: v.vx, fixedVy: v.vy, period: 90, phase: 30, range: 500 });
+    }
+    level.abilityShrines.push({ id: 1, x: 480, y: 0, w: 96, h: 144, ability: 'launch' });
+    return level;
+  }
+  const m2Project = (): Obj => JSON.parse(JSON.stringify(buildLdtkProject(m2Fixture()))) as Obj;
+  const spitterEntities = (p: Obj): Obj[] => entities(p).filter((e) => e['__identifier'] === 'Spitter');
+
+  test('round-trips spitters (crawlers first, then spitters) and shrines', () => {
+    const l = parseLdtk(m2Project());
+    expect(l).toEqual(m2Fixture());
+    expect(l.enemies.map((e) => [e.id, e.kind])).toEqual([[0, 'gloomcrawler'], [1, 'thornSpitter'], [2, 'thornSpitter']]);
+  });
+
+  test('crawlers get ids before spitters whatever the layer order', () => {
+    const p = m2Project();
+    const layer = layers(p)[0] as Obj;
+    const list = layer['entityInstances'] as Obj[];
+    // Move the spitters to the front of the layer.
+    list.sort((a, b) => Number(b['__identifier'] === 'Spitter') - Number(a['__identifier'] === 'Spitter'));
+    expect(parseLdtk(p).enemies.map((e) => e.kind)).toEqual(['gloomcrawler', 'thornSpitter', 'thornSpitter']);
+  });
+
+  test('fields: aim enum (case-insensitive), angleDeg + speed → fixed velocity with snapping, defaults', () => {
+    const p = m2Project();
+    const [player, fixed] = spitterEntities(p) as [Obj, Obj];
+    field(fixed, 'angleDeg')['__value'] = 90;
+    field(fixed, 'speed')['__value'] = 800;
+    field(fixed, 'aim')['__value'] = 'fixed';
+    const l = parseLdtk(p);
+    expect(l.enemies[2]).toMatchObject({ aim: 'fixed', fixedVx: 0, fixedVy: -800 });
+    expect(Object.is((l.enemies[2] as SpitterDef).fixedVx, 0)).toBe(true);
+    field(fixed, 'angleDeg')['__value'] = 180;
+    expect(parseLdtk(p).enemies[2]).toMatchObject({ fixedVx: -800, fixedVy: 0 });
+    field(fixed, 'angleDeg')['__value'] = 135;
+    const diag = parseLdtk(p).enemies[2] as SpitterDef;
+    expect(diag.fixedVx).toBeCloseTo(-800 * Math.SQRT1_2, 9);
+    expect(diag.fixedVy).toBeCloseTo(-800 * Math.SQRT1_2, 9);
+    // Player aim ignores angle and speed; defaults fill missing fields.
+    player['fieldInstances'] = [];
+    const wt = DEFAULT_WORLD_TUNING;
+    expect(parseLdtk(p).enemies[1]).toEqual({
+      id: 1, kind: 'thornSpitter', x: 11.5 * 48, y: 3 * 48, aim: 'player', fixedVx: 0, fixedVy: 0, range: wt.spitterDefaultRange,
+      period: wt.spitterDefaultPeriod, phase: 0, flightTicks: wt.spitterDefaultFlightTicks,
+    });
+    fixed['fieldInstances'] = [{ __identifier: 'aim', __type: 'LocalEnum.SpitterAim', __value: 'FIXED' }];
+    expect(parseLdtk(p).enemies[2]).toMatchObject({ aim: 'fixed', fixedVx: 0, fixedVy: -wt.spitterDefaultSpeed });
+  });
+
+  test('shrine: resizable rect, ability enum (default Launch)', () => {
+    const p = m2Project();
+    const shrines = entities(p).filter((e) => e['__identifier'] === 'AbilityShrine');
+    expect(shrines).toHaveLength(2);
+    (shrines[1] as Obj)['fieldInstances'] = [];
+    expect(parseLdtk(p).abilityShrines[1]).toEqual({ id: 1, x: 480, y: 0, w: 96, h: 144, ability: 'launch' });
+  });
+
+  test('bad spitter and shrine fields are precise errors', () => {
+    const cases: [(p: Obj) => void, RegExp][] = [
+      [(p) => (field(spitterEntities(p)[0] as Obj, 'aim')['__value'] = 'Sideways'), /\(Spitter\)\.aim: unknown SpitterAim "Sideways"/],
+      [(p) => (field(spitterEntities(p)[0] as Obj, 'period')['__value'] = 0), /\(Spitter\)\.period: expected at least 1, got 0/],
+      [(p) => (field(spitterEntities(p)[0] as Obj, 'period')['__value'] = 1.5), /\(Spitter\)\.period: expected an integer/],
+      [(p) => (field(spitterEntities(p)[0] as Obj, 'flightTicks')['__value'] = 0), /flightTicks: expected at least 1/],
+      [(p) => (field(spitterEntities(p)[0] as Obj, 'speed')['__value'] = -1), /speed: expected at least 0/],
+      [(p) => {
+        const s = entities(p).find((e) => e['__identifier'] === 'AbilityShrine') as Obj;
+        field(s, 'ability')['__value'] = 'Fly';
+      }, /\(AbilityShrine\)\.ability: unknown Ability "Fly"/],
+    ];
+    for (const [mutate, message] of cases) {
+      const p = m2Project();
+      mutate(p);
+      expect(() => parseLdtk(p)).toThrow(LevelParseError);
+      expect(() => parseLdtk(p)).toThrow(message);
+    }
   });
 });

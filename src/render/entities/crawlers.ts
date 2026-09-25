@@ -39,6 +39,8 @@ export const CRAWLER = Object.freeze({
 });
 
 interface CrawlerState {
+  /** Index into SimView.enemies. */
+  enemy: number;
   group: InstanceGroup;
   body: Sprite;
   legs: Sprite[];
@@ -58,7 +60,8 @@ interface CrawlerState {
 /**
  * Gloomcrawler: a low, dark bramble-backed crawler with six thin procedurally animated legs (tripod
  * gait driven by distance travelled, two-bone IK) and two glowing thorn-red eyes. It turns smoothly;
- * when stunned it collapses into dark wisps with dimmed eyes, and pops back on EnemyReformed.
+ * when stunned it collapses into dark wisps with dimmed eyes, and pops back on EnemyReformed. Only the
+ * `gloomcrawler` enemies get one; idles and springs run on the world clock.
  */
 export class CrawlerRenderer implements EntityRenderer {
   private readonly items: CrawlerState[] = [];
@@ -70,7 +73,10 @@ export class CrawlerRenderer implements EntityRenderer {
   private readonly foot: Point = { x: 0, y: 0 };
   private readonly knee: Point = { x: 0, y: 0 };
 
-  constructor(layers: EntityLayers, textures: EntityTextures, count: number) {
+  /** Enemy index → item index (−1 for other kinds). */
+  private readonly byEnemy: Int32Array;
+
+  constructor(layers: EntityLayers, textures: EntityTextures, enemies: readonly { kind: string }[]) {
     const body = textures.get('crawlerBody');
     const leg = textures.get('leg');
     const eye = textures.get('crawlerEye');
@@ -79,7 +85,10 @@ export class CrawlerRenderer implements EntityRenderer {
     this.legScale = 1 / leg.frame.density;
     this.eyeScale = 1 / eye.frame.density;
     this.wispScale = 16 / wisp.frame.w;
-    for (let i = 0; i < count; i++) {
+    this.byEnemy = new Int32Array(enemies.length).fill(-1);
+    for (let i = 0; i < enemies.length; i++) {
+      if ((enemies[i] as { kind: string }).kind !== 'gloomcrawler') continue;
+      this.byEnemy[i] = this.items.length;
       const group = new InstanceGroup(layers);
       const legs: Sprite[] = [];
       for (let k = 0; k < 6; k++) legs.push(imageSprite(leg, group.body, CRAWLER.farTint));
@@ -104,7 +113,7 @@ export class CrawlerRenderer implements EntityRenderer {
         eyeTwins.push(tw);
       }
       this.items.push({
-        group, body: bodySprite, legs, eyes, eyeTwins, wisps, phase: idPhase(i, 7), facing: 1, dist: 0, lastX: 0,
+        enemy: i, group, body: bodySprite, legs, eyes, eyeTwins, wisps, phase: idPhase(i, 7), facing: 1, dist: 0, lastX: 0,
         squash: { value: 0, velocity: 0 }, reformT: Infinity, lastMode: 'patrol', initialised: false,
       });
     }
@@ -112,7 +121,8 @@ export class CrawlerRenderer implements EntityRenderer {
 
   onSimEvent(e: SimEvent): void {
     if (e.type === SimEventType.EnemyStomped || e.type === SimEventType.EnemyReformed) {
-      const it = this.items[e.id];
+      const idx = e.id >= 0 && e.id < this.byEnemy.length ? (this.byEnemy[e.id] as number) : -1;
+      const it = this.items[idx];
       if (!it) return;
       if (e.type === SimEventType.EnemyStomped) it.squash.velocity -= 9;
       else it.reformT = 0;
@@ -124,11 +134,12 @@ export class CrawlerRenderer implements EntityRenderer {
   update(frame: FrameInfo, stats: RenderStats | null): void {
     const enemies = frame.sim.enemies;
     const cam = frame.camera;
-    const dt = frame.dt;
-    const t = frame.time % 3600;
-    for (let i = 0; i < this.items.length && i < enemies.length; i++) {
+    const dt = frame.worldDt;
+    const t = frame.worldTime % 3600;
+    for (let i = 0; i < this.items.length; i++) {
       const it = this.items[i] as CrawlerState;
-      const en = enemies[i] as EnemyView;
+      const en = enemies[it.enemy] as EnemyView | undefined;
+      if (!en) continue;
       const x = en.prevX + (en.x - en.prevX) * frame.alpha;
       const y = en.prevY + (en.y - en.prevY) * frame.alpha;
       if (!it.initialised) {
@@ -224,7 +235,7 @@ export class CrawlerRenderer implements EntityRenderer {
   }
 
   private segment(s: Sprite, ax: number, ay: number, bx: number, by: number): void {
-    const len = Math.hypot(bx - ax, by - ay);
+    const len = Math.sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay));
     s.position.set(ax, ay);
     s.rotation = Math.atan2(by - ay, bx - ax);
     s.scale.set((len / LEG_IMAGE_LENGTH) * this.legScale, this.legScale * CRAWLER.legThickness);

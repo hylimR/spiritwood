@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import {
-  assemblePage, cdnGlobalNames, checkShippedBundle, checkUnminifiedBundle, EMBEDDED_PATHS, scriptSafeJson, STAND_INS,
+  assemblePage, cdnGlobalNames, checkShippedBundle, checkUnminifiedBundle, EMBEDDED_PATHS, EMBEDDED_SOURCES, scriptSafeJson, STAND_INS,
   umdExportNames,
 } from '../../tools/artifact/package-artifact.ts';
 import { EMBEDDED_FILES_ID, GAME_DATA, parseEmbeddedFiles } from '../../src/assets/embedded.ts';
@@ -88,6 +88,20 @@ describe('assemblePage', () => {
 
 test('the page embeds exactly the data the game requests', () => {
   expect(EMBEDDED_PATHS).toEqual([GAME_DATA.level, GAME_DATA.manifest]);
+});
+
+test('the embedded manifest has no plate layers (the page ships no image files, §5.8)', () => {
+  const root = new URL('../../public/', import.meta.url);
+  const manifest = JSON.parse(readFileSync(new URL(EMBEDDED_SOURCES[GAME_DATA.manifest], root), 'utf8')) as {
+    layers: { kind: string }[];
+    replaced?: unknown;
+  };
+  expect(manifest.layers.length).toBeGreaterThan(0);
+  expect(manifest.layers.filter((l) => l.kind === 'plate')).toEqual([]);
+  expect(manifest.replaced).toBeUndefined();
+  // The served manifest does carry plates, so the substitution is what keeps them out of the page.
+  const served = JSON.parse(readFileSync(new URL(GAME_DATA.manifest, root), 'utf8')) as { layers: { kind: string }[] };
+  expect(served.layers.some((l) => l.kind === 'plate')).toBe(true);
 });
 
 describe('stand-ins', () => {

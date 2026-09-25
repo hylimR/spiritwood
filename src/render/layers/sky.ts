@@ -83,7 +83,7 @@ export class SkyView implements RenderView {
   update(frame: FrameInfo): void {
     if (!this.uniforms || !this.stats) return;
     const u = this.uniforms.uniforms;
-    u.uTime = frame.time % 3600;
+    u.uTime = frame.worldTime % 3600;
     u.uHorizonY = skyHorizonY(this.viewH, frame.camera.cy, this.levelH);
     this.stats.fillScreens += SKY_FILL_ESTIMATE;
   }

@@ -214,3 +214,5 @@ c = mix(c, g * 1.25, e);
   pre-pass possible, and the static chunk meshes with per-vertex depth and sway.
 - [glow-bloom-grade](../glow-bloom-grade/SKILL.md): emissive twins, the owned bloom chain and the per-area grade. Parallax layers are never twinned (the glow RT has
   no depth), so background flora bakes its halo into the scene instead.
+- [painterly-strokes](../painterly-strokes/SKILL.md): brushwork baked into the planes that keeps each layer's mean luma, so the value ramp survives.
+- [painted-layers](../painted-layers/SKILL.md): adding hand-painted plates at any depth of the stack, with swept texture budgets and hot reload.

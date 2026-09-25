@@ -201,6 +201,49 @@ export const HERO_CLIP_DEFS: readonly ClipDef[] = [
     ],
   },
   {
+    // Spirit Launch aim: a braced crouch facing the target, the front arm reaching for its light and the
+    // back arm drawn in to the chest like a bowstring, trembling slightly while the world holds still.
+    name: 'launchAim', duration: 0.62, loop: true,
+    channels: [
+      cyc('core', 'y', [0, 4.2, 0.5, 4.8]),
+      cyc('spine', 'rot', [0, 0.2, 0.5, 0.24]),
+      hold('head', 'rot', -0.12),
+      cyc('armF', 'rot', [0, -1.95, 0.25, -1.9, 0.5, -1.98, 0.75, -1.92]),
+      hold('foreF', 'rot', -0.12),
+      hold('handF', 'rot', -0.2),
+      cyc('armB', 'rot', [0, 0.95, 0.5, 1.02]),
+      cyc('foreB', 'rot', [0, -2.25, 0.5, -2.35]),
+      hold('thighF', 'rot', -0.95),
+      hold('shinF', 'rot', 1.35),
+      hold('footF', 'rot', -0.35),
+      hold('thighB', 'rot', 0.4),
+      hold('shinB', 'rot', 1.05),
+      hold('footB', 'rot', -0.55),
+    ],
+  },
+  {
+    // The launch flight: a streamlined, head-first dive (the view turns the whole body onto the
+    // velocity), both arms swept back along the body, the legs streaming together behind, the torso
+    // stretched, a slight flutter.
+    name: 'launched', duration: 0.36, loop: true,
+    channels: [
+      hold('core', 'y', -1.5),
+      hold('spine', 'rot', 0.04),
+      hold('spine', 'sx', 1.07),
+      hold('head', 'rot', -0.2),
+      cyc('armF', 'rot', [0, 0.62, 0.5, 0.7]),
+      hold('foreF', 'rot', -0.25),
+      cyc('armB', 'rot', [0, 0.82, 0.5, 0.9]),
+      hold('foreB', 'rot', -0.3),
+      cyc('thighF', 'rot', [0, 0.1, 0.5, 0.16]),
+      hold('shinF', 'rot', 0.3),
+      hold('footF', 'rot', 0.75),
+      cyc('thighB', 'rot', [0, 0.3, 0.5, 0.38]),
+      cyc('shinB', 'rot', [0, 0.62, 0.5, 0.7]),
+      hold('footB', 'rot', 0.8),
+    ],
+  },
+  {
     name: 'respawn', duration: 0.5, loop: false,
     channels: [
       ch('core', 'y', [0, 4, 0.55, -0.8, 1, 0]),
@@ -219,7 +262,8 @@ export const HERO_CLIP_DEFS: readonly ClipDef[] = [
 ];
 
 export const HERO_CLIP = {
-  idle: 0, run: 1, jump: 2, fall: 3, land: 4, wallSlide: 5, wallJump: 6, doubleJump: 7, dash: 8, dead: 9, respawn: 10,
+  idle: 0, run: 1, jump: 2, fall: 3, land: 4, wallSlide: 5, wallJump: 6, doubleJump: 7, dash: 8, dead: 9, launchAim: 10,
+  launched: 11, respawn: 12,
 } as const;
 export type HeroClipName = keyof typeof HERO_CLIP;
 

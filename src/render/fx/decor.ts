@@ -140,7 +140,8 @@ export class DecorView implements RenderView {
     const ctx = this.ctx;
     if (!ctx || !this.sceneU || !this.glowU) return;
     const cam = frame.camera;
-    const time = frame.time % 3600;
+    // Sway and lantern flicker run on the world clock, so they crawl while a Spirit Launch aim freezes the world.
+    const time = frame.worldTime % 3600;
     const sway = frame.quality.foliageSway ? 1 : 0;
     this.sceneU.uniforms.uTime = time;
     this.sceneU.uniforms.uSway = sway;

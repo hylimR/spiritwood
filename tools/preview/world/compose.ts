@@ -1,7 +1,7 @@
 import type { FogLayerDef, LayerManifest, PlateLayerDef, SkyLayerDef } from '../../../src/contracts/assets.ts';
 import type { LevelData } from '../../../src/contracts/level.ts';
 import type { RGB } from '../../../src/core/color.ts';
-import type { KitAtlasData } from '../../../src/render/gen/kit.ts';
+import { KIT_MAX_MIP, type KitAtlasData } from '../../../src/render/gen/kit.ts';
 import { NoiseTable } from '../../../src/render/gen/noiseTable.ts';
 import { fogBandParams, shadeFog } from '../../../src/render/layers/fogShading.ts';
 import { KIT_STRIDE_FLOATS, type ChunkMeshes, type MeshData } from '../../../src/render/layers/kitMesh.ts';
@@ -47,6 +47,8 @@ export interface Scene {
   level: LevelData;
   manifest: LayerManifest;
   kit: KitAtlasData;
+  /** Mip 1 of the kit atlas, premultiplied (as the GPU averages it), for the kit shader's LOD clamp. */
+  kitMip1: Float32Array;
   layers: Map<string, PreparedKitLayer>;
   /** Plate layers with decoded chunks (filled by the caller; a plate layer without an entry is skipped). */
   plates: Map<string, PreparedPlate>;
@@ -124,7 +126,93 @@ export function buildScene(level: LevelData, manifest: LayerManifest, kit: KitAt
   for (const def of manifest.layers) {
     if (def.kind === 'kit') layers.set(def.id, prepareKitLayer(def, kit, level.pxWidth, level.pxHeight, clearingHints(level)));
   }
-  return { level, manifest, kit, layers, plates: new Map(), noise: new NoiseTable(77), overlays: [], lateOverlays: [] };
+  return { level, manifest, kit, kitMip1: premultipliedMip(kit), layers, plates: new Map(), noise: new NoiseTable(77), overlays: [], lateOverlays: [] };
+}
+
+/** Mip 1 of a straight RGBA8 atlas as premultiplied floats (0..1): the 2×2 box average of R·A, G·A, B·A, A. */
+export function premultipliedMip(kit: Pick<KitAtlasData, 'width' | 'height' | 'pixels'>): Float32Array {
+  const w = kit.width >> 1;
+  const h = kit.height >> 1;
+  const p = kit.pixels;
+  const out = new Float32Array(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let a = 0;
+      for (let j = 0; j < 2; j++) {
+        for (let i = 0; i < 2; i++) {
+          const o = ((y * 2 + j) * kit.width + x * 2 + i) * 4;
+          const al = (p[o + 3] as number) / 255;
+          r += ((p[o] as number) / 255) * al;
+          g += ((p[o + 1] as number) / 255) * al;
+          b += ((p[o + 2] as number) / 255) * al;
+          a += al;
+        }
+      }
+      const o = (y * w + x) * 4;
+      out[o] = r / 4;
+      out[o + 1] = g / 4;
+      out[o + 2] = b / 4;
+      out[o + 3] = a / 4;
+    }
+  }
+  return out;
+}
+
+const MIP_TAP = new Float32Array(4);
+
+/**
+ * The kit shader's fetch: trilinear between mip 0 and mip 1 at `lod` (clamped to KIT_MAX_MIP, as
+ * `sampleClamped` in kit.glsl.ts), premultiplied filtering, returned straight (RGB) with alpha.
+ */
+function sampleAtlasLod(scene: Scene, u: number, v: number, lod: number, out: Float32Array): void {
+  const l = lod <= 0 ? 0 : lod >= KIT_MAX_MIP ? KIT_MAX_MIP : lod;
+  if (l <= 0) {
+    sampleAtlas(scene.kit, u, v, out);
+    return;
+  }
+  const kit = scene.kit;
+  const w = kit.width >> 1;
+  const h = kit.height >> 1;
+  const m = scene.kitMip1;
+  const x = u * w - 0.5;
+  const y = v * h - 0.5;
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const fx = x - x0;
+  const fy = y - y0;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let a = 0;
+  for (let j = 0; j < 2; j++) {
+    const yy = Math.min(h - 1, Math.max(0, y0 + j));
+    for (let i = 0; i < 2; i++) {
+      const xx = Math.min(w - 1, Math.max(0, x0 + i));
+      const wt = (i ? fx : 1 - fx) * (j ? fy : 1 - fy);
+      const o = (yy * w + xx) * 4;
+      r += (m[o] as number) * wt;
+      g += (m[o + 1] as number) * wt;
+      b += (m[o + 2] as number) * wt;
+      a += (m[o + 3] as number) * wt;
+    }
+  }
+  if (l < 1) {
+    // Blend with mip 0 in premultiplied space.
+    sampleAtlas(kit, u, v, MIP_TAP);
+    const a0 = MIP_TAP[3] as number;
+    r = (MIP_TAP[0] as number) * a0 * (1 - l) + r * l;
+    g = (MIP_TAP[1] as number) * a0 * (1 - l) + g * l;
+    b = (MIP_TAP[2] as number) * a0 * (1 - l) + b * l;
+    a = a0 * (1 - l) + a * l;
+  }
+  const ia = a > 1e-6 ? 1 / a : 0;
+  out[0] = r * ia;
+  out[1] = g * ia;
+  out[2] = b * ia;
+  out[3] = a;
 }
 
 /** Bilinear straight-alpha atlas sample, weighted like a premultiplied GPU fetch. */
@@ -170,6 +258,12 @@ interface QuadRef {
 export interface DrawKitOptions {
   /** Draw every quad as a glow twin into the glow buffer instead of the scene. */
   glowOnly?: boolean;
+}
+
+/** Added to every kit sample's LOD (−Infinity samples mip 0 only, the pre-M2 preview behaviour). */
+let mipBias = 0;
+export function setKitMipBias(bias: number): void {
+  mipBias = bias;
 }
 
 /** Rasterise kit-format chunk meshes in painter order (depth-sorted for depth-tested layers). */
@@ -228,6 +322,10 @@ export function drawKitChunks(
     const pxb = Math.min(img.w, Math.ceil(sxb - 0.5));
     const pya = Math.max(0, Math.ceil(sya - 0.5));
     const pyb = Math.min(img.h, Math.ceil(syb - 0.5));
+    // Texels per pixel on each axis → the shader's LOD (log2 of the larger, clamped to KIT_MAX_MIP).
+    const du = (Math.abs(u1 - u0) * scene.kit.width) / Math.max(1e-6, sxb - sxa);
+    const dv = (Math.abs(t1 - t0) * scene.kit.height) / Math.max(1e-6, syb - sya);
+    const lod = mipBias + Math.log2(Math.max(du, dv, 1e-6));
     for (let py = pya; py < pyb; py++) {
       const vy = (py + 0.5) * img.scale;
       const ly = vy - img.viewH / 2 + cam.cy * fy;
@@ -237,7 +335,7 @@ export function drawKitChunks(
         const vx = (pxx + 0.5) * img.scale;
         const lx = vx - img.viewW / 2 + cam.cx * fx;
         const tu = (lx - x0) / (x1 - x0);
-        sampleAtlas(scene.kit, u0 + (u1 - u0) * tu, vv, tex);
+        sampleAtlasLod(scene, u0 + (u1 - u0) * tu, vv, lod, tex);
         if ((tex[3] as number) <= 0 && mode !== KIT_MODE.Core) continue;
         shadeKit(px, tex, shade, glow, ly, params, mode);
         const i = py * img.w + pxx;

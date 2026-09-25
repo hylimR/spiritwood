@@ -382,3 +382,152 @@ describe('InputManager meta and devices', () => {
     expect(input.nextTick(createInputFrame()).jumpPressed).toBe(false);
   });
 });
+
+describe('Spirit Launch input (§5.1.1): latched press and release edges', () => {
+  const LAUNCH_KEY = 'KeyC';
+  const LAUNCH_KEY_2 = 'KeyJ';
+
+  test('keyboard releases count held → released transitions of the action (and blur)', () => {
+    const keys = new FakeKeys();
+    const kb = new KeyboardSource(keys.target);
+    keys.down(LAUNCH_KEY);
+    expect(kb.takeReleases('launch')).toBe(0);
+    keys.down(LAUNCH_KEY_2);
+    keys.up(LAUNCH_KEY);
+    // Another bound key still holds the action: not a release.
+    expect(kb.isDown('launch')).toBe(true);
+    expect(kb.takeReleases('launch')).toBe(0);
+    keys.up(LAUNCH_KEY_2);
+    expect(kb.takeReleases('launch')).toBe(1);
+    expect(kb.takeReleases('launch')).toBe(0);
+    expect(kb.takePresses('launch')).toBe(2);
+    keys.tap(LAUNCH_KEY);
+    keys.tap(LAUNCH_KEY);
+    expect(kb.takePresses('launch')).toBe(2);
+    expect(kb.takeReleases('launch')).toBe(2);
+    keys.down(LAUNCH_KEY);
+    keys.blur();
+    expect(kb.isDown('launch')).toBe(false);
+    expect(kb.takeReleases('launch')).toBe(1);
+    // A key-up after the blur already released it is not counted again.
+    keys.up(LAUNCH_KEY);
+    expect(kb.takeReleases('launch')).toBe(0);
+  });
+
+  test('a tap inside one frame: the first tick gets the press (counted as held) and the release', () => {
+    const { keys, input } = setup();
+    const f = createInputFrame();
+    keys.tap(LAUNCH_KEY);
+    input.beginFrame();
+    input.nextTick(f);
+    expect([f.launchPressed, f.launchHeld, f.launchReleased]).toEqual([true, true, true]);
+    input.nextTick(f);
+    expect([f.launchPressed, f.launchHeld, f.launchReleased]).toEqual([false, false, false]);
+  });
+
+  test('a release and re-press inside one frame still releases; the re-press is delivered too', () => {
+    const { keys, input } = setup();
+    const f = createInputFrame();
+    keys.down(LAUNCH_KEY);
+    input.beginFrame();
+    input.nextTick(f);
+    expect([f.launchPressed, f.launchHeld, f.launchReleased]).toEqual([true, true, false]);
+    input.nextTick(f);
+    expect([f.launchPressed, f.launchHeld, f.launchReleased]).toEqual([false, true, false]);
+    keys.up(LAUNCH_KEY);
+    keys.down(LAUNCH_KEY);
+    input.beginFrame();
+    input.nextTick(f);
+    expect([f.launchPressed, f.launchHeld, f.launchReleased]).toEqual([true, true, true]);
+    input.nextTick(f);
+    expect([f.launchPressed, f.launchHeld, f.launchReleased]).toEqual([false, true, false]);
+  });
+
+  test('a release in a frame that runs zero ticks carries to the next frame\'s first tick', () => {
+    const { keys, input } = setup();
+    const f = createInputFrame();
+    keys.down(LAUNCH_KEY);
+    input.beginFrame();
+    input.nextTick(f);
+    keys.up(LAUNCH_KEY);
+    input.beginFrame();
+    // No tick this frame; the key is pressed again before the next one.
+    keys.down(LAUNCH_KEY);
+    input.beginFrame();
+    input.nextTick(f);
+    expect([f.launchPressed, f.launchHeld, f.launchReleased]).toEqual([true, true, true]);
+    input.nextTick(f);
+    expect(f.launchReleased).toBe(false);
+  });
+
+  test('release edges latch like presses: one per tick, capped at two', () => {
+    const { keys, input } = setup();
+    const f = createInputFrame();
+    keys.down(LAUNCH_KEY);
+    input.beginFrame();
+    input.nextTick(f);
+    for (let i = 0; i < 3; i++) keys.tap(LAUNCH_KEY);
+    keys.up(LAUNCH_KEY);
+    keys.up(LAUNCH_KEY);
+    input.beginFrame();
+    const released: boolean[] = [];
+    for (let i = 0; i < 4; i++) released.push(input.nextTick(f).launchReleased);
+    expect(released).toEqual([true, true, false, false]);
+  });
+
+  test('pad buttons press, hold and release; a pad release while a key holds launch is not a release', () => {
+    for (const button of DEFAULT_PAD.launch) {
+      const { keys, pads, input } = setup();
+      const f = createInputFrame();
+      pads.set({ pressed: [button] });
+      input.beginFrame();
+      input.nextTick(f);
+      expect([f.launchPressed, f.launchHeld, f.launchReleased], `button ${button}`).toEqual([true, true, false]);
+      input.beginFrame();
+      input.nextTick(f);
+      expect([f.launchPressed, f.launchHeld, f.launchReleased], `button ${button}`).toEqual([false, true, false]);
+      pads.set({});
+      input.beginFrame();
+      input.nextTick(f);
+      expect([f.launchPressed, f.launchHeld, f.launchReleased], `button ${button}`).toEqual([false, false, true]);
+      keys.down(LAUNCH_KEY);
+      pads.set({ pressed: [button] });
+      input.beginFrame();
+      input.nextTick(f);
+      pads.set({});
+      input.beginFrame();
+      input.nextTick(f);
+      expect([f.launchHeld, f.launchReleased], `button ${button}`).toEqual([true, false]);
+    }
+  });
+
+  test('GamepadSource.released is a falling edge of the latest poll', () => {
+    const pads = new FakePads();
+    const src = new GamepadSource(pads.get);
+    const b = DEFAULT_PAD.launch[0] as number;
+    pads.set({ pressed: [b] });
+    src.poll();
+    expect(src.released('launch')).toBe(false);
+    pads.set({});
+    src.poll();
+    expect(src.released('launch')).toBe(true);
+    src.poll();
+    expect(src.released('launch')).toBe(false);
+    // Unplugging a pad with the button held releases it.
+    pads.set({ pressed: [b] });
+    src.poll();
+    pads.set();
+    src.poll();
+    expect(src.released('launch')).toBe(true);
+  });
+
+  test('clearEdges drops pending launch presses and releases', () => {
+    const { keys, input } = setup();
+    const f = createInputFrame();
+    keys.tap(LAUNCH_KEY);
+    input.beginFrame();
+    input.clearEdges();
+    input.nextTick(f);
+    expect([f.launchPressed, f.launchHeld, f.launchReleased]).toEqual([false, false, false]);
+  });
+});

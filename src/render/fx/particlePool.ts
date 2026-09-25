@@ -1,6 +1,13 @@
 import { ParticleContainer, type IParticle, type ParticleContainerOptions, type Texture } from 'pixi.js';
 
 /**
+ * Which clock a burst particle ages on (§5.5): `world` particles (ambient, world bursts) crawl while a
+ * Spirit Launch aim freezes the world; `real` ones (the hero's, launch and UI bursts) keep full speed.
+ */
+export const PARTICLE_CLOCK = { world: 0, real: 1 } as const;
+export type ParticleClock = (typeof PARTICLE_CLOCK)[keyof typeof PARTICLE_CLOCK];
+
+/**
  * A particle that is both the Pixi render record (IParticle) and its own simulation state, so a pool
  * is a flat array of these objects created once. `color` is Pixi's packed ABGR (alpha in the top byte).
  */
@@ -29,6 +36,8 @@ export class Mote implements IParticle {
   bgr = 0xffffff;
   /** Behaviour selector (burst envelope / ambient kind). */
   kind = 0;
+  /** PARTICLE_CLOCK: the clock a burst particle ages on. */
+  clock: ParticleClock = PARTICLE_CLOCK.world;
   /** Auxiliary state (shaft index, shaft u/v, target…). */
   a = 0;
   b = 0;

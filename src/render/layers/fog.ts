@@ -133,7 +133,7 @@ export class FogView implements RenderView {
   update(frame: FrameInfo): void {
     const ctx = this.ctx;
     if (!ctx) return;
-    const time = frame.time % 3600;
+    const time = frame.worldTime % 3600;
     for (let i = 0; i < this.bands.length; i++) {
       const b = this.bands[i] as Band;
       if (!b.active) continue;

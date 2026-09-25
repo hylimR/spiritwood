@@ -86,6 +86,16 @@ export interface PlateChunkDef {
   hull?: number[];
   /** Optional fully-opaque interior polygon (drawn in the opaque pre-pass). */
   opaqueHull?: number[];
+  /**
+   * M2 split hull: disjoint rects [x, y, w, h, …] in chunk texels (computeSplitHullHalf). `core` rects
+   * are fully opaque (opaque pre-pass), `soft` rects hold the rest of the visible texels (transparent
+   * pass). They describe any shape (several spans, holes, content only at the edges); when present they
+   * win over hull/opaqueHull.
+   */
+  core?: number[];
+  soft?: number[];
+  /** Hash of the chunk's pixels (hex); versions texture URLs (`?v=`) and cache/budget keys (§5.8). */
+  hash?: string;
 }
 
 export interface PlateLayerDef extends LayerDefBase {
@@ -109,4 +119,9 @@ export interface LayerManifest {
   atlases: AtlasDef[];
   /** Ordered far → near. */
   layers: LayerDef[];
+  /**
+   * Generated manifests only (§5.8): the base layer each plate replaced, keyed by plate id, so a failed or
+   * hot-reloaded plate can restore it. Absent in hand-edited base manifests.
+   */
+  replaced?: Record<string, LayerDef>;
 }

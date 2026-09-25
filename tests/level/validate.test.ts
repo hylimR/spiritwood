@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'vitest';
-import { MIN_ASPECT, VIEW_H } from '../../src/config.ts';
-import type { LevelData } from '../../src/contracts/level.ts';
+import { MAX_PROJECTILES, MIN_ASPECT, VIEW_H } from '../../src/config.ts';
+import { TileKind, type CrawlerDef, type LevelData, type SpitterDef } from '../../src/contracts/level.ts';
 import { levelFromAscii } from '../../src/level/ascii.ts';
-import { validateLevel } from '../../src/level/validate.ts';
+import { seedPoolDemand, validateLevel } from '../../src/level/validate.ts';
+import { DEFAULT_WORLD_TUNING } from '../../src/sim/tuning.ts';
 
 const T = 48;
 
@@ -114,7 +115,7 @@ describe('validateLevel', () => {
   });
 
   test('enemy patrol failures: no floor, blocked, off the grid, empty or missed range', () => {
-    const enemy = (patch: Partial<LevelData['enemies'][number]>): LevelData['enemies'][number] => ({
+    const enemy = (patch: Partial<CrawlerDef>): CrawlerDef => ({
       id: 0, kind: 'gloomcrawler', x: 10 * T, y: 29 * T, patrolMinX: 8 * T, patrolMaxX: 12 * T, speed: 90, ...patch,
     });
     const gap = good();
@@ -169,5 +170,77 @@ describe('validateLevel', () => {
     const bad = good();
     bad.tiles[5] = 9;
     expect(errors(bad).join()).toMatch(/tile \(5, 0\) has unknown kind 9/);
+  });
+});
+
+describe('validateLevel: Thorn Spitters, ability shrines and the seed pool (M2)', () => {
+  const wt = DEFAULT_WORLD_TUNING;
+  const spitter = (patch: Partial<SpitterDef> = {}): SpitterDef => ({
+    id: 0, kind: 'thornSpitter', x: 10 * T + T / 2, y: 29 * T, aim: 'player', fixedVx: 0, fixedVy: 0,
+    range: wt.spitterDefaultRange, period: wt.spitterDefaultPeriod, phase: 0, flightTicks: wt.spitterDefaultFlightTicks, ...patch,
+  });
+
+  test('a spitter stands on a Solid or OneWay floor tile with its box clear of Solid', () => {
+    const ok = good();
+    ok.enemies.push(spitter());
+    expect(errors(ok)).toEqual([]);
+    const oneWay = good();
+    oneWay.tiles[20 * 40 + 10] = TileKind.OneWay;
+    oneWay.enemies.push(spitter({ y: 20 * T }));
+    expect(errors(oneWay)).toEqual([]);
+    const floating = good();
+    floating.enemies.push(spitter({ y: 20 * T }));
+    expect(errors(floating).join()).toMatch(/spitter 0 has no Solid or OneWay floor tile under its feet/);
+    const offGrid = good();
+    offGrid.enemies.push(spitter({ y: 29 * T - 5 }));
+    expect(errors(offGrid).join()).toMatch(/spitter 0 feet y .* is not on a tile top/);
+    const buried = good();
+    buried.tiles[27 * 40 + 10] = TileKind.Solid;
+    buried.enemies.push(spitter());
+    expect(errors(buried).join()).toMatch(/spitter 0 overlaps Solid tiles/);
+    const outside = good();
+    outside.enemies.push(spitter({ x: 10 }));
+    expect(errors(outside).join()).toMatch(/spitter 0 is outside the level/);
+  });
+
+  test('spitter fields: range, period, phase, flightTicks, fixed speed', () => {
+    const bad = good();
+    bad.enemies.push(spitter({ range: 0, period: 0, phase: 0.5, flightTicks: 0 }));
+    const e = errors(bad).join('\n');
+    expect(e).toMatch(/spitter 0 range must be positive/);
+    expect(e).toMatch(/spitter 0 period must be/);
+    expect(e).toMatch(/spitter 0 phase must be/);
+    expect(e).toMatch(/spitter 0 flightTicks must be/);
+    const fast = good();
+    fast.enemies.push(spitter({ aim: 'fixed', fixedVx: 1000, fixedVy: -1000 }));
+    expect(errors(fast).join()).toMatch(/spitter 0 fixed seed speed exceeds seedMaxSpeed/);
+    const short = good();
+    short.enemies.push(spitter({ period: wt.spitterWindupTicks }));
+    expect(errors(short)).toEqual([]);
+    expect(warnings(short).join()).toMatch(/spitter 0 period .* is not longer than the windup/);
+  });
+
+  test('the seed pool cap: Σ ceil((seedLifetimeTicks + reflectedLifetimeTicks) / period) ≤ MAX_PROJECTILES', () => {
+    const period = 90;
+    const each = Math.ceil((wt.seedLifetimeTicks + wt.reflectedLifetimeTicks) / period);
+    const fits = Math.floor(MAX_PROJECTILES / each);
+    const l = good();
+    for (let i = 0; i < fits; i++) l.enemies.push(spitter({ id: i, x: (3 + i) * T + T / 2, period }));
+    expect(seedPoolDemand(l)).toBe(fits * each);
+    expect(errors(l)).toEqual([]);
+    l.enemies.push(spitter({ id: fits, x: (3 + fits) * T + T / 2, period: 1 }));
+    expect(errors(l).join()).toMatch(/the spitters can keep \d+ seeds alive, more than the 32-slot pool/);
+  });
+
+  test('an ability shrine rect is inside the level and clear of Solid', () => {
+    const ok = good();
+    ok.abilityShrines.push({ id: 0, x: 12 * T, y: 27 * T, w: T, h: 2 * T, ability: 'launch' });
+    expect(errors(ok)).toEqual([]);
+    const buried = good();
+    buried.abilityShrines.push({ id: 0, x: 12 * T, y: 28 * T, w: T, h: 2 * T, ability: 'launch' });
+    expect(errors(buried).join()).toMatch(/ability shrine 0 overlaps Solid tiles/);
+    const outside = good();
+    outside.abilityShrines.push({ id: 0, x: -T, y: 27 * T, w: T, h: 2 * T, ability: 'launch' });
+    expect(errors(outside).join()).toMatch(/ability shrine 0 is outside the level/);
   });
 });

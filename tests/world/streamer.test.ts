@@ -144,3 +144,95 @@ describe('ChunkStreamer', () => {
     expect(() => new ChunkStreamer(c, { margin: 0, maxInFlight: 1, budgetBytes: 1 })).toThrow();
   });
 });
+
+describe('ChunkStreamer byte accounting', () => {
+  test('markLoaded with the real size replaces the estimate until the chunk unloads', () => {
+    // Estimated at 10 (e.g. KTX2), arriving at 30 (RGBA8 after a transcoder failure).
+    const s = new ChunkStreamer(row(4, 10), { margin: 0, maxInFlight: 4, budgetBytes: 40 });
+    const out: StreamChunk[] = [];
+    s.update(view(100, 900), 1);
+    s.markLoading('L:0:0');
+    expect(s.bytesOf('L:0:0')).toBe(10);
+    s.markLoaded('L:0:0', 30);
+    expect([s.loadedBytes, s.bytesOf('L:0:0')]).toEqual([30, 30]);
+    s.update(view(1100, 1900), 2);
+    s.markLoading('L:1:0');
+    s.markLoaded('L:1:0', 30);
+    // 60 > 40: the non-visible chunk goes, counted at its real size.
+    expect(keys(s.evictions(out))).toEqual(['L:0:0']);
+    s.markUnloaded('L:0:0');
+    expect([s.loadedBytes, s.bytesOf('L:0:0')]).toEqual([30, 10]);
+    // Prefetch room uses the real sizes too: 40 − 30 leaves room for one more estimated chunk only.
+    s.update(view(1100, 1900), 3);
+    expect(s.evictions(out)).toEqual([]);
+  });
+});
+
+describe('ChunkStreamer shared by several plate layers', () => {
+  /** Two layers with the same layer-space grid (each layer has its own space): a#1 and b#7. */
+  function layers(): StreamChunk[] {
+    const out: StreamChunk[] = [];
+    for (const [id, layer] of [['a#1', 0], ['b#7', 1]] as const) {
+      for (let i = 0; i < 3; i++) out.push({ key: `${id}:${i}:0`, layer, x0: i * 1000, y0: 0, x1: (i + 1) * 1000, y1: 1000, bytes: 10 });
+    }
+    return out;
+  }
+  const loadAll = (s: ChunkStreamer, out: StreamChunk[]): string[] => {
+    const k = keys(s.nextLoads(out));
+    for (const key of k) {
+      s.markLoading(key);
+      s.markLoaded(key);
+    }
+    return k;
+  };
+
+  test('updateLayer marks one layer against its own visible rect; null switches a layer off', () => {
+    const s = new ChunkStreamer(layers(), { margin: 0, maxInFlight: 8, budgetBytes: 1000 });
+    const out: StreamChunk[] = [];
+    s.updateLayer(0, view(100, 900), 1);
+    s.updateLayer(1, view(2100, 2900), 1);
+    expect(loadAll(s, out)).toEqual(['a#1:0:0', 'b#7:2:0']);
+    s.updateLayer(1, null, 2);
+    expect([s.isVisible('b#7:2:0'), s.isWanted('b#7:2:0'), s.isVisible('a#1:0:0')]).toEqual([false, false, true]);
+  });
+
+  test('one budget and one least-recently-wanted order across every layer', () => {
+    const s = new ChunkStreamer(layers(), { margin: 0, maxInFlight: 8, budgetBytes: 30 });
+    const out: StreamChunk[] = [];
+    // Frame 1: layer a shows chunks 0 and 1, layer b is off.
+    s.updateLayer(0, view(100, 1900), 1);
+    s.updateLayer(1, null, 1);
+    expect(loadAll(s, out)).toEqual(['a#1:0:0', 'a#1:1:0']);
+    // Frame 2: layer a moves on to chunk 1 only; layer b shows its chunk 0.
+    s.updateLayer(0, view(1100, 1900), 2);
+    s.updateLayer(1, view(100, 900), 2);
+    expect(loadAll(s, out)).toEqual(['b#7:0:0']);
+    expect(s.loadedBytes).toBe(30);
+    expect(s.evictions(out)).toEqual([]);
+    // Frame 3: layer b also shows chunk 1: over budget, so the chunk wanted longest ago goes, whichever layer.
+    s.updateLayer(0, view(1100, 1900), 3);
+    s.updateLayer(1, view(100, 1900), 3);
+    expect(loadAll(s, out)).toEqual(['b#7:1:0']);
+    expect(keys(s.evictions(out))).toEqual(['a#1:0:0']);
+    s.markUnloaded('a#1:0:0');
+    expect(s.loadedBytes).toBe(30);
+    // Layer a switched off: its chunk is evictable, but visible chunks of layer b never are.
+    s.updateLayer(0, null, 4);
+    s.updateLayer(1, view(100, 1900), 4);
+    s.setBudget(10);
+    expect(keys(s.evictions(out))).toEqual(['a#1:1:0']);
+  });
+
+  test('a layer rebuilt under a new generation starts clean; the other layer keeps its state', () => {
+    const s = new ChunkStreamer(layers(), { margin: 0, maxInFlight: 8, budgetBytes: 1000 });
+    const out: StreamChunk[] = [];
+    s.updateLayer(0, view(100, 900), 1);
+    s.updateLayer(1, view(100, 900), 1);
+    loadAll(s, out);
+    const next = layers().map((c) => (c.layer === 0 ? { ...c, key: c.key.replace('a#1', 'a#2') } : c));
+    s.setChunks(next);
+    expect(s.has('a#1:0:0')).toBe(false);
+    expect([s.state('a#2:0:0'), s.state('b#7:0:0')]).toEqual(['unloaded', 'loaded']);
+    expect(s.loadedBytes).toBe(10);
+  });
+});

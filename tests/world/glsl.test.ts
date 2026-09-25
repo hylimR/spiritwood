@@ -128,7 +128,8 @@ describe('WORLD shaders (static lint)', () => {
       test('every function called is defined (or a GLSL builtin)', () => {
         const builtins = new Set([
           'vec2', 'vec3', 'vec4', 'mat3', 'float', 'int', 'sin', 'cos', 'exp', 'pow', 'sqrt', 'abs', 'min', 'max', 'clamp', 'mix',
-          'smoothstep', 'step', 'fract', 'floor', 'dot', 'length', 'log2', 'dFdx', 'dFdy', 'textureLod', 'texture', 'textureSize',
+          'smoothstep', 'step', 'fract', 'floor', 'mod', 'dot', 'length', 'log2', 'dFdx', 'dFdy', 'fwidth', 'textureLod', 'texture',
+          'textureSize',
           'if', 'for', 'return', 'while',
         ]);
         const src = stripComments(`${p.vertex}\n${p.fragment}`);

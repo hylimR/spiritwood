@@ -1,7 +1,7 @@
 import type { Sprite } from 'pixi.js';
 import type { RenderStats } from '../../contracts/debug.ts';
 import type { FrameInfo } from '../../contracts/render.ts';
-import type { OrbView } from '../../contracts/sim.ts';
+import { SimEventType, type OrbView, type SimEvent } from '../../contracts/sim.ts';
 import { PALETTE, SIM_DT } from '../../config.ts';
 import { clamp, smoothstep } from '../../core/math.ts';
 import {
@@ -38,17 +38,21 @@ interface OrbSprites {
 /**
  * Spirit-light orbs: warm core with a warm-white centre, soft additive halo, a slow ring of twinkling
  * sparkles and a gentle bob; magnetised orbs stretch along their motion; collection plays a quick
- * scale-up + fade (the burst particles are WORLD's).
+ * scale-up + fade (the burst particles are the particle view's). World clock: the collect animation is
+ * anchored to the worldTime of its OrbCollected event (ticks keep counting while the world is frozen).
  */
 export class OrbRenderer implements EntityRenderer {
   private readonly items: OrbSprites[] = [];
   private readonly coreScale: number;
+  /** worldTime each orb was collected at (−1 = not collected). */
+  private readonly collectAt: Float64Array;
 
   constructor(layers: EntityLayers, textures: EntityTextures, count: number) {
     const glow = textures.get('glow');
     const core = textures.get('orbCore');
     const sparkle = textures.get('sparkle');
     this.coreScale = 1 / core.frame.density;
+    this.collectAt = new Float64Array(count).fill(-1);
     for (let i = 0; i < count; i++) {
       const group = new InstanceGroup(layers);
       const sparkles: Sprite[] = [];
@@ -69,20 +73,28 @@ export class OrbRenderer implements EntityRenderer {
     }
   }
 
+  onSimEvent(e: SimEvent, frame: FrameInfo): void {
+    if (e.type === SimEventType.OrbCollected && e.id >= 0 && e.id < this.collectAt.length) this.collectAt[e.id] = frame.worldTime;
+  }
+
   update(frame: FrameInfo, stats: RenderStats | null): void {
     const orbs = frame.sim.orbs;
     const cam = frame.camera;
-    const t = frame.time % 3600;
+    const t = frame.worldTime % 3600;
     for (let i = 0; i < this.items.length && i < orbs.length; i++) {
       const it = this.items[i] as OrbSprites;
       const o = orbs[i] as OrbView;
       let collectT = 0;
       if (o.collected) {
-        collectT = ((frame.sim.tick - o.collectedTick) + frame.alpha) * SIM_DT;
+        // An orb seen collected without its event (a view created mid-run) starts its animation now.
+        if ((this.collectAt[i] as number) < 0) this.collectAt[i] = frame.worldTime;
+        collectT = frame.worldTime - (this.collectAt[i] as number);
         if (collectT >= ORB.collectTime) {
           it.group.setVisible(false);
           continue;
         }
+      } else {
+        this.collectAt[i] = -1;
       }
       const x = o.prevX + (o.x - o.prevX) * frame.alpha;
       const y = o.prevY + (o.y - o.prevY) * frame.alpha;
@@ -92,7 +104,7 @@ export class OrbRenderer implements EntityRenderer {
 
       const dx = (o.x - o.prevX) / SIM_DT;
       const dy = (o.y - o.prevY) / SIM_DT;
-      const speed = Math.hypot(dx, dy);
+      const speed = Math.sqrt(dx * dx + dy * dy);
       const moving = clamp(speed / 200, 0, 1);
       const bob = Math.sin(t * 2.1 + it.phase) * ORB.bob * (1 - moving);
       it.group.place(x, y + bob);

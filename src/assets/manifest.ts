@@ -4,6 +4,7 @@ import type {
 } from '../contracts/assets.ts';
 import type { QualityLevel } from '../contracts/quality.ts';
 import { RECIPE_IDS } from '../render/layers/recipes.ts';
+import { pathnameOf } from './plateLayout.ts';
 
 export class ManifestError extends Error {
   override name = 'ManifestError';
@@ -65,7 +66,8 @@ function source(v: unknown, path: string, allowProcedural: boolean): TextureSour
   for (const key of ['ktx2', 'webp', 'png'] as const) {
     if (o[key] === undefined) continue;
     const p = str(o[key], `${path}.${key}`);
-    if (!p.toLowerCase().endsWith(`.${key}`)) fail(`${path}.${key}`, `expected a .${key} file, got "${p}"`);
+    // Texture URLs may carry a cache-buster (`?v=<hash8>`): the extension is the pathname's.
+    if (!pathnameOf(p).toLowerCase().endsWith(`.${key}`)) fail(`${path}.${key}`, `expected a .${key} file, got "${p}"`);
     out[key] = p;
   }
   if (o.procedural !== undefined) {
@@ -80,6 +82,21 @@ function polygon(v: unknown, path: string, w: number, h: number): number[] {
   const a = arr(v, path);
   if (a.length < 6 || a.length % 2 !== 0) fail(path, 'expected at least 3 points as flat x,y pairs');
   return a.map((p, i) => num(p, `${path}[${i}]`, 0, i % 2 === 0 ? w : h));
+}
+
+/** Split-hull rects [x, y, w, h, …] in chunk (content) texels: integers, non-empty, inside the chunk. */
+function rects(v: unknown, path: string, cw: number, ch: number): number[] {
+  const a = arr(v, path);
+  if (a.length % 4 !== 0) fail(path, 'expected rects as flat [x, y, w, h, …]');
+  const out: number[] = [];
+  for (let i = 0; i < a.length; i += 4) {
+    const x = int(a[i], `${path}[${i}]`, 0, cw - 1);
+    const y = int(a[i + 1], `${path}[${i + 1}]`, 0, ch - 1);
+    const w = int(a[i + 2], `${path}[${i + 2}]`, 1, cw - x);
+    const h = int(a[i + 3], `${path}[${i + 3}]`, 1, ch - y);
+    out.push(x, y, w, h);
+  }
+  return out;
 }
 
 interface BaseFields {
@@ -188,6 +205,13 @@ function plate(o: Obj, path: string): PlateLayerDef {
     const out: PlateChunkDef = { col, row, source: source(co.source, `${cp}.source`, false) };
     if (co.hull !== undefined) out.hull = polygon(co.hull, `${cp}.hull`, cw, ch);
     if (co.opaqueHull !== undefined) out.opaqueHull = polygon(co.opaqueHull, `${cp}.opaqueHull`, cw, ch);
+    if (co.core !== undefined) out.core = rects(co.core, `${cp}.core`, cw, ch);
+    if (co.soft !== undefined) out.soft = rects(co.soft, `${cp}.soft`, cw, ch);
+    if (co.hash !== undefined) {
+      const hash = str(co.hash, `${cp}.hash`);
+      if (!/^[0-9a-f]{8,64}$/.test(hash)) fail(`${cp}.hash`, `expected 8–64 lowercase hex digits, got "${hash}"`);
+      out.hash = hash;
+    }
     return out;
   });
   if (chunks.length === 0) fail(`${path}.chunks`, 'expected at least one chunk');
@@ -206,7 +230,9 @@ function plate(o: Obj, path: string): PlateLayerDef {
  * return it typed. Throws ManifestError naming the offending path (e.g. `layers[3].parallax`).
  * Checks: version, unique ids, known kinds and recipes, atlas references exist, parallax ranges,
  * colours, layers ordered far→near by parallax (foreground > 1 last), depth-tested layers within
- * MAX_LAYER_PARALLAX and at least MIN_LAYER_PARALLAX_GAP apart, plate chunk grid sanity.
+ * MAX_LAYER_PARALLAX and at least MIN_LAYER_PARALLAX_GAP apart, plate chunk grid sanity (split-hull
+ * rects inside the chunk, hex chunk hashes, texture paths checked by pathname so `?v=` is allowed) and,
+ * in generated manifests, the `replaced` map (`LayerManifest.replaced`).
  */
 export function parseManifest(json: unknown): LayerManifest {
   const root = obj(json, 'manifest');
@@ -269,7 +295,61 @@ export function parseManifest(json: unknown): LayerManifest {
     }
     return def;
   });
-  return { version: 1, area, textureBudgetMB, atlases, layers };
+  const manifest: LayerManifest = { version: 1, area, textureBudgetMB, atlases, layers };
+  if (root.replaced !== undefined) {
+    const replaced = replacedLayers(root.replaced, layers, atlasIds);
+    if (Object.keys(replaced).length > 0) manifest.replaced = replaced;
+  }
+  return manifest;
+}
+
+/**
+ * Generated manifests (`npm run art`, §5.8) record, under `replaced`, the base layer each plate layer
+ * took out of the draw list: `{ "<plate id>": <that base layer's def> }`. The runtime draws it again
+ * when the plate fails to load. Validated here: the plates exist, the layers are kit or plate layers no
+ * longer in the list, and restoring any subset keeps the depth gaps.
+ */
+function replacedLayers(v: unknown, layers: readonly LayerDef[], atlasIds: ReadonlySet<string>): Record<string, LayerDef> {
+  const r = obj(v, 'replaced');
+  const out: Record<string, LayerDef> = {};
+  const ids = new Set(layers.map((l) => l.id));
+  const taken = new Set<string>();
+  for (const plateId of Object.keys(r).sort()) {
+    const p = `replaced.${plateId}`;
+    const plateDef = layers.find((l) => l.id === plateId);
+    if (!plateDef || plateDef.kind !== 'plate') fail(p, `"${plateId}" is not a plate layer of this manifest`);
+    const o = obj(r[plateId], p);
+    if (o.kind !== 'kit' && o.kind !== 'plate') fail(`${p}.kind`, 'only kit and plate layers can be replaced by a plate');
+    const def: LayerDef = o.kind === 'kit' ? kit(o, p, atlasIds) : plate(o, p);
+    if (ids.has(def.id)) fail(`${p}.id`, `"${def.id}" is still in the layer list`);
+    if (taken.has(def.id)) fail(`${p}.id`, `"${def.id}" is replaced by two plates`);
+    taken.add(def.id);
+    const fx = def.parallax[0];
+    if (fx <= 1 && fx > MAX_LAYER_PARALLAX) fail(`${p}.parallax`, `depth-tested layers need fx ≤ ${MAX_LAYER_PARALLAX}`);
+    out[plateId] = def;
+  }
+  // Any failed subset of plates must still keep the depth gaps: every two depth-tested layers that can
+  // draw together (all but a plate and the layer it replaces) are MIN_LAYER_PARALLAX_GAP apart.
+  const depth: { id: string; fx: number; pair: string | null }[] = [];
+  for (const l of layers) {
+    if ((l.kind === 'kit' || l.kind === 'plate') && l.parallax[0] <= 1) depth.push({ id: l.id, fx: l.parallax[0], pair: null });
+  }
+  for (const [plateId, def] of Object.entries(out)) {
+    if (def.parallax[0] <= 1) depth.push({ id: def.id, fx: def.parallax[0], pair: plateId });
+  }
+  for (let i = 0; i < depth.length; i++) {
+    for (let j = i + 1; j < depth.length; j++) {
+      const a = depth[i] as (typeof depth)[number];
+      const b = depth[j] as (typeof depth)[number];
+      if (a.pair === b.id || b.pair === a.id) continue;
+      if (Math.abs(a.fx - b.fx) < MIN_LAYER_PARALLAX_GAP - 1e-9) {
+        const restored = a.pair ? a : b;
+        const other = restored === a ? b : a;
+        fail(`replaced.${restored.pair ?? restored.id}`, `restoring "${restored.id}" (fx ${restored.fx}) would draw it ${Math.abs(a.fx - b.fx).toFixed(3)} from "${other.id}" (fx ${other.fx}); depth-tested layers need a gap ≥ ${MIN_LAYER_PARALLAX_GAP}`);
+      }
+    }
+  }
+  return out;
 }
 
 export async function loadManifest(url: string, fetchFn: typeof fetch = fetch): Promise<LayerManifest> {

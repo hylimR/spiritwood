@@ -4,6 +4,7 @@ import { classifyGpu, resolveQuality } from '../settings/quality.ts';
 import { el, ensureUiStyles } from './styles.ts';
 
 type Field = 'preset' | 'pixelRatioCap' | 'fpsCap' | 'dynamicResolution' | 'debugOverlay';
+type VolumeField = 'masterVolume' | 'musicVolume' | 'sfxVolume';
 
 interface OptionRow {
   kind: 'option';
@@ -13,16 +14,28 @@ interface OptionRow {
   names: readonly string[];
 }
 
+/** A 0..1 slider stepped by VOLUME_STEP, clamped (no wrap), shown as a percentage; confirm does nothing. */
+interface VolumeRow {
+  kind: 'volume';
+  label: string;
+  field: VolumeField;
+}
+
 interface ActionRow {
   kind: 'action';
   label: string;
   action: 'resume' | 'restart';
 }
 
-type Row = OptionRow | ActionRow;
+type Row = OptionRow | VolumeRow | ActionRow;
+
+export const VOLUME_STEP = 0.1;
 
 const ROWS: readonly Row[] = [
   { kind: 'action', label: 'Resume', action: 'resume' },
+  { kind: 'volume', label: 'Master volume', field: 'masterVolume' },
+  { kind: 'volume', label: 'Music', field: 'musicVolume' },
+  { kind: 'volume', label: 'Effects', field: 'sfxVolume' },
   { kind: 'option', label: 'Quality', field: 'preset', values: ['auto', 'high', 'medium', 'low'], names: ['Auto', 'High', 'Medium', 'Low'] },
   { kind: 'option', label: 'Pixel ratio', field: 'pixelRatioCap', values: [null, 1, 1.25, 1.5, 2], names: ['Auto', '1×', '1.25×', '1.5×', '2×'] },
   { kind: 'option', label: '60 fps cap', field: 'fpsCap', values: [60, 0], names: ['On', 'Off'] },
@@ -59,6 +72,22 @@ export function stepOption<T>(values: readonly T[], current: T, dir: 1 | -1): T 
   return values[dir > 0 ? 0 : n - 1] as T;
 }
 
+/**
+ * The volume one VOLUME_STEP up (`dir` = 1) or down (−1), clamped to 0…1 — never wrapping. An off-grid
+ * value (hand-edited storage) steps to the next grid value in that direction.
+ */
+export function stepVolume(current: number, dir: 1 | -1): number {
+  const k = Math.max(0, Math.min(1, current)) / VOLUME_STEP;
+  const next = dir > 0 ? Math.floor(k + 1e-6) + 1 : Math.ceil(k - 1e-6) - 1;
+  const n = Math.round(1 / VOLUME_STEP);
+  return Math.max(0, Math.min(n, next)) / n;
+}
+
+/** "80%". */
+export function formatVolume(v: number): string {
+  return `${Math.round(Math.max(0, Math.min(1, v)) * 100)}%`;
+}
+
 /** Name for a (possibly off-list) value, e.g. a `?dpr=1.75` override. */
 function valueName(row: OptionRow, v: UserSettings[Field]): string {
   const i = row.values.indexOf(v);
@@ -67,9 +96,10 @@ function valueName(row: OptionRow, v: UserSettings[Field]): string {
 }
 
 /**
- * Pause / settings menu (DOM): Resume, Quality (auto/high/medium/low), Pixel ratio cap
- * (auto/1/1.25/1.5/2), 60 fps cap (on/off), Dynamic resolution (on/off), Debug overlay (on/off),
- * Restart level. Works with mouse, keyboard and gamepad (`navigate` reads MetaInput nav/confirm/back edges). Calls `onChange` with a new
+ * Pause / settings menu (DOM): Resume, Master / Music / Effects volume (0–100 % in 10 % steps, clamped,
+ * confirm does nothing), Quality (auto/high/medium/low), Pixel ratio cap (auto/1/1.25/1.5/2), 60 fps cap
+ * (on/off), Dynamic resolution (on/off), Debug overlay (on/off), Restart level. Works with mouse,
+ * keyboard and gamepad (`navigate` reads MetaInput nav/confirm/back edges). Calls `onChange` with a new
  * settings object on every change (the orchestrator persists and applies it).
  *
  * Keyboard and gamepad both arrive through `navigate` (MetaInput), so keyboard-synthesised button
@@ -120,7 +150,7 @@ export class SettingsMenu {
       const label = el(doc, 'span', 'sw-caps', row.label);
       let value: HTMLSpanElement | null = null;
       button.append(label);
-      if (row.kind === 'option') {
+      if (row.kind !== 'action') {
         const box = el(doc, 'span', 'sw-value');
         const prev = el(doc, 'span', 'sw-arrow', '‹');
         const next = el(doc, 'span', 'sw-arrow', '›');
@@ -214,6 +244,7 @@ export class SettingsMenu {
 
   private activate(index: number): void {
     const row = (this.items[index] as RowElements).row;
+    if (row.kind === 'volume') return;
     if (row.kind === 'option') {
       this.cycle(index, 1);
       return;
@@ -224,9 +255,15 @@ export class SettingsMenu {
 
   private cycle(index: number, dir: 1 | -1): void {
     const row = (this.items[index] as RowElements).row;
-    if (row.kind !== 'option') return;
-    const nextValue = stepOption(row.values, this.settings[row.field], dir);
-    const next = { ...this.settings, [row.field]: nextValue } as UserSettings;
+    if (row.kind === 'action') return;
+    let next: UserSettings;
+    if (row.kind === 'volume') {
+      const v = stepVolume(this.settings[row.field], dir);
+      if (v === this.settings[row.field]) return;
+      next = { ...this.settings, [row.field]: v };
+    } else {
+      next = { ...this.settings, [row.field]: stepOption(row.values, this.settings[row.field], dir) } as UserSettings;
+    }
     this.settings = next;
     this.setFocus(index, false);
     this.refresh();
@@ -236,11 +273,10 @@ export class SettingsMenu {
   private refresh(): void {
     for (const item of this.items) {
       const { row, button, value } = item;
-      if (row.kind === 'option' && value) {
-        const name = valueName(row, this.settings[row.field]);
-        value.textContent = name;
-        button.setAttribute('aria-label', `${row.label}: ${name}`);
-      }
+      if (row.kind === 'action' || !value) continue;
+      const name = row.kind === 'volume' ? formatVolume(this.settings[row.field]) : valueName(row, this.settings[row.field]);
+      value.textContent = name;
+      button.setAttribute('aria-label', `${row.label}: ${name}`);
     }
     const renderer = this.gpuLabel || 'unknown GPU';
     const gpu: GpuInfo = { renderer, vendor: '', tier: classifyGpu(this.gpuLabel, ''), maxTextureSize: 4096, timerQuery: false };

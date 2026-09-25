@@ -72,18 +72,28 @@ export function skyHorizonY(viewH: number, camY: number, levelH: number): number
   return viewH * SKY_HORIZON.t - (camY - levelH / 2) * SKY_HORIZON.parallax;
 }
 
-function fract(x: number): number {
-  return x - Math.floor(x);
-}
+const f32 = Math.fround;
+const K1 = f32(123.34);
+const K2 = f32(456.21);
+const K3 = f32(45.32);
 
-/** Same hash as the GLSL `sw_hash21` in shaders/common.ts. */
+/**
+ * Same hash as the GLSL `sw_hash21` in shaders/common.ts, in float32 like the GPU (highp): with large
+ * lattice coordinates the float64 result would be a different random number, so CPU previews of the
+ * noise would not match the screen.
+ */
 export function hash21(x: number, y: number): number {
-  let px = fract(x * 123.34);
-  let py = fract(y * 456.21);
-  const d = px * (px + 45.32) + py * (py + 45.32);
-  px += d;
-  py += d;
-  return fract(px * py);
+  let px = f32(x);
+  let py = f32(y);
+  px = f32(px * K1);
+  py = f32(py * K2);
+  px = f32(px - Math.floor(px));
+  py = f32(py - Math.floor(py));
+  const d = f32(f32(px * f32(px + K3)) + f32(py * f32(py + K3)));
+  px = f32(px + d);
+  py = f32(py + d);
+  const q = f32(px * py);
+  return f32(q - Math.floor(q));
 }
 
 /**

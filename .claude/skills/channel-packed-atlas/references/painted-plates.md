@@ -1,5 +1,9 @@
 # Painted plate listings (channel-packed-atlas)
 
+> **Historical (M1).** These listings show the original single-plate path. For the current pipeline (sidecars, `npm run art`,
+> 4-texel borders, `core`/`soft` rects, the shared streamer and hot reload), see the
+> [painted-layers skill](../../painted-layers/SKILL.md).
+
 The painted-plate path takes a colour image (painted, AI-generated or CPU-painted), bakes it into chunked WebP and KTX2 files with tight hull
 polygons, and streams it at runtime. It uses the same vertex format and program as the procedural kit (modes
 `PlateCore` and `PlateBand`). The listings are verbatim from commit `95b27fb` (the demo plate repainted with the art-pass tree generator).

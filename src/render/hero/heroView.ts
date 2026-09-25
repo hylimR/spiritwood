@@ -1,10 +1,11 @@
 import { Container, Matrix, Mesh, MeshGeometry, Rectangle, Sprite, Texture } from 'pixi.js';
 import type { FrameInfo, RenderContext, RenderView } from '../../contracts/render.ts';
-import { SimEventType, type PlayerView, type SimEvent } from '../../contracts/sim.ts';
+import { SimEventType, type LaunchView, type PlayerView, type SimEvent } from '../../contracts/sim.ts';
 import { PALETTE, SIM_DT } from '../../config.ts';
 import { clamp, damp, smoothstep, TAU } from '../../core/math.ts';
 import { Rng } from '../../core/rng.ts';
 import { DEFAULT_TUNING, DEFAULT_WORLD_TUNING } from '../../sim/tuning.ts';
+import { dampAngle, wrapPi } from '../entities/kit.ts';
 import { Noise } from '../gen/noise.ts';
 import { estimateTextureBytes, textureFromRgba } from '../util/texture.ts';
 import type { Atlas, AtlasFrame } from './atlas.ts';
@@ -12,9 +13,9 @@ import { buildHeroAssets, GHOST_DENSITY } from './heroAssets.ts';
 import { partMatrix } from './heroBake.ts';
 import { createHeroClips, HERO_CLIP, RUN_STRIDE } from './heroClips.ts';
 import { InertialSpring, landSquash, Ribbon, RIBBON, SQUASH, SquashStretch } from './heroMotion.ts';
-import { HALO_RADIUS, partImageName } from './heroParts.ts';
+import { HALO_RADIUS, partImageName, STREAK_TEXELS } from './heroParts.ts';
 import { createHeroSkeleton, HERO_COLORS, HERO_PARTS, SCARF_ANCHOR, type PartAttachment } from './heroRig.ts';
-import { chooseHeroClip, fadeInto, HERO_ANIM, type HeroAnimInput } from './heroState.ts';
+import { chooseHeroClip, fadeBetween, fadeInto, HERO_ANIM, type HeroAnimInput } from './heroState.ts';
 import { Animator, CH, CHANNELS, type Skeleton } from './rig.ts';
 
 const TEXTURE_KEY = 'pipe:hero-atlas';
@@ -38,6 +39,19 @@ const SCARF_TAPER = 0.85;
 const SCARF_POINTS = (RIBBON.points - 1) * 3 + 1;
 const BLINK_TIME = 0.13;
 const MAX_RUN = DEFAULT_TUNING.maxRunSpeed;
+/** Spirit Launch (§5.6): the dive turns onto the velocity at DIVE_IN /s and rights itself at DIVE_OUT /s. */
+const DIVE_IN = 34;
+const DIVE_OUT = 12;
+/** Release streak: life (s), length range (u), width (u), brightness. */
+const STREAK_LIFE = 0.42;
+const STREAK_MIN = 50;
+const STREAK_MAX = 150;
+const STREAK_WIDTH = 30;
+const STREAK_ALPHA = 0.7;
+/** Aiming: the hero turns to face a target at least this far to either side (u). */
+const FACE_TARGET_MIN = 6;
+/** Rest angle of the front arm relative to the spine chain, and the shoulder height above the feet. */
+const SHOULDER_Y = -31;
 
 interface PartSlot {
   att: PartAttachment;
@@ -52,6 +66,21 @@ interface PartSlot {
 function catmullRom(p0: number, p1: number, p2: number, p3: number, t: number): number {
   const t2 = t * t;
   return 0.5 * (2 * p1 + (p2 - p0) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (3 * p1 - p0 - 3 * p2 + p3) * t2 * t);
+}
+
+/**
+ * Body rotation (clockwise, rig space before the facing mirror) that points the head along (vx, vy):
+ * 0 for straight up, ±π/2 for a level launch forward/back, π for a dive straight down.
+ */
+export function diveTarget(vx: number, vy: number, facing: number): number {
+  return vx * vx + vy * vy > 1e-6 ? Math.atan2(vx * facing, -vy) : 0;
+}
+
+/** Facing while aiming: toward the target when it is clearly to one side, else the sim's facing. */
+export function faceTarget(p: PlayerView, launch: LaunchView, x: number): number {
+  if (p.mode !== 'launchAim' || launch.targetKind === 'none') return p.facing;
+  const dx = launch.targetX - x;
+  return Math.abs(dx) < FACE_TARGET_MIN ? p.facing : dx > 0 ? 1 : -1;
 }
 
 function grey(v: number): number {
@@ -81,6 +110,11 @@ export class HeroView implements RenderView {
   private readonly ghostAge = new Float32Array(GHOSTS).fill(Infinity);
   private halo: Sprite | null = null;
   private budGlow: Sprite | null = null;
+  private streak: Sprite | null = null;
+  private streakTwin: Sprite | null = null;
+  private streakAt = -1;
+  private streakAngle = 0;
+  private diveAngle = 0;
   private scarfGeometry: MeshGeometry | null = null;
 
   private readonly skeleton: Skeleton = createHeroSkeleton();
@@ -105,6 +139,8 @@ export class HeroView implements RenderView {
   private readonly boneSproutA: number;
   private readonly boneSproutB: number;
   private readonly boneScarf: number;
+  private readonly boneSpine: number;
+  private readonly boneArmF: number;
 
   private lastWarp = Number.NaN;
   private shown = true;
@@ -130,6 +166,8 @@ export class HeroView implements RenderView {
     this.boneSproutA = this.skeleton.indexOf('sproutA');
     this.boneSproutB = this.skeleton.indexOf('sproutB');
     this.boneScarf = this.skeleton.indexOf(SCARF_ANCHOR.bone);
+    this.boneSpine = this.skeleton.indexOf('spine');
+    this.boneArmF = this.skeleton.indexOf('armF');
   }
 
   init(ctx: RenderContext): void {
@@ -153,11 +191,18 @@ export class HeroView implements RenderView {
     };
 
     this.ghostLayer.blendMode = 'add';
+    const streak = frame('streak');
+    this.streak = new Sprite({ texture: streak.tex, anchor: { x: streak.f.pivotX / streak.f.w, y: streak.f.pivotY / streak.f.h } });
+    this.streak.tint = PALETTE.spiritGlow;
+    this.streakTwin = new Sprite({ texture: streak.tex, anchor: { x: streak.f.pivotX / streak.f.w, y: streak.f.pivotY / streak.f.h } });
+    this.streakTwin.tint = PALETTE.spiritGlow;
+    parkSprite(this.streak);
+    parkSprite(this.streakTwin);
     const ghost = frame('ghost');
     for (let i = 0; i < GHOSTS; i++) {
       const s = new Sprite({ texture: ghost.tex, anchor: { x: ghost.f.pivotX / ghost.f.w, y: ghost.f.pivotY / ghost.f.h } });
       s.tint = PALETTE.spiritGlow;
-      s.alpha = 0;
+      parkSprite(s);
       this.ghosts.push(s);
       this.ghostLayer.addChild(s);
     }
@@ -208,7 +253,8 @@ export class HeroView implements RenderView {
     this.budGlow.tint = PALETTE.floraGlow;
     this.budGlow.scale.set((2 * BUD_GLOW_RADIUS) / halo.f.w);
     this.glowAdd.blendMode = 'add';
-    this.glowAdd.addChild(scarfTwin, this.budGlow);
+    this.ghostLayer.addChild(this.streak);
+    this.glowAdd.addChild(scarfTwin, this.budGlow, this.streakTwin);
     this.glowBody.addChild(twins, this.glowAdd);
 
     this.root.addChild(this.ghostLayer, this.body);
@@ -257,6 +303,22 @@ export class HeroView implements RenderView {
         this.endFlip();
         this.animator.play(HERO_CLIP.dead, fadeInto(HERO_CLIP.dead), true);
         break;
+      case SimEventType.LaunchAim:
+        // Brace: a small squash as the light latches on.
+        this.squash.kick(-0.1);
+        this.endFlip();
+        this.dashing = false;
+        break;
+      case SimEventType.Launch: {
+        // The sim faces the launch when it has a clear horizontal component: turn at once (no paper-thin
+        // turn mid-dive), start the streak and turn the body onto the flight.
+        const ca = Math.cos(e.a);
+        if (Math.abs(ca) >= DEFAULT_TUNING.dirThreshold) this.facingScale = ca > 0 ? 1 : -1;
+        this.streakAt = frame.time;
+        this.streakAngle = e.a;
+        this.diveAngle = diveTarget(Math.cos(e.a), Math.sin(e.a), this.facingScale < 0 ? -1 : 1);
+        break;
+      }
       case SimEventType.Respawned:
         this.anim.sinceRespawn = 0;
         this.animator.snap(HERO_CLIP.respawn);
@@ -287,11 +349,14 @@ export class HeroView implements RenderView {
       this.glowBody.visible = p.visible;
     }
     this.updateGhosts(dt, x, y, p.facing);
+    // The streak lives beside the ghosts (never hidden with the body): it must play out after a death too.
+    if (this.streakAt >= 0) this.updateStreak(frame, p);
     if (!p.visible) return;
 
-    this.trackMotion(dt, x, p);
+    const launch = frame.sim.launch;
+    this.trackMotion(dt, x, p, p.mode === 'launchAim' ? faceTarget(p, launch, x) : p.facing);
     this.animate(dt, frame, p);
-    this.pose(dt, p, frame.time);
+    this.pose(dt, p, frame.time, launch, x, y);
 
     let alpha = smoothstep(0, FADE_IN_TIME, this.anim.sinceRespawn);
     let pop = 1;
@@ -316,7 +381,8 @@ export class HeroView implements RenderView {
     this.body.alpha = alpha;
     this.glowBody.alpha = alpha;
     this.placeParts();
-    this.updateScarf(dt, x, y, p.facing, frame.time);
+    // While aiming, the scarf floats: its gravity and rest pull slow with the world clock (never its step).
+    this.updateScarf(dt, x, y, this.facingScale < 0 ? -1 : 1, frame.time, p.mode === 'launchAim' ? frame.timeScale : 1);
     this.updateHalo(frame.time, sy);
 
     const stats = this.ctx?.stats;
@@ -340,7 +406,11 @@ export class HeroView implements RenderView {
     this.endFlip();
     this.flipResidual = 0;
     this.ghostAge.fill(Infinity);
-    for (let i = 0; i < this.ghosts.length; i++) (this.ghosts[i] as Sprite).alpha = 0;
+    for (let i = 0; i < this.ghosts.length; i++) parkSprite(this.ghosts[i] as Sprite);
+    this.diveAngle = 0;
+    this.streakAt = -1;
+    if (this.streak) parkSprite(this.streak);
+    if (this.streakTwin) parkSprite(this.streakTwin);
     this.anim.sinceLand = 99;
     this.anim.sinceWallJump = 99;
     const m = this.rootMatrix;
@@ -369,7 +439,7 @@ export class HeroView implements RenderView {
     return TAU * (1 - (1 - t) * (1 - t) * (1 - t));
   }
 
-  private trackMotion(dt: number, x: number, p: PlayerView): void {
+  private trackMotion(dt: number, x: number, p: PlayerView, facing: number): void {
     if (dt > 0) {
       const v = (x - this.lastX) / dt;
       this.accX = damp(this.accX, (v - this.velX) / dt, 10, dt);
@@ -386,9 +456,9 @@ export class HeroView implements RenderView {
       else if (p.grounded || p.mode === 'wallSlide' || p.mode === 'dash' || !p.alive) this.endFlip();
     }
     this.flipResidual = damp(this.flipResidual, 0, 22, dt);
-    this.facingScale = p.facing > this.facingScale
-      ? Math.min(p.facing, this.facingScale + TURN_RATE * dt)
-      : Math.max(p.facing, this.facingScale - TURN_RATE * dt);
+    this.facingScale = facing > this.facingScale
+      ? Math.min(facing, this.facingScale + TURN_RATE * dt)
+      : Math.max(facing, this.facingScale - TURN_RATE * dt);
   }
 
   private animate(dt: number, frame: FrameInfo, p: PlayerView): void {
@@ -400,7 +470,7 @@ export class HeroView implements RenderView {
     a.vy = p.vy;
     a.inputX = p.inputX;
     const clip = chooseHeroClip(a);
-    if (clip !== this.animator.current) this.animator.play(clip, fadeInto(clip));
+    if (clip !== this.animator.current) this.animator.play(clip, fadeBetween(this.animator.current, clip));
     this.animator.update(dt);
     if ((this.animator.weights[HERO_CLIP.run] as number) > 0) {
       const dist = p.runDistance + (p.grounded ? Math.abs(p.vx) * frame.alpha * SIM_DT : 0);
@@ -410,12 +480,13 @@ export class HeroView implements RenderView {
   }
 
   /** Procedural layers on top of the clip pose. */
-  private pose(dt: number, p: PlayerView, time: number): void {
+  private pose(dt: number, p: PlayerView, time: number, launch: LaunchView, x: number, y: number): void {
     const pose = this.skeleton.pose;
     const facing = p.facing;
     const forward = p.vx * facing;
     const airborne = !p.grounded;
-    const leanTarget = p.mode === 'dash' || p.mode === 'wallSlide' || !p.alive
+    const launching = p.mode === 'launchAim' || p.mode === 'launched';
+    const leanTarget = p.mode === 'dash' || p.mode === 'wallSlide' || !p.alive || launching
       ? 0
       : clamp((forward / MAX_RUN) * 0.07 + this.accX * facing * 0.000035, -0.1, 0.16) * (airborne ? 0.5 : 1);
     this.lean = damp(this.lean, leanTarget, 10, dt);
@@ -425,8 +496,37 @@ export class HeroView implements RenderView {
     this.headTilt = damp(this.headTilt, tiltTarget, 8, dt);
     pose[this.boneHead * CHANNELS + CH.rot] = (pose[this.boneHead * CHANNELS + CH.rot] as number) + this.headTilt;
 
-    const flip = (this.anim.flipping ? this.flipAngle() : 0) + this.flipResidual;
+    // The launch dive: turn the body (about the core) onto the velocity, then right it after the flight.
+    const fs = this.facingScale < 0 ? -1 : 1;
+    if (p.mode === 'launched') {
+      this.diveAngle = dampAngle(this.diveAngle, diveTarget(p.vx, p.vy, fs), DIVE_IN, dt);
+    } else if (this.diveAngle !== 0) {
+      // Righting after the flight; snapped once upright so a hero at rest computes nothing here.
+      const a = dampAngle(this.diveAngle, 0, DIVE_OUT, dt);
+      this.diveAngle = Math.abs(a) < 1e-4 ? 0 : a;
+    }
+    const flip = (this.anim.flipping ? this.flipAngle() : 0) + this.flipResidual + this.diveAngle;
     pose[this.boneCore * CHANNELS + CH.rot] = (pose[this.boneCore * CHANNELS + CH.rot] as number) + flip;
+
+    // Aiming: the front arm reaches for the target's light (blended in with the clip's weight).
+    const aimW = this.animator.weights[HERO_CLIP.launchAim] as number;
+    if (aimW > 0 && launch.targetKind !== 'none') {
+      const dx = (launch.targetX - x) * fs;
+      const dy = launch.targetY - (y + SHOULDER_Y);
+      if (dx * dx + dy * dy > 1) {
+        const chain = (pose[this.boneRoot * CHANNELS + CH.rot] as number) + (pose[this.boneCore * CHANNELS + CH.rot] as number)
+          + (pose[this.boneSpine * CHANNELS + CH.rot] as number);
+        const o = this.boneArmF * CHANNELS + CH.rot;
+        const current = pose[o] as number;
+        // The arm is short beside the big head: reach at most ~52° up (never across the face).
+        const reach = clamp(Math.atan2(dy, dx), -0.9, 1.25);
+        let want = reach - chain;
+        want = current + wrapPi(want - current);
+        pose[o] = current + (want - current) * aimW * 0.85;
+        const h = this.boneHead * CHANNELS + CH.rot;
+        pose[h] = (pose[h] as number) + clamp(Math.atan2(dy, Math.abs(dx) + 20), -0.9, 0.9) * 0.3 * aimW;
+      }
+    }
 
     const sway = this.noise.noise2((time % 3600) * 0.6, 3.1) * 0.08;
     const drive = clamp(-this.accX * facing * 0.00042 - forward * 0.00022, -0.7, 0.7) + sway;
@@ -482,13 +582,13 @@ export class HeroView implements RenderView {
     return this.anim.grounded ? 0 : this.anim.vy;
   }
 
-  private updateScarf(dt: number, x: number, y: number, facing: number, time: number): void {
+  private updateScarf(dt: number, x: number, y: number, facing: number, time: number, forceScale: number): void {
     const geo = this.scarfGeometry;
     if (!geo) return;
     const sk = this.skeleton;
     const ax = x + sk.pointX(this.boneScarf, SCARF_ANCHOR.x, SCARF_ANCHOR.y);
     const ay = y + sk.pointY(this.boneScarf, SCARF_ANCHOR.x, SCARF_ANCHOR.y);
-    this.ribbon.update(dt, ax, ay, -facing, -0.18, time);
+    this.ribbon.update(dt, ax, ay, -facing, -0.18, time, forceScale);
     const r = this.ribbon;
     const cx = this.curveX;
     const cy = this.curveY;
@@ -509,7 +609,7 @@ export class HeroView implements RenderView {
       const i1 = i < n - 1 ? i + 1 : n - 1;
       let tx = (cx[i1] as number) - (cx[i0] as number);
       let ty = (cy[i1] as number) - (cy[i0] as number);
-      const len = Math.hypot(tx, ty) || 1;
+      const len = Math.sqrt(tx * tx + ty * ty) || 1;
       tx /= len;
       ty /= len;
       const u = i / (n - 1);
@@ -534,6 +634,35 @@ export class HeroView implements RenderView {
     if (this.budGlow) this.budGlow.alpha = 0.75 + 0.2 * this.noise.noise2(t * 1.7, 4.4);
   }
 
+  /** The release streak: a comet of light trailing the hero along the flight, fading on the real clock. */
+  /** The release streak (only while one plays: `streakAt` ≥ 0); parked and cleared when it ends. */
+  private updateStreak(frame: FrameInfo, p: PlayerView): void {
+    const s = this.streak;
+    const tw = this.streakTwin;
+    if (!s || !tw) return;
+    const k = (frame.time - this.streakAt) / STREAK_LIFE;
+    if (k >= 1 || k < 0) {
+      this.streakAt = -1;
+      parkSprite(s);
+      parkSprite(tw);
+      return;
+    }
+    const x = p.prevX + (p.x - p.prevX) * frame.alpha;
+    const cy = p.prevY + (p.y - p.prevY) * frame.alpha - p.height / 2;
+    const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+    if (speed > 50 && p.mode === 'launched') this.streakAngle = Math.atan2(p.vy, p.vx);
+    const len = STREAK_MIN + (STREAK_MAX - STREAK_MIN) * Math.sin(Math.min(1, k * 2.2) * Math.PI * 0.5);
+    s.position.set(x, cy);
+    s.rotation = this.streakAngle;
+    s.scale.set(len / STREAK_TEXELS.w, STREAK_WIDTH / STREAK_TEXELS.h);
+    s.alpha = STREAK_ALPHA * (1 - k) * (1 - k);
+    tw.position.copyFrom(s.position);
+    tw.rotation = s.rotation;
+    tw.scale.set(len / STREAK_TEXELS.w, (STREAK_WIDTH * 1.2) / STREAK_TEXELS.h);
+    tw.alpha = s.alpha * 1.2;
+  }
+
+
   private updateGhosts(dt: number, x: number, y: number, facing: number): void {
     if (this.dashing) {
       this.ghostTimer += dt;
@@ -550,7 +679,9 @@ export class HeroView implements RenderView {
     for (let i = 0; i < GHOSTS; i++) {
       const age = (this.ghostAge[i] as number) + dt;
       this.ghostAge[i] = age;
-      (this.ghosts[i] as Sprite).alpha = age < GHOST_LIFE ? GHOST_ALPHA * (1 - age / GHOST_LIFE) ** 1.5 : 0;
+      const g = this.ghosts[i] as Sprite;
+      if (age < GHOST_LIFE) g.alpha = GHOST_ALPHA * (1 - age / GHOST_LIFE) ** 1.5;
+      else if (g.scale.x !== 0) parkSprite(g);
     }
   }
 
@@ -564,4 +695,10 @@ export class HeroView implements RenderView {
     this.atlasTexture = null;
     this.ctx = null;
   }
+}
+
+/** Hide a pooled sprite without touching `visible` (no render-group rebuild) and with zero area (no fill). */
+function parkSprite(s: Sprite): void {
+  s.alpha = 0;
+  s.scale.set(0);
 }

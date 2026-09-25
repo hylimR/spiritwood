@@ -7,6 +7,9 @@ export const DEFAULT_SETTINGS: Readonly<UserSettings> = Object.freeze({
   fpsCap: 60,
   dynamicResolution: true,
   debugOverlay: false,
+  masterVolume: 0.8,
+  musicVolume: 0.6,
+  sfxVolume: 0.8,
 });
 
 const PRESETS: readonly QualityPreset[] = ['auto', 'high', 'medium', 'low'];
@@ -40,7 +43,14 @@ export function sanitizeSettings(raw: unknown): UserSettings {
   if (r.fpsCap === 60 || r.fpsCap === 0) out.fpsCap = r.fpsCap;
   if (typeof r.dynamicResolution === 'boolean') out.dynamicResolution = r.dynamicResolution;
   if (typeof r.debugOverlay === 'boolean') out.debugOverlay = r.debugOverlay;
+  if (isVolume(r.masterVolume)) out.masterVolume = r.masterVolume;
+  if (isVolume(r.musicVolume)) out.musicVolume = r.musicVolume;
+  if (isVolume(r.sfxVolume)) out.sfxVolume = r.sfxVolume;
   return out;
+}
+
+function isVolume(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1;
 }
 
 /**
@@ -99,5 +109,7 @@ export function applyUrlOverrides(settings: UserSettings, search: string): UserS
   const debug = params.get('debug');
   if (debug === '' || debug === '1' || debug === 'true') out.debugOverlay = true;
   else if (debug === '0' || debug === 'false') out.debugOverlay = false;
+
+  if (params.has('mute')) out.masterVolume = 0;
   return out;
 }

@@ -1,12 +1,22 @@
 import { clamp01 } from '../../core/math.ts';
+import { BRUSH_BODY, BRUSH_POLAR_BASE, BRUSH_SIZE, BrushKernel, DRY_SCALE, POLAR_BODY, sample, strokeHash, type StrokeOptions } from './brush.ts';
 import { coverage, smin } from './sdf.ts';
 import type { NoiseTable } from './noiseTable.ts';
+
+export type { StrokeOptions } from './brush.ts';
 
 /**
  * CPU rasteriser for kit elements. Shapes are splatted into a signed-distance buffer (texels,
  * negative inside) only within their bounding boxes, each tagged with a material; `finalize` turns
  * distance + material into the atlas channels (R luminance detail, G rim mask, B emissive, A coverage).
  * Inner loops use sqrt-based distances (Math.hypot is several times slower in V8).
+ *
+ * Painterly pass (ARCHITECTURE.md §5.5): every shape also has a stroke frame — along/across a capsule
+ * or curve (arc length), (r̄·φ, r) around an ellipse, along a leaf blade, or plain (x, y) for ground,
+ * rocks and roots — and the shape that owns a texel records its index, next to `mat`/`shade`, plus the
+ * nearest shape of another frame group (the runner-up). `finalize` evaluates the stroke coordinate
+ * (u, v) of covered texels in their shape's frame and paints brush strokes that follow each form and
+ * cross-fade where two forms meet. Texel coordinates are never rotated by a per-texel direction.
  */
 export const Mat = {
   None: 0,
@@ -56,6 +66,123 @@ export interface FinalizeOptions {
    */
   edgeFade?: number;
   cut?: 'none' | 'top' | 'bottom';
+  /** Painterly brush strokes (null/absent = the plain channels, byte for byte as before the pass). */
+  strokes?: StrokeOptions | null;
+}
+
+/** Stroke frame kinds: along/across a segment, around a centre, plain element (x, y). */
+export const FRAME = { Line: 0, Polar: 1, Xy: 2 } as const;
+/** Every 'xy' shape of an element shares this group: one continuous frame, no seams between them. */
+const XY_GROUP = 0;
+/**
+ * Where a shape takes texels over from a shape of another frame group, its strokes fade in from the
+ * previous owner's over this much SDF distance gap (about STROKE_SEAM / 2 texels of the new owner's
+ * side): the brush is continuous across the boundary, and each form keeps its own strokes.
+ */
+export const STROKE_SEAM = 5;
+/** Polar frames fade their strokes toward the frame's mean near the centre (normalised radius), where φ bunches up. */
+export const POLAR_FADE_IN = 0.12;
+export const POLAR_FADE_OUT = 0.45;
+
+/** Per-shape frame parameters (FrameTable.f stride): the frame itself, then its brush-table map. */
+const SF = 20;
+const F_OX = 0;
+const F_OY = 1;
+const F_AX = 2;
+const F_AY = 3;
+const F_U0 = 4;
+const F_IRX = 5;
+const F_IRY = 6;
+const F_RB = 7;
+const F_OFFU = 8;
+const F_OFFV = 9;
+const F_C = 10;
+/** Along scale of the brush (BrushKernel.along). */
+const F_KA = 11;
+/**
+ * The frame mapped to brush-table coordinates (TABLE_BIAS included), for the hot path. Line and xy
+ * frames are affine: X = x·H0 + y·H1 + H2, Y = x·H3 + y·H4 + H5 at texel (x, y). Polar frames:
+ * q = ((x − H0)·H2, (y − H1)·H3), X = atan2(q)·H4 + H5, Y = |q|·H6 + H7.
+ */
+const F_H0 = 12;
+const F_H1 = 13;
+const F_H2 = 14;
+const F_H3 = 15;
+const F_H4 = 16;
+const F_H5 = 17;
+const F_H6 = 18;
+const F_H7 = 19;
+const POLAR_FADE_K = 1 / (POLAR_FADE_OUT - POLAR_FADE_IN);
+
+/** frameAt output layout (ElementRaster.fr): along, across, polar fade weight, along period, faded-to value. */
+const FR_U = 0;
+const FR_V = 1;
+const FR_W = 2;
+const FR_P = 3;
+const FR_C = 4;
+const FR_STRIDE = 5;
+
+/** Stroke frames of one element's shapes: kind, group and parameters (growable, reused across elements). */
+export class FrameTable {
+  kind = new Uint8Array(1024);
+  group = new Int32Array(1024);
+  f = new Float64Array(1024 * SF);
+  count = 0;
+
+  add(kind: number, group: number): number {
+    if (this.count === this.kind.length) {
+      const n = this.kind.length * 2;
+      const kind = new Uint8Array(n);
+      kind.set(this.kind);
+      const g = new Int32Array(n);
+      g.set(this.group);
+      const f = new Float64Array(n * SF);
+      f.set(this.f);
+      this.kind = kind;
+      this.group = g;
+      this.f = f;
+    }
+    const s = this.count++;
+    this.kind[s] = kind;
+    this.group[s] = group;
+    return s;
+  }
+}
+
+/**
+ * Per-texel stroke records (owner and runner-up shape) and finalize scratch, reused across elements.
+ * A record is an interleaved pair [shape index, the shape's own unblended distance] (shape indices stay
+ * far below 2^24, exact in float32), so recording a texel touches one cache line; a shape's frame
+ * group comes from the frame table.
+ */
+export interface StrokeBuffers {
+  /** Owner (valid where `mat` ≠ 0). */
+  own: Float32Array;
+  /** Runner-up: the nearest shape of another group that the owner took the texel from (distance FAR: none). */
+  run: Float32Array;
+  /**
+   * Brush value and luminance amplitude of stroked texels, their indices, and runner-up texels, later
+   * the rim blocks (finalize scratch); `mark` flags listed rim blocks (all zero between elements).
+   */
+  bm: Float32Array;
+  ba: Float32Array;
+  list: Int32Array;
+  aux: Int32Array;
+  mark: Uint8Array;
+}
+
+function strokeBuffers(n: number): StrokeBuffers {
+  return {
+    own: new Float32Array(n * 2), run: new Float32Array(n * 2),
+    bm: new Float32Array(n), ba: new Float32Array(n), list: new Int32Array(n), aux: new Int32Array(n), mark: new Uint8Array(n),
+  };
+}
+
+function strokeViews(s: StrokeBuffers, n: number): StrokeBuffers {
+  return {
+    own: s.own.subarray(0, n * 2), run: s.run.subarray(0, n * 2).fill(FAR),
+    bm: s.bm.subarray(0, n), ba: s.ba.subarray(0, n), list: s.list.subarray(0, n), aux: s.aux.subarray(0, n), mark: s.mark.subarray(0, n),
+  };
 }
 
 /** Reusable buffers for rasterising many elements in sequence (one element at a time). */
@@ -68,6 +195,8 @@ export class Scratch {
   shade = new Float32Array(0);
   rowMin = new Int32Array(0);
   rowMax = new Int32Array(0);
+  stroke: StrokeBuffers = strokeBuffers(0);
+  readonly frames = new FrameTable();
   private byteBuf = new Uint8Array(0);
 
   /** A reusable byte buffer of at least `n` bytes (a view of exactly `n`). */
@@ -84,10 +213,331 @@ export class Scratch {
       this.halo = new Float32Array(n);
       this.alpha = new Float32Array(n);
       this.shade = new Float32Array(n);
+      this.stroke = strokeBuffers(n);
     }
     if (this.rowMin.length < rows) {
       this.rowMin = new Int32Array(rows);
       this.rowMax = new Int32Array(rows);
+    }
+  }
+}
+
+/**
+ * Bound on |edge displacement| (in units of the material displacement) with the dry brush mixed in: it
+ * stays below the plain two-octave noise's peak (≈ 0.6), so with strokes, finalize skips the noise
+ * where |d| exceeds this band (checked in tests/world/strokes.test.ts).
+ */
+export const EDGE_NOISE_MAX = 0.75;
+
+/** Scratch for the rim redistribution of one 2×2 block (atlas offsets, alphas, rim values, new rim values). */
+const RIM_BLOCK_I = new Int32Array(4);
+const RIM_BLOCK_A = new Float64Array(4);
+const RIM_BLOCK_G = new Float64Array(4);
+const RIM_BLOCK_W = new Float64Array(4);
+
+/** atan2 to about 1e-5 rad (a minimax arctangent): frames are evaluated for every covered texel. */
+function fastAtan2(y: number, x: number): number {
+  const ax = x < 0 ? -x : x;
+  const ay = y < 0 ? -y : y;
+  const mx = ax > ay ? ax : ay;
+  if (mx === 0) return 0;
+  const t = (ax < ay ? ax : ay) / mx;
+  const s = t * t;
+  let r = ((((-0.0117212 * s + 0.05265332) * s - 0.11643287) * s + 0.19354346) * s - 0.33262347) * s + 0.99997726;
+  r *= t;
+  if (ay > ax) r = 1.5707963267948966 - r;
+  if (x < 0) r = 3.141592653589793 - r;
+  return y < 0 ? -r : r;
+}
+
+/** Offset (a multiple of the brush table size) that keeps table coordinates positive, so `| 0` floors. */
+const TABLE_BIAS = 1 << 20;
+/** Counts returned by brushOwners (listed texels, runner-ups). */
+const STROKE_OUT = new Float64Array(2);
+
+/*
+ * The brush passes of the painterly finalize. The frame evaluation is written out in both loops: as a
+ * function it exceeds V8's inlining size, and every call would box its result.
+ */
+
+/**
+ * Brush value of every texel that can end up covered (distance below `coverM` of its material) into
+ * `bm`, in its owner's frame: the frame's brush-table coordinates, one bilinear lookup, and a polar
+ * frame's fade toward its mean near the centre. The texels go to `list`, and those whose runner-up
+ * (the shape of another frame group the owner took them from) is within STROKE_SEAM also to
+ * `runList` for brushRunners. STROKE_OUT = [listed, runner-ups].
+ */
+function brushOwners(
+  w: number, h: number, rowMin: Int32Array, rowMax: Int32Array, dist: Float32Array, mats: Uint8Array, coverM: Float32Array,
+  own: Float32Array, run: Float32Array, bm: Float32Array, list: Int32Array, runList: Int32Array, kinds: Uint8Array, f: Float64Array,
+): void {
+  const body = BRUSH_BODY;
+  const mask = BRUSH_SIZE - 1;
+  let ln = 0;
+  let rn = 0;
+  // The current owner's frame, reloaded only when the owner changes (runs along a row share one).
+  let cs = -1;
+  let polar = false;
+  let h0 = 0;
+  let h1 = 0;
+  let h2 = 0;
+  let h3 = 0;
+  let h4 = 0;
+  let h5 = 0;
+  let h6 = 0;
+  let h7 = 0;
+  let c = 0;
+  for (let y = 0; y < h; y++) {
+    const r0 = rowMin[y] as number;
+    const xs = r0 < 0 ? 0 : r0;
+    const r1 = (rowMax[y] as number) + 1;
+    const xe = r1 > w ? w : r1;
+    for (let x = xs; x < xe; x++) {
+      const i = y * w + x;
+      if (!((dist[i] as number) < (coverM[mats[i] as number] as number))) continue;
+      list[ln++] = i;
+      const td = run[i * 2 + 1] as number;
+      if (td < FAR && td - (own[i * 2 + 1] as number) < STROKE_SEAM) runList[rn++] = i;
+      const s = own[i * 2] as number;
+      if (s !== cs) {
+        cs = s;
+        const o = s * SF;
+        polar = kinds[s] === FRAME.Polar;
+        h0 = f[o + F_H0] as number;
+        h1 = f[o + F_H1] as number;
+        h2 = f[o + F_H2] as number;
+        h3 = f[o + F_H3] as number;
+        h4 = f[o + F_H4] as number;
+        h5 = f[o + F_H5] as number;
+        h6 = f[o + F_H6] as number;
+        h7 = f[o + F_H7] as number;
+        c = f[o + F_C] as number;
+      }
+      let X = 0;
+      let Y = 0;
+      let wt = 1;
+      let base = 0;
+      if (!polar) {
+        X = x * h0 + y * h1 + h2;
+        Y = x * h3 + y * h4 + h5;
+      } else {
+        const qx = (x - h0) * h2;
+        const qy = (y - h1) * h3;
+        const rho = Math.sqrt(qx * qx + qy * qy);
+        X = fastAtan2(qy, qx) * h4 + h5;
+        Y = rho * h6 + h7;
+        const t = (rho - POLAR_FADE_IN) * POLAR_FADE_K;
+        wt = t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
+        base = BRUSH_POLAR_BASE;
+      }
+      const fx = X | 0;
+      const fy = Y | 0;
+      const tx = X - fx;
+      const ty = Y - fy;
+      const x0 = fx & mask;
+      const x1 = (x0 + 1) & mask;
+      const y0 = base + (fy & mask) * BRUSH_SIZE;
+      const y1 = base + ((fy + 1) & mask) * BRUSH_SIZE;
+      const a = body[y0 + x0] as number;
+      const top = a + ((body[y0 + x1] as number) - a) * tx;
+      const c0 = body[y1 + x0] as number;
+      const bot = c0 + ((body[y1 + x1] as number) - c0) * tx;
+      bm[i] = c + (top + (bot - top) * ty - c) * wt;
+    }
+  }
+  STROKE_OUT[0] = ln;
+  STROKE_OUT[1] = rn;
+}
+
+/**
+ * Near a boundary where the owner took a texel from a shape of another frame group, its strokes fade
+ * in from the runner-up's over STROKE_SEAM of distance gap: the brush is continuous across the
+ * boundary and each form keeps its own strokes (the same evaluation as brushOwners, in the runner-up's
+ * frame).
+ */
+function brushRunners(
+  list: Int32Array, count: number, w: number, own: Float32Array, run: Float32Array, bm: Float32Array, kinds: Uint8Array, f: Float64Array,
+): void {
+  const body = BRUSH_BODY;
+  const mask = BRUSH_SIZE - 1;
+  // The current runner-up's frame, reloaded only when it changes.
+  let cs = -1;
+  let polar = false;
+  let h0 = 0;
+  let h1 = 0;
+  let h2 = 0;
+  let h3 = 0;
+  let h4 = 0;
+  let h5 = 0;
+  let h6 = 0;
+  let h7 = 0;
+  let c = 0;
+  for (let n = 0; n < count; n++) {
+    const i = list[n] as number;
+    const y = (i / w) | 0;
+    const x = i - y * w;
+    const s = run[i * 2] as number;
+    if (s !== cs) {
+      cs = s;
+      const o = s * SF;
+      polar = kinds[s] === FRAME.Polar;
+      h0 = f[o + F_H0] as number;
+      h1 = f[o + F_H1] as number;
+      h2 = f[o + F_H2] as number;
+      h3 = f[o + F_H3] as number;
+      h4 = f[o + F_H4] as number;
+      h5 = f[o + F_H5] as number;
+      h6 = f[o + F_H6] as number;
+      h7 = f[o + F_H7] as number;
+      c = f[o + F_C] as number;
+    }
+    let X = 0;
+    let Y = 0;
+    let wt = 1;
+    let base = 0;
+    if (!polar) {
+      X = x * h0 + y * h1 + h2;
+      Y = x * h3 + y * h4 + h5;
+    } else {
+      const qx = (x - h0) * h2;
+      const qy = (y - h1) * h3;
+      const rho = Math.sqrt(qx * qx + qy * qy);
+      X = fastAtan2(qy, qx) * h4 + h5;
+      Y = rho * h6 + h7;
+      const t = (rho - POLAR_FADE_IN) * POLAR_FADE_K;
+      wt = t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
+      base = BRUSH_POLAR_BASE;
+    }
+    const fx = X | 0;
+    const fy = Y | 0;
+    const tx = X - fx;
+    const ty = Y - fy;
+    const x0 = fx & mask;
+    const x1 = (x0 + 1) & mask;
+    const y0 = base + (fy & mask) * BRUSH_SIZE;
+    const y1 = base + ((fy + 1) & mask) * BRUSH_SIZE;
+    const a = body[y0 + x0] as number;
+    const top = a + ((body[y0 + x1] as number) - a) * tx;
+    const c0 = body[y1 + x0] as number;
+    const bot = c0 + ((body[y1 + x1] as number) - c0) * tx;
+    const val = c + (top + (bot - top) * ty - c) * wt;
+    const t = ((run[i * 2 + 1] as number) - (own[i * 2 + 1] as number)) / STROKE_SEAM;
+    const mine = bm[i] as number;
+    bm[i] = t <= 0 ? val : val + (mine - val) * (t * t * (3 - 2 * t));
+  }
+}
+
+/** R += amplitude·(brush − mean) on the stroked texels (bm keeps the centred value for the rim pass). */
+function paintLum(
+  out: Uint8ClampedArray, dstW: number, dx: number, dy: number, w: number, list: Int32Array, bm: Float32Array, ba: Float32Array,
+  listN: number, mean: number,
+): void {
+  for (let n = 0; n < listN; n++) {
+    const i = list[n] as number;
+    const y = (i / w) | 0;
+    const o4 = ((dy + y) * dstW + dx + i - y * w) * 4;
+    const v = (bm[i] as number) - mean;
+    bm[i] = v;
+    out[o4] = (out[o4] as number) + (ba[i] as number) * v * 255;
+  }
+}
+
+/** Rim-mask blocks whose brightest texel is below this (8-bit) are left as they are (too faint to matter). */
+const RIM_MIN = 4;
+
+/**
+ * The rim pass: every 2×2 atlas block (aligned to even atlas rows and columns, as mip 1 averages
+ * them) that holds a rim mask byte ≥ RIM_MIN, listed by finalize (its index in the element's block
+ * grid, `stride` blocks wide), is redistributed once, and its mark cleared. A light stroke (the block's
+ * mean centred brush s > 0) sharpens its rim mask toward the block's brightest texel, a dark one
+ * (s < 0) flattens it; the premultiplied sum Σ G·A stays (a blend toward the original keeps G ≤ 255).
+ * Stroke values count only on covered texels (`alpha` > 0; halo texels carry none). Blocks are
+ * independent: any order.
+ */
+function rimPass(
+  dst: Uint8Array, dstW: number, dx: number, dy: number, w: number, h: number, blocks: Int32Array, count: number, stride: number,
+  mark: Uint8Array, k: number, alpha: Float32Array, bm: Float32Array, ba: Float32Array,
+): void {
+  const bi = RIM_BLOCK_I;
+  const bA = RIM_BLOCK_A;
+  const bg = RIM_BLOCK_G;
+  const bw = RIM_BLOCK_W;
+  for (let b = 0; b < count; b++) {
+    const m = blocks[b] as number;
+    mark[m] = 0;
+    const row = (m / stride) | 0;
+    // The block's top-left texel, local (−1 where the element starts on an odd atlas column or row).
+    const bx = ((m - row * stride + (dx >> 1)) << 1) - dx;
+    const by = ((row + (dy >> 1)) << 1) - dy;
+    let n = 0;
+    let sum = 0;
+    let am = 0;
+    let aa = 0;
+    let gmax = 0;
+    for (let j = 0; j < 2; j++) {
+      const y = by + j;
+      if (y < 0 || y >= h) continue;
+      for (let q = 0; q < 2; q++) {
+        const x = bx + q;
+        if (x < 0 || x >= w) continue;
+        const o4 = ((dy + y) * dstW + dx + x) * 4;
+        const a = dst[o4 + 3] as number;
+        if (a === 0) continue;
+        const g = dst[o4 + 1] as number;
+        const i = y * w + x;
+        bi[n] = o4;
+        bA[n] = a;
+        bg[n] = g;
+        n++;
+        sum += g * a;
+        if (g > gmax) gmax = g;
+        if ((alpha[i] as number) > 0 && (ba[i] as number) > 0) {
+          am += a * (bm[i] as number);
+          aa += a;
+        }
+      }
+    }
+    if (n < 2 || aa === 0) continue;
+    const sv = k * (am / aa);
+    const ig = 1 / gmax;
+    // Weights: sharpen (s > 0) favours texels above half the block's peak; flatten (s < 0) lifts all toward it.
+    let wsum = 0;
+    for (let q = 0; q < n; q++) {
+      const g = bg[q] as number;
+      let wq = 0;
+      if (g > 0) {
+        if (sv >= 0) {
+          const t = 1 + sv * (2 * g * ig - 1);
+          wq = t > 0 ? g * t : 0;
+        } else {
+          wq = g - (gmax - g) * sv * 0.5;
+        }
+      }
+      bw[q] = wq;
+      wsum += wq * (bA[q] as number);
+    }
+    if (wsum <= 0) continue;
+    const sc = sum / wsum;
+    // New values, pulled back toward the old ones just enough that none passes 255 (the sum is kept).
+    let lam = 1;
+    for (let q = 0; q < n; q++) {
+      const g = bg[q] as number;
+      const nv = (bw[q] as number) * sc;
+      bw[q] = nv;
+      if (nv > 255 && nv > g) {
+        const l = (255 - g) / (nv - g);
+        if (l < lam) lam = l;
+      }
+    }
+    // Round, carrying the premultiplied error to the next texel so the block sum stays exact.
+    let err = 0;
+    for (let q = 0; q < n; q++) {
+      const a = bA[q] as number;
+      const g = bg[q] as number;
+      const want = g + ((bw[q] as number) - g) * lam + err / a;
+      const v = want < 0 ? 0 : want > 255 ? 255 : Math.round(want);
+      err = (want - v) * a;
+      dst[(bi[q] as number) + 1] = v;
     }
   }
 }
@@ -104,7 +554,31 @@ export class ElementRaster {
   columnX = Number.NaN;
   /** Per-texel volume shading (added to luminance), written by the shape that owns the texel. */
   readonly shade: Float32Array;
+  /** Per-texel owner / runner-up shape records (painterly pass), and the owner records themselves. */
+  readonly stroke: StrokeBuffers;
+  private readonly own: Float32Array;
+  /** Stroke frames of the shapes drawn so far. */
+  readonly frames: FrameTable;
   private readonly noise: NoiseTable;
+  /** Per-element salt of the stroke pattern (from the element's noise offset). */
+  private readonly seed: number;
+  /** A held frame (framePolar / frameLine / strokeFrame('xy')) is used by every shape until released. */
+  private held = false;
+  /** The current shape's frame index and group; the next free group; an open beginStroke() group (−1 = none). */
+  private shape = 0;
+  private group = 1;
+  private nextGroup = 1;
+  private openGroup = -1;
+  private openDepth = 0;
+  /** Along offset accumulated by the segments of the current curve / beginStroke() group. */
+  private groupAlong = 0;
+  /** The element's brush, from `configure`. */
+  private kernel: BrushKernel | null = null;
+  /** The brush's across scale (table units per texel) and open frames' along scale, from the kernel. */
+  private kv = 0;
+  private kaLine = 0;
+  /** frameAt output: [u, v, weight, period, faded-to value]. */
+  private readonly fr = new Float64Array(FR_STRIDE);
   private volOn = false;
   private v1x = 0;
   private v1y = 0;
@@ -142,6 +616,8 @@ export class ElementRaster {
       this.shade = scratch.shade.subarray(0, n).fill(0);
       this.rowMin = scratch.rowMin.subarray(0, h).fill(w);
       this.rowMax = scratch.rowMax.subarray(0, h).fill(-1);
+      this.stroke = strokeViews(scratch.stroke, n);
+      this.frames = scratch.frames;
     } else {
       this.dist = new Float32Array(n).fill(FAR);
       this.mat = new Uint8Array(n);
@@ -151,10 +627,15 @@ export class ElementRaster {
       this.shade = new Float32Array(n);
       this.rowMin = new Int32Array(h).fill(w);
       this.rowMax = new Int32Array(h).fill(-1);
+      this.stroke = strokeViews(strokeBuffers(n), n);
+      this.frames = new FrameTable();
     }
+    this.own = this.stroke.own;
+    this.frames.count = 0;
     this.noise = noise;
     this.nox = (noiseOffset * 97.13) % 256;
     this.noy = (noiseOffset * 57.71) % 256;
+    this.seed = Math.imul(noiseOffset + 1, 0x9e3779b1) >>> 0;
   }
 
   /** Mark the box [bx0, bx1) × [by0, by1) as touched (called once per shape). */
@@ -169,18 +650,238 @@ export class ElementRaster {
 
   /**
    * Size the per-material distance band to what `finalize(o)` reads (edge displacement + softness),
-   * instead of a generous default. Call before drawing.
+   * instead of a generous default. Call before drawing (with the stroke options, if any).
    */
   configure(o: FinalizeOptions): void {
     const soft = o.softness ?? 1.25;
     const dispScale = o.dispScale ?? 1;
     for (let m = 0; m < DISP.length; m++) this.reach[m] = (DISP[m] as number) * dispScale * 1.2 + soft + 0.75;
+    this.kernel = o.strokes ? new BrushKernel(o.strokes) : null;
+    this.kv = this.kernel ? this.kernel.kv : 0;
+    this.kaLine = this.kernel ? this.kernel.along(0) : 0;
   }
 
   /** Element-specific noise in about [-1, 1]. */
   n(x: number, y: number): number {
     return this.noise.sample(x + this.nox, y + this.noy);
   }
+
+  // ---------------------------------------------------------------------------------------------
+  // Stroke frames
+
+  /**
+   * Stroke frame of the shapes drawn next: 'shape' (default) paints along each shape's own form;
+   * 'xy' holds the element's plain (x, y) frame — horizontal strokes for ground, rocks and roots, with
+   * no seams between the shapes that share it — until `strokeFrame('shape')` or `releaseFrame()`.
+   */
+  strokeFrame(mode: 'shape' | 'xy'): void {
+    if (mode === 'shape') {
+      this.held = false;
+      return;
+    }
+    this.group = XY_GROUP;
+    const s = this.frames.add(FRAME.Xy, XY_GROUP);
+    const f = this.frames.f;
+    const o = s * SF;
+    const offU = (this.seed & 1023) * 0.37;
+    const offV = ((this.seed >>> 10) & 1023) * 0.53;
+    const ka = this.kaLine;
+    const kv = this.kv;
+    f[o + F_OFFU] = offU;
+    f[o + F_OFFV] = offV;
+    f[o + F_C] = 0;
+    f[o + F_KA] = ka;
+    f[o + F_H0] = ka;
+    f[o + F_H1] = 0;
+    f[o + F_H2] = ka * (0.5 + offU) + TABLE_BIAS;
+    f[o + F_H3] = 0;
+    f[o + F_H4] = kv;
+    f[o + F_H5] = kv * (0.5 + offV) + TABLE_BIAS;
+    this.shape = s;
+    this.held = true;
+  }
+
+  /**
+   * Hold a polar frame around (cx, cy) for the shapes drawn next (a lobe with its tufts and leaves,
+   * a leaf spray): they paint as one form, strokes wrapping around its centre.
+   */
+  framePolar(cx: number, cy: number, rx: number, ry: number): void {
+    this.held = false;
+    this.startGroup(false);
+    this.polarFrame(cx, cy, rx, ry);
+    this.held = true;
+  }
+
+  /**
+   * Hold a line frame from (ax, ay) toward (bx, by) for the shapes drawn next (a conifer tier with its
+   * fringe, a frond with its leaflets, a strand with its leaves): strokes run along the whole form.
+   */
+  frameLine(ax: number, ay: number, bx: number, by: number): void {
+    this.held = false;
+    this.startGroup(false);
+    const dx = bx - ax;
+    const dy = by - ay;
+    const l = Math.sqrt(dx * dx + dy * dy);
+    this.lineFrame(ax, ay, l > 1e-6 ? dx / l : 0, l > 1e-6 ? dy / l : 1, 0);
+    this.held = true;
+  }
+
+  /** Back to per-shape frames. */
+  releaseFrame(): void {
+    this.held = false;
+  }
+
+  /**
+   * The capsules and curves drawn until `endStroke()` form one stroke (trunk paths, rising columns):
+   * one frame group with a continuous along coordinate, instead of a new frame per segment. Nests.
+   */
+  beginStroke(): void {
+    if (this.openDepth++ > 0) return;
+    this.openGroup = this.nextGroup++;
+    this.groupAlong = 0;
+  }
+
+  endStroke(): void {
+    if (this.openDepth > 0 && --this.openDepth === 0) this.openGroup = -1;
+  }
+
+  /** Start a shape's frame group: the open beginStroke() group for segments, else a new one. */
+  private startGroup(line: boolean): void {
+    if (line && this.openGroup >= 0) {
+      this.group = this.openGroup;
+      return;
+    }
+    this.group = this.nextGroup++;
+    // A standalone segment starts its own along coordinate (an open group keeps accumulating).
+    if (line) this.groupAlong = 0;
+  }
+
+  /** New line frame from (ax, ay) along the unit axis (dx, dy), with along offset u0, in the current group. */
+  private lineFrame(ax: number, ay: number, dx: number, dy: number, u0: number): void {
+    const g = this.group;
+    const s = this.frames.add(FRAME.Line, g);
+    const f = this.frames.f;
+    const o = s * SF;
+    f[o + F_OX] = ax;
+    f[o + F_OY] = ay;
+    f[o + F_AX] = dx;
+    f[o + F_AY] = dy;
+    f[o + F_U0] = u0;
+    // Each stroke group reads its own stretch of the brush lattice.
+    const offU = strokeHash(g, 11, this.seed) * 4096;
+    const offV = strokeHash(g, 23, this.seed) * 4096;
+    const ka = this.kaLine;
+    const kv = this.kv;
+    f[o + F_OFFU] = offU;
+    f[o + F_OFFV] = offV;
+    f[o + F_C] = 0;
+    f[o + F_KA] = ka;
+    // u = u0 + p·(dx, dy) + offU and v = p × (dx, dy) + offV at p = texel centre − origin, in table units.
+    const px = 0.5 - ax;
+    const py = 0.5 - ay;
+    f[o + F_H0] = ka * dx;
+    f[o + F_H1] = ka * dy;
+    f[o + F_H2] = ka * (u0 + px * dx + py * dy + offU) + TABLE_BIAS;
+    f[o + F_H3] = -kv * dy;
+    f[o + F_H4] = kv * dx;
+    f[o + F_H5] = kv * (py * dx - px * dy + offV) + TABLE_BIAS;
+    this.shape = s;
+  }
+
+  /** New polar frame around (cx, cy), normalised to the ellipse (rx, ry) so iso-lines follow its outline. */
+  private polarFrame(cx: number, cy: number, rx: number, ry: number): void {
+    const g = this.group;
+    const s = this.frames.add(FRAME.Polar, g);
+    const f = this.frames.f;
+    const o = s * SF;
+    f[o + F_OX] = cx;
+    f[o + F_OY] = cy;
+    f[o + F_IRX] = 1 / rx;
+    f[o + F_IRY] = 1 / ry;
+    // (r̄·φ, ρ·r̄): strokes keep the element's layer-unit width across and wrap the lobe in whole
+    // table periods along (at least 4 broad cells around: dabs, not a light and a dark half).
+    const rb = (rx + ry) * 0.5;
+    f[o + F_RB] = rb;
+    const offU = strokeHash(g, 11, this.seed) * 4096;
+    const offV = strokeHash(g, 23, this.seed) * 4096;
+    f[o + F_OFFU] = offU;
+    f[o + F_OFFV] = offV;
+    // Toward the centre φ bunches up, so strokes fade to the frame's mean around its fade ring.
+    let c = 0;
+    let ka = 0;
+    const kv = this.kv;
+    const kernel = this.kernel;
+    if (kernel) {
+      const p = 2 * Math.PI * rb;
+      ka = kernel.along(p);
+      const Y = (POLAR_FADE_OUT * rb + offV) * kv;
+      for (let k = 0; k < 16; k++) c += sample(POLAR_BODY, (offU + (k / 16) * p) * ka, Y);
+      c /= 16;
+    }
+    f[o + F_KA] = ka;
+    f[o + F_C] = c;
+    f[o + F_H0] = cx - 0.5;
+    f[o + F_H1] = cy - 0.5;
+    f[o + F_H2] = 1 / rx;
+    f[o + F_H3] = 1 / ry;
+    f[o + F_H4] = rb * ka;
+    f[o + F_H5] = offU * ka + TABLE_BIAS;
+    f[o + F_H6] = rb * kv;
+    f[o + F_H7] = offV * kv + TABLE_BIAS;
+    this.shape = s;
+  }
+
+  /** Stroke coordinate of texel (x, y) in frame s → fr: along, across, polar fade weight, along period, faded-to value. */
+  private frameAt(s: number, x: number, y: number): void {
+    const at = 0;
+    const f = this.frames.f;
+    const r = this.fr;
+    const o = s * SF;
+    const kind = this.frames.kind[s] as number;
+    r[at + FR_C] = f[o + F_C] as number;
+    if (kind === FRAME.Xy) {
+      r[at + FR_U] = x + 0.5 + (f[o + F_OFFU] as number);
+      r[at + FR_V] = y + 0.5 + (f[o + F_OFFV] as number);
+      r[at + FR_W] = 1;
+      r[at + FR_P] = 0;
+      return;
+    }
+    const px = x + 0.5 - (f[o + F_OX] as number);
+    const py = y + 0.5 - (f[o + F_OY] as number);
+    if (kind === FRAME.Line) {
+      const ax = f[o + F_AX] as number;
+      const ay = f[o + F_AY] as number;
+      r[at + FR_U] = (f[o + F_U0] as number) + px * ax + py * ay + (f[o + F_OFFU] as number);
+      r[at + FR_V] = py * ax - px * ay + (f[o + F_OFFV] as number);
+      r[at + FR_W] = 1;
+      r[at + FR_P] = 0;
+      return;
+    }
+    const qx = px * (f[o + F_IRX] as number);
+    const qy = py * (f[o + F_IRY] as number);
+    const rho = Math.sqrt(qx * qx + qy * qy);
+    const rb = f[o + F_RB] as number;
+    r[at + FR_U] = rb * fastAtan2(qy, qx) + (f[o + F_OFFU] as number);
+    r[at + FR_V] = rho * rb + (f[o + F_OFFV] as number);
+    const t = (rho - POLAR_FADE_IN) / (POLAR_FADE_OUT - POLAR_FADE_IN);
+    r[at + FR_W] = t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
+    r[at + FR_P] = 2 * Math.PI * rb;
+  }
+
+  /**
+   * Stroke coordinate of texel i = (x, y) in its owner's frame (for tests and tools): writes
+   * [u, v, weight, period, faded-to value] into `out`; false where no shape owns the texel.
+   */
+  strokeCoord(x: number, y: number, out: Float64Array | number[]): boolean {
+    const i = y * this.w + x;
+    if (this.mat[i] === 0) return false;
+    this.frameAt(this.own[i * 2] as number, x, y);
+    const r = this.fr;
+    for (let k = 0; k < 5; k++) out[k] = r[k] as number;
+    return true;
+  }
+
+  // ---------------------------------------------------------------------------------------------
 
   private box(x0: number, y0: number, x1: number, y1: number, pad: number): boolean {
     this.bx0 = Math.max(0, Math.floor(x0 - pad));
@@ -235,35 +936,56 @@ export class ElementRaster {
     return s;
   }
 
-  private put(i: number, x: number, y: number, d: number, mat: Mat, k: number): void {
-    const old = this.dist[i] as number;
-    if (k > 0 && old < FAR) {
-      if (d < old) {
-        this.mat[i] = mat;
-        this.shade[i] = this.volOn ? this.volAt(x, y) : 0;
-      }
-      this.dist[i] = smin(old, d, k);
-    } else if (d < old) {
-      this.dist[i] = d;
-      this.mat[i] = mat;
-      this.shade[i] = this.volOn ? this.volAt(x, y) : 0;
+  /*
+   * Recording a shape's distance d at texel i (written out in capsule, ellipse and leaf): the nearer
+   * shape owns the texel's material, shading and stroke frame (a smooth union blends only the
+   * distance); when it takes the texel from a shape of another frame group, that shape is kept as the
+   * runner-up (the nearest such), whose strokes the new owner's fade in from across the boundary.
+   */
+
+  /**
+   * Texel i passes from a shape of another group to the current one: the old owner becomes the
+   * runner-up when it is nearer than the one on record (or that one is of the new owner's group).
+   */
+  private demote(i: number): void {
+    const own = this.own;
+    const run = this.stroke.run;
+    const r = i * 2;
+    const td = run[r + 1] as number;
+    if (td >= FAR || (own[r + 1] as number) < td || (this.frames.group[run[r] as number] as number) === this.group) {
+      run[r] = own[r] as number;
+      run[r + 1] = own[r + 1] as number;
     }
   }
 
   /** Tapered capsule a→b (radius ra at a, rb at b), smooth-unioned with blend radius k. */
   capsule(ax: number, ay: number, bx: number, by: number, ra: number, rb: number, mat: Mat, k = 0): void {
-    const reach = (this.reach[mat] as number) + k;
-    if (!this.box(Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by), Math.max(ra, rb) + reach)) return;
-    this.touch();
     const bax = bx - ax;
     const bay = by - ay;
     const len2 = bax * bax + bay * bay;
+    const ilen = len2 > 1e-6 ? 1 / Math.sqrt(len2) : 0;
+    // Stroke frame: along / across the segment, continuing the along coordinate of its curve or group.
+    if (!this.held) {
+      this.startGroup(true);
+      this.lineFrame(ax, ay, ilen > 0 ? bax * ilen : 0, ilen > 0 ? bay * ilen : 1, this.groupAlong);
+      this.groupAlong += ilen > 0 ? len2 * ilen : 0;
+    }
+    const reach = (this.reach[mat] as number) + k;
+    if (!this.box(Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by), Math.max(ra, rb) + reach)) return;
+    this.touch();
     const inv = 1 / (len2 || 1);
     const w = this.w;
     const dist = this.dist;
+    const mats = this.mat;
+    const own = this.own;
+    const shade = this.shade;
+    const grp = this.group;
+    // (Frames are only added between shapes: the group table stays put during the loops.)
+    const groups = this.frames.group;
+    const shape = this.shape;
+    const volOn = this.volOn;
     // Rows only need the slab within `rm` of the segment's line (exact for diagonal limbs).
     const rm = Math.max(ra, rb) + reach;
-    const ilen = len2 > 1e-6 ? 1 / Math.sqrt(len2) : 0;
     const nx = -bay * ilen;
     const ny = bax * ilen;
     const slab = Math.abs(nx) > 0.2;
@@ -285,16 +1007,31 @@ export class ElementRaster {
         const dx = pax - bax * t;
         const dy = pay - bay * t;
         const d = Math.sqrt(dx * dx + dy * dy) - (ra + (rb - ra) * t);
-        if (d < reach && d < (dist[y * w + x] as number) + k) this.put(y * w + x, x, y, d, mat, k);
+        if (d < reach) {
+          // Record d (see "Recording" above demote), written out: these loops are the bake's hottest code.
+          const i = y * w + x;
+          const old = dist[i] as number;
+          if (d < old) {
+            if (mats[i] !== 0 && (groups[own[i * 2] as number] as number) !== grp) this.demote(i);
+            own[i * 2] = shape;
+            own[i * 2 + 1] = d;
+            dist[i] = k > 0 && old < FAR ? smin(old, d, k) : d;
+            mats[i] = mat;
+            shade[i] = volOn ? this.volAt(x, y) : 0;
+          } else if (k > 0 && d < old + k && old < FAR) {
+            dist[i] = smin(old, d, k);
+          }
+        }
       }
     }
   }
 
-  /** Quadratic Bézier a→c→b made of tapered capsule segments. */
+  /** Quadratic Bézier a→c→b made of tapered capsule segments (one stroke frame group along its arc length). */
   curve(
     ax: number, ay: number, cx: number, cy: number, bx: number, by: number,
     ra: number, rb: number, mat: Mat, k = 0, segments = 8,
   ): void {
+    this.beginStroke();
     let px = ax;
     let py = ay;
     for (let i = 1; i <= segments; i++) {
@@ -308,6 +1045,7 @@ export class ElementRaster {
       px = x;
       py = y;
     }
+    this.endStroke();
   }
 
   /** Point on the quadratic Bézier a→c→b at t. */
@@ -319,6 +1057,11 @@ export class ElementRaster {
 
   /** Ellipse (scaled-circle distance approximation — fine for soft organic masses). */
   ellipse(cx: number, cy: number, rx: number, ry: number, mat: Mat, k = 0): void {
+    // Stroke frame: (r̄·φ, r) around the centre.
+    if (!this.held) {
+      this.startGroup(false);
+      this.polarFrame(cx, cy, rx, ry);
+    }
     const reach = (this.reach[mat] as number) + k;
     if (!this.box(cx - rx, cy - ry, cx + rx, cy + ry, reach)) return;
     this.touch();
@@ -327,6 +1070,14 @@ export class ElementRaster {
     const m = Math.min(rx, ry);
     const w = this.w;
     const dist = this.dist;
+    const mats = this.mat;
+    const own = this.own;
+    const shade = this.shade;
+    const grp = this.group;
+    // (Frames are only added between shapes: the group table stays put during the loops.)
+    const groups = this.frames.group;
+    const shape = this.shape;
+    const volOn = this.volOn;
     const lim = 1 + reach / m;
     const lim2 = lim * lim;
     for (let y = this.by0; y < this.by1; y++) {
@@ -340,7 +1091,21 @@ export class ElementRaster {
       for (let x = x0; x < x1; x++) {
         const dx = (x + 0.5 - cx) * irx;
         const d = (Math.sqrt(dx * dx + dy * dy) - 1) * m;
-        if (d < reach && d < (dist[y * w + x] as number) + k) this.put(y * w + x, x, y, d, mat, k);
+        if (d < reach) {
+          // Record d (see "Recording" above demote), written out: these loops are the bake's hottest code.
+          const i = y * w + x;
+          const old = dist[i] as number;
+          if (d < old) {
+            if (mats[i] !== 0 && (groups[own[i * 2] as number] as number) !== grp) this.demote(i);
+            own[i * 2] = shape;
+            own[i * 2 + 1] = d;
+            dist[i] = k > 0 && old < FAR ? smin(old, d, k) : d;
+            mats[i] = mat;
+            shade[i] = volOn ? this.volAt(x, y) : 0;
+          } else if (k > 0 && d < old + k && old < FAR) {
+            dist[i] = smin(old, d, k);
+          }
+        }
       }
     }
   }
@@ -355,11 +1120,24 @@ export class ElementRaster {
     const dy = Math.sin(ang);
     const ex = bx + dx * len;
     const ey = by + dy * len;
+    // Stroke frame: along / across the blade.
+    if (!this.held) {
+      this.startGroup(false);
+      this.lineFrame(bx, by, dx, dy, 0);
+    }
     const reach = this.reach[mat] as number;
     if (!this.box(Math.min(bx, ex), Math.min(by, ey), Math.max(bx, ex), Math.max(by, ey), hw + reach)) return;
     this.touch();
     const w = this.w;
     const dist = this.dist;
+    const mats = this.mat;
+    const own = this.own;
+    const shade = this.shade;
+    const grp = this.group;
+    // (Frames are only added between shapes: the group table stays put during the loops.)
+    const groups = this.frames.group;
+    const shape = this.shape;
+    const volOn = this.volOn;
     const il = 1 / len;
     // Row spans: across the blade |v| < R, along it u ∈ [−0.05, 1.05] (each exact where it applies).
     const R = hw * 1.01 + 0.4 + reach;
@@ -390,7 +1168,19 @@ export class ElementRaster {
         // ≈ hw·sin(π·t^0.8) (rounded base, pointed tip) without transcendental calls.
         const prof = hw * 3.98 * t * (1 - t) * (1.2 - 0.4 * t) + 0.4;
         const d = (v < 0 ? -v : v) - prof + (u < 0 ? -u * len : u > 1 ? (u - 1) * len : 0);
-        if (d < reach && d < (dist[y * w + x] as number)) this.put(y * w + x, x, y, d, mat, 0);
+        if (d < reach) {
+          // Record d (see "Recording" above demote), k = 0.
+          const i = y * w + x;
+          const old = dist[i] as number;
+          if (d < old) {
+            if (mats[i] !== 0 && (groups[own[i * 2] as number] as number) !== grp) this.demote(i);
+            own[i * 2] = shape;
+            own[i * 2 + 1] = d;
+            dist[i] = d;
+            mats[i] = mat;
+            shade[i] = volOn ? this.volAt(x, y) : 0;
+          }
+        }
       }
     }
   }
@@ -449,6 +1239,12 @@ export class ElementRaster {
    * Resolve channels into `dst` (straight RGBA8) at (dx, dy) with row stride `dstW`, and fill
    * `this.alpha` (0..1). Material-specific edge displacement and luminance detail come from the
    * noise table; the rim mask lights edges that face the upper-left moonlight.
+   *
+   * With `o.strokes`, the painterly pass: part of the edge noise becomes dry-brush streaks along each
+   * shape's stroke direction (same amplitude budget); R gains zero-mean brush strokes (alpha-weighted
+   * over the element, so the layer's mean value does not move); and inside every 2×2 atlas block the
+   * rim mask concentrates into light strokes and spreads out of dark ones, keeping the block's
+   * premultiplied sum (the mip-1 rim is unchanged).
    */
   finalize(dst: Uint8Array, dstW: number, dx: number, dy: number, o: FinalizeOptions = {}): void {
     const w = this.w;
@@ -471,18 +1267,55 @@ export class ElementRaster {
     const noise = this.noise;
     const nox = this.nox;
     const noy = this.noy;
+    const so = o.strokes ?? null;
+    const st = this.stroke;
+    const dry = so ? so.dry : 0;
+    const strokeAmp = so ? so.amount * detail : 0;
+    const invGain = so && so.gain > 0 ? 1 / so.gain : 1;
     // Clamped view: stores round and clamp to 0..255 natively.
     const out = new Uint8ClampedArray(dst.buffer, dst.byteOffset, dst.length);
     const nm = DISP.length;
     const dispM = new Float32Array(nm);
     const reachM = new Float32Array(nm);
     const rimM = new Float32Array(nm);
+    const dryReachM = new Float32Array(nm);
     for (let m = 0; m < nm; m++) {
       dispM[m] = (DISP[m] as number) * dispScale;
       reachM[m] = (dispM[m] as number) * 1.2 + soft;
       rimM[m] = (RIM[m] as number) * rimStrength;
+      dryReachM[m] = (dispM[m] as number) * EDGE_NOISE_MAX + soft * 0.5;
     }
     const invSoft = 1 / Math.max(1e-6, soft);
+    // The brush value of every texel that can end up covered (bm), listed for the second pass.
+    let evalN = 0;
+    if (so && (dry > 0 || strokeAmp > 0)) {
+      const kinds = this.frames.kind;
+      const fr = this.frames.f;
+      // Texels beyond the dry-brush band stay uncovered whatever the displacement: no brush needed.
+      const coverM = dry > 0 ? dryReachM : reachM;
+      brushOwners(w, h, this.rowMin, this.rowMax, dist, mats, coverM, st.own, st.run, st.bm, st.list, st.aux, kinds, fr);
+      evalN = STROKE_OUT[0] as number;
+      brushRunners(st.aux, STROKE_OUT[1] as number, w, st.own, st.run, st.bm, kinds, fr);
+    }
+    const bmv = st.bm;
+    const bav = st.ba;
+    const strokeList = st.list;
+    // Stroked texels, compacted into `list` (brushOwners' list is spent) in row-major order, with the
+    // alpha·amplitude-weighted sums of their brush values for the stroke mean.
+    const strokeOn = so !== null;
+    let strokeN = 0;
+    let sumAM = 0;
+    let sumA = 0;
+    // The rim pass's blocks, listed here (aux is free once the runner-ups are done): 2×2 atlas blocks
+    // with a rim byte ≥ RIM_MIN, as indices into the element's block grid (it fits the n-texel mark
+    // and list arrays for w, h ≥ 2).
+    const listRim = so !== null && so.rim > 0 && evalN > 0 && w > 1 && h > 1;
+    const mark = st.mark;
+    const rimBlocks = st.aux;
+    let rimN = 0;
+    const bx0 = dx >> 1;
+    const by0 = dy >> 1;
+    const bStride = ((dx + w - 1) >> 1) - bx0 + 1;
     // Rim samples toward the upper-left light. Both offsets point to earlier rows, so a single
     // row-major pass can read their final alpha.
     const lx1 = Math.round(-0.55 * rimWidth);
@@ -525,9 +1358,18 @@ export class ElementRaster {
           if (d0 < reach) {
             let d = d0;
             const disp = dispM[m] as number;
-            if (disp > 0 && d0 > -reach) {
+            // (With strokes, texels whose coverage no displacement can flip skip the noise: same bytes.)
+            if (disp > 0 && d0 > -reach && (dry === 0 || (d0 < 0 ? -d0 : d0) < (dryReachM[m] as number))) {
               const f = FREQ[m] as number;
-              d += (noise.sample(x * f + nox, y * f + noy) * 0.75 + noise.sample(x * f * 3.1 + 71 + nox, y * f * 3.1 + 13 + noy) * 0.25) * disp;
+              const n1 = noise.sample(x * f + nox, y * f + noy);
+              if (dry > 0) {
+                // Dry brush: the fine octave (and some of the coarse one) becomes the stroke itself, so
+                // the edge frays along each stroke.
+                const n2 = dry < 1 ? noise.sample(x * f * 3.1 + 71 + nox, y * f * 3.1 + 13 + noy) : 0;
+                d += (n1 * (0.75 - 0.35 * dry) + n2 * 0.25 * (1 - dry) + (bmv[i] as number) * (DRY_SCALE * 0.6) * dry) * disp;
+              } else {
+                d += (n1 * 0.75 + noise.sample(x * f * 3.1 + 71 + nox, y * f * 3.1 + 13 + noy) * 0.25) * disp;
+              }
             }
             const t = 0.5 - d * invSoft;
             a = (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t)) * aRow;
@@ -584,13 +1426,54 @@ export class ElementRaster {
           dst[o4 + 1] = 0;
           dst[o4 + 2] = 0;
           dst[o4 + 3] = 0;
+          if (strokeOn && a > 0) bav[i] = 0;
           continue;
         }
-        out[o4] = lum * 255;
-        out[o4 + 1] = rim * 255;
+        // With a stroke gain, the element's own detail is stored divided by it (the shader multiplies
+        // it back): only the strokes added below gain, and they get the extra headroom.
+        out[o4] = (invGain === 1 ? lum : 0.5 + (lum - 0.5) * invGain) * 255;
+        const g255 = rim * 255;
+        out[o4 + 1] = g255;
         out[o4 + 2] = em * 255;
         dst[o4 + 3] = a8;
+        if (strokeOn && a > 0) {
+          // Stroke amplitude from the stored bytes: kept inside [0, 1] around R, none on pure light
+          // (emissive or halo texels).
+          const lumB = (dst[o4] as number) * (1 / 255);
+          let lim = strokeAmp;
+          const lo = (lumB - 0.02) * 0.85;
+          const hi = (0.98 - lumB) * 0.85;
+          if (lo < lim) lim = lo;
+          if (hi < lim) lim = hi;
+          lim *= 1 - (dst[o4 + 2] as number) * (1 / 255);
+          // (The coverage as stored in `alpha`, float32, as the rim pass reads it.)
+          const af = alpha[i] as number;
+          const q = a8 * (1 / 255);
+          if (q > af + 0.5 / 255) lim *= af / q;
+          if (lim > 0) {
+            bav[i] = lim;
+            strokeList[strokeN++] = i;
+            sumAM += af * lim * (bmv[i] as number);
+            sumA += af * lim;
+          } else {
+            bav[i] = 0;
+          }
+        }
+        // (The stored byte is g255 rounded half to even: ≥ RIM_MIN exactly when g255 ≥ RIM_MIN − ½.)
+        if (listRim && g255 >= RIM_MIN - 0.5) {
+          const m = (((dy + y) >> 1) - by0) * bStride + ((dx + x) >> 1) - bx0;
+          if (mark[m] === 0) {
+            mark[m] = 1;
+            rimBlocks[rimN++] = m;
+          }
+        }
       }
+    }
+    if (so) {
+      // Second pass: R += amplitude·(brush − mean) on the stroked texels (zero-mean, alpha-weighted
+      // over the element), then the rim mask of every 2×2 atlas block holding rim texels.
+      if (strokeAmp > 0) paintLum(out, dstW, dx, dy, w, strokeList, bmv, bav, strokeN, sumA > 0 ? sumAM / sumA : 0);
+      if (listRim) rimPass(dst, dstW, dx, dy, w, h, rimBlocks, rimN, bStride, mark, so.rim, alpha, st.bm, st.ba);
     }
   }
 

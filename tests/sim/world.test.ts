@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { KILL_MARGIN, SIM_DT } from '../../src/config.ts';
 import type { InputFrame } from '../../src/contracts/input.ts';
+import type { CrawlerDef } from '../../src/contracts/level.ts';
 import { DeathCause, SimEventType } from '../../src/contracts/sim.ts';
 import { levelFromAscii } from '../../src/level/ascii.ts';
 import { DEFAULT_TUNING, DEFAULT_WORLD_TUNING } from '../../src/sim/tuning.ts';
@@ -300,7 +301,7 @@ describe('enemies', () => {
   test('patrol turns at the range ends', () => {
     const rig = new WorldRig(rows);
     const e = rig.world.enemies[0];
-    const def = rig.world.level.enemies[0];
+    const def = rig.world.level.enemies[0] as CrawlerDef | undefined;
     if (!e || !def) throw new Error('fixture');
     let minX = e.x;
     let maxX = e.x;
@@ -340,8 +341,8 @@ describe('enemies', () => {
   test('an enemy with nowhere to walk stands guard instead of turning every tick', () => {
     // A single `E` is narrower than the crawler (patrolMinX = patrolMaxX), and a speed-0 crawler.
     const level = levelFromAscii(new MapBuilder(40, 14).put(3, 12, 'P').put(20, 12, 'E').fill(28, 12, 33, 12, 'E').rows());
-    const narrow = level.enemies[0];
-    const still = level.enemies[1];
+    const narrow = level.enemies[0] as CrawlerDef | undefined;
+    const still = level.enemies[1] as CrawlerDef | undefined;
     if (!narrow || !still) throw new Error('fixture');
     expect(narrow.patrolMinX).toBe(narrow.patrolMaxX);
     still.speed = 0;
@@ -350,7 +351,7 @@ describe('enemies', () => {
     rig.run(120);
     for (let i = 0; i < rig.world.enemies.length; i++) {
       const e = rig.world.enemies[i];
-      const def = level.enemies[i];
+      const def = level.enemies[i] as CrawlerDef | undefined;
       expect(e?.x).toBe(def?.x);
       expect(e?.vx).toBe(0);
       expect(e?.facing).toBe(1);
@@ -427,7 +428,7 @@ describe('enemies', () => {
     const rig = new WorldRig(rows);
     const w = rig.world;
     const e = w.enemies[0];
-    const def = w.level.enemies[0];
+    const def = w.level.enemies[0] as CrawlerDef | undefined;
     if (!e || !def) throw new Error('fixture');
     rig.run(100);
     expect(e.x).not.toBe(def.x);
@@ -553,5 +554,40 @@ describe('reset and teleport', () => {
     expect(w.camera.prevX).toBe(w.camera.x);
     const tp = w.events.get(w.events.count - 1);
     expect(tp).toMatchObject({ type: SimEventType.Teleported, x: 30 * T, y: 11 * T });
+  });
+});
+
+describe('M2 world rules', () => {
+  test('the default event queue holds 256 events', async () => {
+    const { GameWorld: World } = await import('../../src/sim/world.ts');
+    const w = new World(levelFromAscii(new MapBuilder(20, 10).put(3, 8, 'P').rows()));
+    expect(w.events.capacity).toBe(256);
+  });
+
+  test('ability shrine: the first overlap unlocks Spirit Launch (AbilityUnlocked once); it persists through death; reset clears it', async () => {
+    const { Ability } = await import('../../src/contracts/sim.ts');
+    const rows = new MapBuilder(40, 12).put(3, 10, 'P').put(10, 10, 'A').put(20, 10, 'A').fill(30, 11, 34, 11, '^').rows();
+    const rig = new WorldRig(rows);
+    const w = rig.world;
+    expect(w.level.abilityShrines).toHaveLength(2);
+    expect(w.launch.unlocked).toBe(false);
+    rig.until((x) => x.launch.unlocked, right, 200);
+    const s = w.level.abilityShrines[0];
+    if (!s) throw new Error('fixture');
+    const ev = rig.eventsOf(SimEventType.AbilityUnlocked);
+    expect(ev).toEqual([{ type: SimEventType.AbilityUnlocked, tick: w.tick, x: s.x + s.w / 2, y: s.y + s.h, a: Ability.Launch, b: 0, id: s.id }]);
+    // Past the second shrine and into the thorns: no second event; the unlock survives the death.
+    rig.until((x) => !x.player.alive, right, 400);
+    rig.run(wt.dyingTicks + 1);
+    expect(w.player.alive).toBe(true);
+    expect(w.launch.unlocked).toBe(true);
+    expect(rig.eventsOf(SimEventType.AbilityUnlocked)).toHaveLength(1);
+    w.reset();
+    expect(w.launch.unlocked).toBe(false);
+    // unlock() is the silent test hook.
+    w.unlock(Ability.Launch);
+    expect(w.launch.unlocked).toBe(true);
+    rig.drain();
+    expect(rig.eventsOf(SimEventType.AbilityUnlocked)).toHaveLength(1);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { TileKind } from '../../src/contracts/level.ts';
+import { TileKind, type CrawlerDef } from '../../src/contracts/level.ts';
 import { tileAt } from '../../src/core/tiles.ts';
 import { DEFAULT_WORLD_TUNING } from '../../src/sim/tuning.ts';
 import { createFakeSimView, levelFromAscii } from './fixtures.ts';
@@ -37,7 +37,7 @@ describe('levelFromAscii', () => {
     expect(lv.orbs).toEqual([{ id: 0, x: 72, y: 72, value: 1 }]);
     expect(lv.checkpoints).toEqual([{ id: 0, x: 48, y: 48, w: 48, h: 96 }]);
     expect(lv.goal).toEqual({ x: 8 * 48, y: 0, w: 96, h: 96 });
-    const e = lv.enemies[0];
+    const e = lv.enemies[0] as CrawlerDef | undefined;
     expect(lv.enemies).toHaveLength(1);
     expect(e?.y).toBe(144);
     expect(e?.patrolMinX).toBe(5 * 48 + DEFAULT_WORLD_TUNING.enemyWidth / 2);

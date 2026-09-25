@@ -65,6 +65,29 @@ const CSS = /* css */ `
   border: 1px solid rgba(63, 224, 197, 0.35); border-radius: 2px; color: #bff6ff;
 }
 
+.sw-sound {
+  position: absolute; top: 52px; left: 28px; font-size: 10px; letter-spacing: 0.24em; color: rgba(216, 243, 255, 0.6);
+  text-shadow: 0 0 8px rgba(2, 8, 16, 0.9);
+}
+
+.sw-toast {
+  position: absolute; left: 50%; top: 13%; transform: translateX(-50%); display: flex; flex-direction: column;
+  align-items: center; gap: 12px; padding: 18px 30px 16px; min-width: 280px; text-align: center;
+  box-shadow: inset 0 1px 0 rgba(191, 246, 255, 0.08), 0 0 40px rgba(191, 246, 255, 0.12), 0 18px 60px rgba(0, 4, 10, 0.55);
+}
+.sw-toast .sw-hairline { width: 100%; }
+.sw-toast-title {
+  font-weight: 300; font-size: 18px; letter-spacing: 0.36em; margin-right: -0.36em; text-transform: uppercase; color: #eafcff;
+  text-shadow: 0 0 14px rgba(191, 246, 255, 0.7), 0 0 34px rgba(63, 224, 197, 0.3);
+}
+.sw-toast-body { font-size: 12px; letter-spacing: 0.06em; color: rgba(216, 243, 255, 0.78); }
+.sw-toast-keys { display: flex; gap: 22px; font-size: 10px; }
+.sw-toast-group { display: flex; gap: 6px; }
+.sw-toast kbd {
+  font-family: inherit; font-size: 10px; letter-spacing: 0.12em; padding: 2px 7px;
+  border: 1px solid rgba(191, 246, 255, 0.45); border-radius: 2px; color: #eafcff;
+}
+
 .sw-card { min-width: 300px; padding: 28px 34px 26px; display: flex; flex-direction: column; gap: 16px; }
 .sw-card h2 {
   margin: 0; font-weight: 300; font-size: 20px; letter-spacing: 0.3em; text-transform: uppercase; color: #eafcff;

@@ -147,7 +147,7 @@ describe('terrain core shading (terrainShading.ts, mirrored by terrain.glsl.ts)'
       expect(src).toContain(`step(${1 - TERRAIN_GLINT_DENSITY}, gh)`);
       expect(src).toContain('(1.0 + 0.5 * (sn - 0.5) + 0.4 * (mottle - 0.5))');
       expect(src).toContain('(0.2 + 0.8 * smoothstep(-0.2, 0.7, -facing))');
-      expect(src).toContain('vec3 terrainColor(float depth, vec2 world, float lit, vec3 spill)');
+      expect(src).toContain('vec3 terrainColor(float depth, vec2 world, float lit, vec3 spill, vec2 stroke, float strokeAA)');
     }
   });
 });

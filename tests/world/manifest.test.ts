@@ -2,10 +2,11 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
 import { ManifestError, loadManifest, parseManifest } from '../../src/assets/manifest.ts';
 import { MAX_LAYER_PARALLAX, MIN_LAYER_PARALLAX_GAP } from '../../src/config.ts';
-import type { LayerDef, LayerManifest, PlateLayerDef } from '../../src/contracts/assets.ts';
+import type { KitLayerDef, LayerDef, LayerManifest, PlateLayerDef } from '../../src/contracts/assets.ts';
 
 const read = (name: string): unknown => JSON.parse(readFileSync(new URL(`../../public/layers/${name}`, import.meta.url), 'utf8'));
-const forest = read('forest.manifest.json') as LayerManifest;
+/** The hand-edited base manifest (§5.8); the mutation cases below index its layer list. */
+const forest = read('forest.base.manifest.json') as LayerManifest;
 const clone = (): LayerManifest => structuredClone(forest);
 /** Assign an arbitrary (possibly invalid) value to a field. */
 const set = (o: object, key: string, value: unknown): void => {
@@ -25,7 +26,7 @@ function expectError(json: unknown, path: string): void {
 }
 
 describe('parseManifest', () => {
-  test('the shipped forest manifest is valid and matches the art direction', () => {
+  test('the base manifest is valid and matches the art direction', () => {
     const m = parseManifest(forest);
     expect(m.area).toBe('forest');
     expect(m.textureBudgetMB).toEqual({ high: 96, medium: 64, low: 48 });
@@ -36,6 +37,19 @@ describe('parseManifest', () => {
     // Foreground layers come last and are the only kit layers beyond parallax 1.
     const kits = m.layers.filter((l) => l.kind === 'kit');
     expect(kits.filter((l) => l.parallax[0] > 1)).toHaveLength(2);
+    expect(m.layers.filter((l) => l.kind === 'plate')).toHaveLength(0);
+  });
+
+  test('the generated manifest is the base with plate layers inserted in parallax order', () => {
+    const m = parseManifest(read('forest.manifest.json'));
+    const base = parseManifest(forest);
+    const replaced = Object.values(m.replaced ?? {});
+    expect(m.layers.filter((l) => l.kind !== 'plate')).toEqual(base.layers.filter((l) => !replaced.some((r) => r.id === l.id)));
+    for (let i = 1; i < m.layers.length; i++) expect((m.layers[i] as LayerDef).parallax[0]).toBeGreaterThanOrEqual((m.layers[i - 1] as LayerDef).parallax[0]);
+    for (const l of m.layers) {
+      if (l.kind !== 'plate') continue;
+      for (const c of l.chunks) for (const f of ['ktx2', 'webp', 'png'] as const) expect(c.source[f]).toMatch(/\?v=[0-9a-f]{8}$/);
+    }
   });
 
   test('the plates manifest (when baked) is valid and has exactly one plate layer', () => {
@@ -153,6 +167,83 @@ describe('parseManifest', () => {
       const p = plate();
       p.chunks = [];
       expectError(withPlate(p), 'layers[4].chunks');
+    });
+
+    test('texture paths may carry a cache-buster: the extension is checked on the pathname', () => {
+      const p = plate();
+      chunk(p, 0).source = { webp: 'plates/a.webp?v=0123abcd', png: 'plates/a.png?v=0123abcd' };
+      expect(() => parseManifest(withPlate(p))).not.toThrow();
+      chunk(p, 0).source = { webp: 'plates/a.png?v=x.webp' };
+      expectError(withPlate(p), 'layers[4].chunks[0].source.webp');
+    });
+
+    test('split-hull rects: integer [x, y, w, h] quadruples inside the chunk', () => {
+      const p = plate();
+      chunk(p, 0).core = [0, 0, 64, 16];
+      chunk(p, 0).soft = [0, 16, 64, 16, 10, 0, 4, 4];
+      expect(() => parseManifest(withPlate(p))).not.toThrow();
+      chunk(p, 0).soft = [0, 16, 64];
+      expectError(withPlate(p), 'layers[4].chunks[0].soft');
+      chunk(p, 0).soft = [0, 16, 65, 16];
+      expectError(withPlate(p), 'layers[4].chunks[0].soft[2]');
+      chunk(p, 0).soft = [0, 16, 0, 16];
+      expectError(withPlate(p), 'layers[4].chunks[0].soft[2]');
+      chunk(p, 0).soft = [0.5, 16, 8, 8];
+      expectError(withPlate(p), 'layers[4].chunks[0].soft[0]');
+    });
+
+    test('chunk hashes are lower-case hex', () => {
+      const p = plate();
+      chunk(p, 0).hash = '0123456789abcdef';
+      expect(() => parseManifest(withPlate(p))).not.toThrow();
+      chunk(p, 0).hash = 'XYZ';
+      expectError(withPlate(p), 'layers[4].chunks[0].hash');
+    });
+  });
+
+  describe('replaced layers (generated manifests)', () => {
+    const plateAt = (id: string, fx: number): PlateLayerDef => ({
+      id, kind: 'plate', parallax: [fx, fx], minQuality: 'low', tint: '#ffffff', fog: 0.2, fogColor: '#1f4a63', desaturate: 0,
+      origin: [0, 0], chunkSize: [64, 32], texelScale: 2, chunks: [{ col: 0, row: 0, source: { webp: 'plates/a.webp' } }],
+    });
+    /** The base with L3 swapped for a plate at L3's parallax, and L3 recorded as replaced. */
+    const swapped = (): LayerManifest & { replaced: Record<string, LayerDef> } => {
+      const m = clone();
+      const i = m.layers.findIndex((l) => l.id === 'L3-misty-trunks');
+      const l3 = m.layers[i] as KitLayerDef;
+      m.layers[i] = plateAt('P', l3.parallax[0]);
+      return { ...m, replaced: { P: l3 } };
+    };
+
+    test('the replaced layer is available to the runtime by plate id, and copies of the manifest keep it', () => {
+      const m = parseManifest(swapped());
+      expect(m.replaced?.P?.id).toBe('L3-misty-trunks');
+      expect({ ...m, layers: [...m.layers] }.replaced?.P?.id).toBe('L3-misty-trunks');
+      expect(parseManifest(forest).replaced).toBeUndefined();
+      expect(parseManifest({ ...swapped(), replaced: {} }).replaced).toBeUndefined();
+    });
+
+    test('rejects a replacement for an unknown plate, one still in the list, and one replaced twice', () => {
+      const a = swapped();
+      a.replaced = { Q: a.replaced.P as LayerDef };
+      expectError(a, 'replaced.Q');
+      const b = swapped();
+      b.replaced = { P: b.layers[1] as LayerDef };
+      expectError(b, 'replaced.P.id');
+      const c = swapped();
+      const i = c.layers.findIndex((l) => l.id === 'L4-mid-forest');
+      c.layers.splice(i, 0, plateAt('P2', 0.34));
+      c.replaced = { P: c.replaced.P as LayerDef, P2: c.replaced.P as LayerDef };
+      expectError(c, 'replaced.P2.id');
+    });
+
+    test('rejects a restore that would break the depth gaps (any failed subset of plates must stay valid)', () => {
+      const m = swapped();
+      // A second plate 0.01 behind L3's slot: fine while P draws, too close once P fails and L3 returns.
+      const i = m.layers.findIndex((l) => l.id === 'P');
+      m.layers.splice(i, 0, plateAt('Q', 0.265));
+      m.layers[i + 1] = { ...(m.layers[i + 1] as PlateLayerDef), parallax: [0.29, 0.29] };
+      expectError(m, 'replaced.P');
     });
   });
 });

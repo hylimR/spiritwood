@@ -21,6 +21,12 @@ export interface KitShadeParams {
   mist: number;
   /** Colour of the height mist (defaults to fogColor): lets a layer's base dissolve into a different mist. */
   mistColor?: RGB;
+  /**
+   * Stroke gain (default 1): R's deviation from 0.5 is multiplied by it. The painterly bake stores an
+   * element's own detail divided by the gain of the layers that show it (StrokeOptions.gain), so the
+   * detail comes back unchanged and only the brush strokes gain.
+   */
+  strokeGain?: number;
 }
 
 export const KIT_MODE = {
@@ -62,7 +68,7 @@ export function shadeKit(
   const lum = tex[0] as number;
   const rimMask = tex[1] as number;
   const em = tex[2] as number;
-  const k = (0.5 + lum) * (0.8 + 0.4 * shade);
+  const k = (1 + (p.strokeGain ?? 1) * (lum - 0.5)) * (0.8 + 0.4 * shade);
   const rim = rimMask * p.rim * KIT_RIM_SCALE;
   let r = p.tint[0] * k + p.rimColor[0] * rim;
   let g = p.tint[1] * k + p.rimColor[1] * rim;

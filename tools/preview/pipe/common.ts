@@ -59,6 +59,27 @@ export function drawRgba8(dst: Image, src: Uint8Array, sw: number, sh: number, o
   }
 }
 
+/**
+ * Composite premultiplied RGBA8 pixels (colour may exceed alpha: emission adds) over `dst` at (ox, oy),
+ * optionally scaled up (nearest). Reads a `sw`-wide source starting at (sx, sy), `cw × ch` texels.
+ */
+export function drawPremultiplied8(
+  dst: Image, src: Uint8Array, sw: number, sx: number, sy: number, cw: number, ch: number, ox: number, oy: number, scale = 1,
+): void {
+  for (let y = 0; y < ch * scale; y++) {
+    for (let x = 0; x < cw * scale; x++) {
+      const dx = ox + x;
+      const dy = oy + y;
+      if (dx < 0 || dy < 0 || dx >= dst.w || dy >= dst.h) continue;
+      const s = ((sy + Math.floor(y / scale)) * sw + sx + Math.floor(x / scale)) * 4;
+      const a = (src[s + 3] as number) / 255;
+      const o = (dy * dst.w + dx) * 4;
+      for (let c = 0; c < 3; c++) dst.data[o + c] = (dst.data[o + c] as number) * (1 - a) + (src[s + c] as number) / 255;
+      dst.data[o + 3] = Math.min(1, (dst.data[o + 3] as number) + a * (1 - (dst.data[o + 3] as number)));
+    }
+  }
+}
+
 export function savePng(img: Image, path: string): void {
   const out = new Uint8Array(img.w * img.h * 4);
   for (let i = 0; i < out.length; i++) out[i] = Math.max(0, Math.min(255, Math.round((img.data[i] as number) * 255)));

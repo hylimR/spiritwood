@@ -1,7 +1,9 @@
 import { PALETTE, TILE } from '../../src/config.ts';
-import { AREA_GRADES, TileKind, type LevelData } from '../../src/contracts/level.ts';
+import { AREA_GRADES, TileKind, type LevelData, type SpitterDef } from '../../src/contracts/level.ts';
 import { hashString } from '../../src/core/rng.ts';
-import { LDTK_COLLISION_LAYER, LDTK_DEFAULTS, LDTK_ENTITY } from '../../src/level/loader.ts';
+import {
+  LDTK_ABILITY, LDTK_COLLISION_LAYER, LDTK_DEFAULTS, LDTK_ENTITY, LDTK_SPITTER_AIM, spitterVelocity,
+} from '../../src/level/loader.ts';
 import { DEFAULT_TUNING, DEFAULT_WORLD_TUNING } from '../../src/sim/tuning.ts';
 
 /**
@@ -40,16 +42,53 @@ const UID = {
   fieldZoneBlend: 26,
   fieldLevelSeed: 30,
   level: 40,
+  enumSpitterAim: 41,
+  enumAbility: 42,
+  Spitter: 43,
+  AbilityShrine: 44,
+  fieldSpitterAim: 45,
+  fieldSpitterAngle: 46,
+  fieldSpitterSpeed: 47,
+  fieldSpitterRange: 48,
+  fieldSpitterPeriod: 49,
+  fieldSpitterPhase: 50,
+  fieldSpitterFlight: 51,
+  fieldShrineAbility: 52,
 } as const;
-const NEXT_UID = 41;
+const NEXT_UID = 53;
 
 const GRADE_COLORS: Readonly<Record<string, number>> = {
   glade: PALETTE.floraGlow,
   gully: PALETTE.thorns,
   rootwell: PALETTE.fogFar,
   canopy: PALETTE.spiritGlow,
+  veil: PALETTE.skyHorizon,
   shrine: PALETTE.warmAccent,
 };
+
+/** The project's LDtk enums: identifier, uid and value ids (with editor colours). */
+interface EnumSpec {
+  identifier: string;
+  uid: number;
+  values: readonly { id: string; color: number }[];
+}
+
+const ENUMS = {
+  AreaGrade: {
+    identifier: 'AreaGrade', uid: UID.enumAreaGrade, values: AREA_GRADES.map((g) => ({ id: g, color: GRADE_COLORS[g] ?? 0 })),
+  },
+  SpitterAim: {
+    identifier: 'SpitterAim', uid: UID.enumSpitterAim,
+    values: [{ id: 'Player', color: PALETTE.thorns }, { id: 'Fixed', color: PALETTE.warmAccent }],
+  },
+  Ability: { identifier: 'Ability', uid: UID.enumAbility, values: [{ id: 'Launch', color: PALETTE.spiritGlow }] },
+} as const satisfies Record<string, EnumSpec>;
+
+/** The LDtk enum id of a LevelData enum value (`LDTK_SPITTER_AIM` / `LDTK_ABILITY` inverted). */
+function enumId(table: Readonly<Record<string, string>>, value: string): string {
+  for (const id of Object.keys(table)) if (table[id] === value) return id;
+  throw new Error(`no LDtk enum value for "${value}"`);
+}
 
 function hex(color: number): string {
   return `#${color.toString(16).padStart(6, '0').toUpperCase()}`;
@@ -63,31 +102,36 @@ export function iidFor(key: string): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${variant}${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 
-type FieldKind = 'Int' | 'Float' | 'AreaGrade';
+type FieldKind = 'Int' | 'Float' | 'Enum';
 
 interface FieldSpec {
   identifier: string;
   uid: number;
   kind: FieldKind;
+  /** The enum of an Enum field. */
+  enum?: EnumSpec;
   doc: string;
-  defaultValue: number | null;
+  /** null = no default (an Enum field without a default can be null). */
+  defaultValue: number | string | null;
   min?: number;
   max?: number;
 }
 
-function fieldTypes(kind: FieldKind): { __type: string; type: string } {
-  if (kind === 'Int') return { __type: 'Int', type: 'F_Int' };
-  if (kind === 'Float') return { __type: 'Float', type: 'F_Float' };
-  return { __type: 'LocalEnum.AreaGrade', type: `F_Enum(${UID.enumAreaGrade})` };
+function fieldTypes(f: FieldSpec): { __type: string; type: string } {
+  if (f.kind === 'Int') return { __type: 'Int', type: 'F_Int' };
+  if (f.kind === 'Float') return { __type: 'Float', type: 'F_Float' };
+  const e = f.enum;
+  if (!e) throw new Error(`enum field ${f.identifier} names no enum`);
+  return { __type: `LocalEnum.${e.identifier}`, type: `F_Enum(${e.uid})` };
 }
 
 function editorValue(kind: FieldKind, value: number | string): JsonObject {
-  if (kind === 'AreaGrade') return { id: 'V_String', params: [value] };
+  if (kind === 'Enum') return { id: 'V_String', params: [value] };
   return { id: kind === 'Int' ? 'V_Int' : 'V_Float', params: [value] };
 }
 
 function fieldDef(f: FieldSpec): JsonObject {
-  const t = fieldTypes(f.kind);
+  const t = fieldTypes(f);
   return {
     identifier: f.identifier,
     doc: f.doc,
@@ -95,7 +139,7 @@ function fieldDef(f: FieldSpec): JsonObject {
     uid: f.uid,
     type: t.type,
     isArray: false,
-    canBeNull: f.kind === 'AreaGrade',
+    canBeNull: f.kind === 'Enum' && f.defaultValue === null,
     arrayMinLength: null,
     arrayMaxLength: null,
     editorDisplayMode: 'NameAndValue',
@@ -130,7 +174,7 @@ function fieldDef(f: FieldSpec): JsonObject {
 function fieldInstance(f: FieldSpec, value: number | string): JsonObject {
   return {
     __identifier: f.identifier,
-    __type: fieldTypes(f.kind).__type,
+    __type: fieldTypes(f).__type,
     __value: value,
     __tile: null,
     defUid: f.uid,
@@ -156,12 +200,48 @@ const FIELDS = {
     identifier: 'intensity', uid: UID.fieldShaftIntensity, kind: 'Float', doc: 'Brightness 0..1.',
     defaultValue: LDTK_DEFAULTS.shaftIntensity, min: 0, max: 1,
   },
-  zoneGrade: { identifier: 'grade', uid: UID.fieldZoneGrade, kind: 'AreaGrade', doc: 'Colour grade of this area.', defaultValue: null },
+  zoneGrade: {
+    identifier: 'grade', uid: UID.fieldZoneGrade, kind: 'Enum', enum: ENUMS.AreaGrade, doc: 'Colour grade of this area.', defaultValue: null,
+  },
   zoneBlend: {
     identifier: 'blend', uid: UID.fieldZoneBlend, kind: 'Int', doc: 'Cross-fade distance outside the rect (px).',
     defaultValue: LDTK_DEFAULTS.gradeBlendCells * TILE, min: 0,
   },
   levelSeed: { identifier: 'seed', uid: UID.fieldLevelSeed, kind: 'Int', doc: 'Seed for procedural placement tied to this level.', defaultValue: 0 },
+  spitterAim: {
+    identifier: 'aim', uid: UID.fieldSpitterAim, kind: 'Enum', enum: ENUMS.SpitterAim,
+    doc: 'Player: a ballistic shot onto the player (fires only on screen, with line of sight). Fixed: angleDeg and speed.',
+    defaultValue: enumId(LDTK_SPITTER_AIM, LDTK_DEFAULTS.spitterAim),
+  },
+  spitterAngle: {
+    identifier: 'angleDeg', uid: UID.fieldSpitterAngle, kind: 'Float',
+    doc: 'Fixed aim: degrees from +x turning toward screen-up (90 = straight up, 135 = up-left).',
+    defaultValue: LDTK_DEFAULTS.spitterAngleDeg, min: -180, max: 180,
+  },
+  spitterSpeed: {
+    identifier: 'speed', uid: UID.fieldSpitterSpeed, kind: 'Float', doc: 'Fixed aim: seed launch speed (px/s).',
+    defaultValue: DEFAULT_WORLD_TUNING.spitterDefaultSpeed, min: 0, max: DEFAULT_WORLD_TUNING.seedMaxSpeed,
+  },
+  spitterRange: {
+    identifier: 'range', uid: UID.fieldSpitterRange, kind: 'Float', doc: 'Active while the player centre is this close to the muzzle (px).',
+    defaultValue: DEFAULT_WORLD_TUNING.spitterDefaultRange, min: 0,
+  },
+  spitterPeriod: {
+    identifier: 'period', uid: UID.fieldSpitterPeriod, kind: 'Int', doc: 'Ticks between shots (60 per second).',
+    defaultValue: DEFAULT_WORLD_TUNING.spitterDefaultPeriod, min: 1,
+  },
+  spitterPhase: {
+    identifier: 'phase', uid: UID.fieldSpitterPhase, kind: 'Int', doc: 'Ticks of cooldown before the first windup on activation (mod period).',
+    defaultValue: LDTK_DEFAULTS.spitterPhase,
+  },
+  spitterFlight: {
+    identifier: 'flightTicks', uid: UID.fieldSpitterFlight, kind: 'Int', doc: 'Player aim: seed flight time to the aim point (ticks).',
+    defaultValue: DEFAULT_WORLD_TUNING.spitterDefaultFlightTicks, min: 1,
+  },
+  shrineAbility: {
+    identifier: 'ability', uid: UID.fieldShrineAbility, kind: 'Enum', enum: ENUMS.Ability, doc: 'The ability touching the shrine unlocks.',
+    defaultValue: enumId(LDTK_ABILITY, LDTK_DEFAULTS.ability),
+  },
 } as const satisfies Record<string, FieldSpec>;
 
 interface EntitySpec {
@@ -228,7 +308,34 @@ const ENTITIES: readonly EntitySpec[] = [
     pivotY: 1, color: PALETTE.floraGlow, renderMode: 'Ellipse', hollow: false, maxCount: 0, doc: 'Glowing flora decor hint (feet).',
     fields: [],
   },
+  {
+    identifier: LDTK_ENTITY.Spitter, uid: UID.Spitter, width: DEFAULT_WORLD_TUNING.spitterWidth,
+    height: DEFAULT_WORLD_TUNING.spitterHeight, resizableX: false, resizableY: false, pivotX: 0.5, pivotY: 1, color: PALETTE.thorns,
+    renderMode: 'Rectangle', hollow: false, maxCount: 0,
+    doc: 'Thorn Spitter rooted on a floor tile (feet at the pivot). Crawler Enemies come first in enemy ids, then Spitters.',
+    fields: [
+      FIELDS.spitterAim, FIELDS.spitterAngle, FIELDS.spitterSpeed, FIELDS.spitterRange, FIELDS.spitterPeriod, FIELDS.spitterPhase,
+      FIELDS.spitterFlight,
+    ],
+  },
+  {
+    identifier: LDTK_ENTITY.AbilityShrine, uid: UID.AbilityShrine, width: 48, height: 96, resizableX: true, resizableY: true,
+    pivotX: 0, pivotY: 0, color: PALETTE.spiritGlow, renderMode: 'Rectangle', hollow: true, maxCount: 0,
+    doc: 'Touching the rect unlocks the ability for the rest of the run.', fields: [FIELDS.shrineAbility],
+  },
 ];
+
+function enumDef(e: EnumSpec): JsonObject {
+  return {
+    identifier: e.identifier,
+    uid: e.uid,
+    values: e.values.map((v) => ({ id: v.id, tileRect: null, color: v.color })),
+    iconTilesetUid: null,
+    externalRelPath: null,
+    externalFileChecksum: null,
+    tags: [],
+  };
+}
 
 function entityDef(e: EntitySpec): JsonObject {
   return {
@@ -345,6 +452,22 @@ function spec(identifier: string): EntitySpec {
   return s;
 }
 
+/**
+ * The `angleDeg` / `speed` fields of a spitter: recovered from fixedVx/fixedVy for fixed aim (rounded
+ * to 1e-6, so a map written with such values reproduces the exact velocity), the defaults otherwise.
+ */
+function spitterFields(e: SpitterDef): { angleDeg: number; speed: number } {
+  if (e.aim === 'player') return { angleDeg: LDTK_DEFAULTS.spitterAngleDeg, speed: DEFAULT_WORLD_TUNING.spitterDefaultSpeed };
+  const round = (v: number): number => Math.round(v * 1e6) / 1e6;
+  const speed = round(Math.hypot(e.fixedVx, e.fixedVy));
+  const angleDeg = speed === 0 ? LDTK_DEFAULTS.spitterAngleDeg : round((Math.atan2(-e.fixedVy, e.fixedVx) * 180) / Math.PI) + 0;
+  const v = spitterVelocity(angleDeg, speed);
+  if (v.vx !== e.fixedVx || v.vy !== e.fixedVy) {
+    throw new Error(`spitter ${e.id}: velocity (${e.fixedVx}, ${e.fixedVy}) is not angleDeg/speed with 6 decimals`);
+  }
+  return { angleDeg, speed };
+}
+
 function entityInstances(level: LevelData): JsonObject[] {
   const out: JsonObject[] = [];
   const P = spec(LDTK_ENTITY.PlayerStart);
@@ -365,10 +488,29 @@ function entityInstances(level: LevelData): JsonObject[] {
   const E = spec(LDTK_ENTITY.Enemy);
   const half = DEFAULT_WORLD_TUNING.enemyWidth / 2;
   for (const e of level.enemies) {
+    if (e.kind !== 'gloomcrawler') continue;
     const left = e.patrolMinX - half;
     const width = e.patrolMaxX + half - left;
     if (e.x !== left + width / 2) throw new Error(`enemy ${e.id}: LDtk spawns enemies at the patrol rect centre`);
     out.push(entityInstance(E, e.id, left, e.y - E.height, width, E.height, [fieldInstance(FIELDS.enemySpeed, e.speed)]));
+  }
+  const SP = spec(LDTK_ENTITY.Spitter);
+  const crawlers = level.enemies.filter((x) => x.kind === 'gloomcrawler').length;
+  let spitters = 0;
+  for (const e of level.enemies) {
+    if (e.kind !== 'thornSpitter') continue;
+    if (e.id !== crawlers + spitters) throw new Error(`enemy ${e.id}: LevelData lists every crawler before the spitters`);
+    const { angleDeg, speed } = spitterFields(e);
+    out.push(entityInstance(SP, spitters++, e.x - SP.width / 2, e.y - SP.height, SP.width, SP.height, [
+      fieldInstance(FIELDS.spitterAim, enumId(LDTK_SPITTER_AIM, e.aim)), fieldInstance(FIELDS.spitterAngle, angleDeg),
+      fieldInstance(FIELDS.spitterSpeed, speed), fieldInstance(FIELDS.spitterRange, e.range),
+      fieldInstance(FIELDS.spitterPeriod, e.period), fieldInstance(FIELDS.spitterPhase, e.phase),
+      fieldInstance(FIELDS.spitterFlight, e.flightTicks),
+    ]));
+  }
+  const A = spec(LDTK_ENTITY.AbilityShrine);
+  for (const s of level.abilityShrines) {
+    out.push(entityInstance(A, s.id, s.x, s.y, s.w, s.h, [fieldInstance(FIELDS.shrineAbility, enumId(LDTK_ABILITY, s.ability))]));
   }
   const O = spec(LDTK_ENTITY.Orb);
   for (const o of level.orbs) {
@@ -467,15 +609,7 @@ export function buildLdtkProject(level: LevelData): JsonObject {
       ],
       entities: ENTITIES.map(entityDef),
       tilesets: [],
-      enums: [{
-        identifier: 'AreaGrade',
-        uid: UID.enumAreaGrade,
-        values: AREA_GRADES.map((g) => ({ id: g, tileRect: null, color: GRADE_COLORS[g] ?? 0 })),
-        iconTilesetUid: null,
-        externalRelPath: null,
-        externalFileChecksum: null,
-        tags: [],
-      }],
+      enums: [ENUMS.AreaGrade, ENUMS.SpitterAim, ENUMS.Ability].map(enumDef),
       externalEnums: [],
       levelFields: [fieldDef(FIELDS.levelSeed)],
     },
