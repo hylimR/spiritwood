@@ -1,4 +1,8 @@
+import { MAX_ASPECT, VIEW_H } from '../../config.ts';
 import type { Rng } from '../../core/rng.ts';
+import { QUALITY_PRESETS } from '../../settings/quality.ts';
+import { renderScaleCap } from '../post/viewport.ts';
+import { STROKE, strokeWidthTexels, type StrokeOptions } from './brush.ts';
 import { ElementRaster, Mat, type FinalizeOptions } from './raster.ts';
 import {
   broadTree, canopyCeiling, clump, coniferTree, LEAFY, midBirchPair, midCrown, nearTrunk, midConiferTrunk, midOakTrunk, midWillowTrunk, slenderTree, snagTree,
@@ -70,6 +74,7 @@ function frond(r: ElementRaster, rng: Rng, bx: number, by: number, ang: number, 
   const ey = by + Math.sin(ang) * len + droop;
   const cx = bx + Math.cos(ang) * len * 0.55;
   const cy = by + Math.sin(ang) * len * 0.55 - droop * 0.2;
+  r.frameLine(bx, by, ex, ey);
   r.curve(bx, by, cx, cy, ex, ey, ribR, ribR * 0.4, mat, 0, 8);
   const n = Math.max(4, Math.round(len / (leaf * 0.9)));
   for (let i = 1; i < n; i++) {
@@ -83,6 +88,7 @@ function frond(r: ElementRaster, rng: Rng, bx: number, by: number, ang: number, 
     r.leaf(px, py, dir - 1.05, size, size * 0.26, mat);
     r.leaf(px, py, dir + 1.05, size, size * 0.26, mat);
   }
+  r.releaseFrame();
 }
 
 /** Hanging strand with alternating small leaves (vines, moss). */
@@ -91,16 +97,19 @@ function strand(r: ElementRaster, rng: Rng, x: number, y: number, len: number, s
   const ey = y + len;
   const cx = x + rng.range(-sway, sway) * 1.6;
   const cy = y + len * 0.5;
+  r.frameLine(x, y, ex, ey);
   r.curve(x, y, cx, cy, ex, ey, r0, r1, mat, 0, 10);
-  if (leaf <= 0) return;
-  const n = Math.round(len / (leaf * 0.85));
-  for (let i = 1; i < n; i++) {
-    const t = i / n + rng.range(-0.02, 0.02);
-    ElementRaster.bezier(x, y, cx, cy, ex, ey, t, P);
-    const side = i % 2 === 0 ? 1 : -1;
-    const size = leaf * rng.range(0.7, 1.15) * (1 - t * 0.35);
-    r.leaf(P.x, P.y, Math.PI / 2 + side * rng.range(0.5, 1.0), size, size * 0.32, mat);
+  if (leaf > 0) {
+    const n = Math.round(len / (leaf * 0.85));
+    for (let i = 1; i < n; i++) {
+      const t = i / n + rng.range(-0.02, 0.02);
+      ElementRaster.bezier(x, y, cx, cy, ex, ey, t, P);
+      const side = i % 2 === 0 ? 1 : -1;
+      const size = leaf * rng.range(0.7, 1.15) * (1 - t * 0.35);
+      r.leaf(P.x, P.y, Math.PI / 2 + side * rng.range(0.5, 1.0), size, size * 0.32, mat);
+    }
   }
+  r.releaseFrame();
 }
 
 function mushroom(r: ElementRaster, rng: Rng, x: number, groundY: number, h: number, capR: number, lean: number, glow: number): void {
@@ -165,7 +174,90 @@ function midTrunkSpec(key: string, fn: TrunkFn, w: number, variants = 1): Elemen
   };
 }
 
-export const ELEMENT_SPECS: readonly ElementSpec[] = [
+/**
+ * Painterly strokes (ARCHITECTURE.md §5.5): the finest stroke width per category, in layer units at
+ * the element's own scale (converted with its unitsPerTexel). Far planes take broad strokes (few
+ * per tree), near ones finer; decor is small and seen up close.
+ */
+export const STROKE_UNITS: Readonly<Record<KitCategory, number>> = {
+  farTree: 10, farCanopy: 10, midTrunk: 8, midCrown: 8, canopyTop: 8, midBush: 8, groundEdge: 8, vine: 8, fern: 8, glowFlower: 8,
+  nearTrunk: 9, rootArch: 9, mushrooms: 7, rock: 8, fgBottom: 10, fgTop: 10, fgVine: 10, grass: 6, flower: 6, shroom: 6,
+  floraBig: 7, lantern: 6, bramble: 6, tendril: 6, bridge: 7, solid: 8,
+};
+
+/**
+ * Smallest instance scale each category is drawn at (layer scale × recipe stream range; decor from
+ * src/render/fx/decorPlacement.ts: min |sx|, |sy|, and for bridge logs |sy|, since they stretch only
+ * along their strokes), so strokes stay ≥ 2 px at the minimum render scale. tests/world/strokes.test.ts
+ * checks them against the manifest's recipes and against decor placed by placeDecor.
+ */
+export const MIN_INSTANCE_SCALE: Readonly<Record<KitCategory, number>> = {
+  farTree: 0.36, farCanopy: 0.25, midTrunk: 0.62, midCrown: 0.62, canopyTop: 0.55, midBush: 0.49, groundEdge: 0.55, vine: 0.49,
+  fern: 0.55, glowFlower: 0.55, nearTrunk: 0.85, rootArch: 0.76, mushrooms: 0.85, rock: 0.49, fgBottom: 0.42, fgTop: 0.42,
+  fgVine: 0.33, grass: 0.6, flower: 0.85, shroom: 0.8, floraBig: 0.95, lantern: 1, bramble: 0.45, tendril: 0.7, bridge: 0.9,
+  solid: 1,
+};
+
+/**
+ * The fewest screen pixels per layer unit the game renders at: every quality preset at its dynamic-
+ * resolution floor (minRenderScale) on the widest supported canvas (MAX_ASPECT), large enough that the
+ * preset's pixel budget caps its render scale (a bigger canvas renders the same pixels; a smaller one
+ * is a smaller window than the preset is sized for). Low: 0.388 px/u. (The camera never zooms out.)
+ */
+export function minPxPerUnit(): number {
+  let min = Infinity;
+  for (const q of Object.values(QUALITY_PRESETS)) {
+    // The first canvas height at which the pixel budget, not renderScale, sets the render scale.
+    const h = Math.ceil(Math.sqrt(q.maxRenderPixels / MAX_ASPECT) / q.renderScale) + 1;
+    const w = Math.round(h * MAX_ASPECT);
+    const maxScale = Math.min(q.renderScale, renderScaleCap(w, h, q.maxRenderPixels));
+    const minScale = Math.min(maxScale, maxScale * (q.minRenderScale / q.renderScale));
+    min = Math.min(min, (h * minScale) / VIEW_H);
+  }
+  return min;
+}
+
+/** minPxPerUnit(), evaluated once: strokes are ≥ STROKE.minPixels wide there. */
+export const MIN_PX_PER_UNIT = minPxPerUnit();
+
+/**
+ * Stroke gain of the mid and near planes (L4–L8), so their strokes read at 1:1 (art direction, M2 GPU
+ * review: 1.5× the gain-1 visibility). It multiplies the strokes only, not the dry-brush edges or the
+ * rim mask, so it sits above 1.5: the post-grade |Δ luma| on L4–L8 pixels comes out ×1.53.
+ */
+export const STROKE_NEAR_GAIN = 1.75;
+
+/**
+ * Stroke gain of the kit shading that shows each category (StrokeOptions.gain; the layer's
+ * `strokeGain`): the mid and near planes STROKE_NEAR_GAIN; the far planes (already fogged), the
+ * frame (dark, soft) and gameplay decor (its own shading, DECOR_SHADE) 1. Every category of one layer
+ * must share its value (kitShadeParams checks it).
+ */
+export const STROKE_GAIN: Readonly<Record<KitCategory, number>> = {
+  farTree: 1, farCanopy: 1, midTrunk: STROKE_NEAR_GAIN, midCrown: STROKE_NEAR_GAIN, canopyTop: STROKE_NEAR_GAIN,
+  midBush: STROKE_NEAR_GAIN, groundEdge: STROKE_NEAR_GAIN, vine: STROKE_NEAR_GAIN, fern: STROKE_NEAR_GAIN,
+  glowFlower: STROKE_NEAR_GAIN, nearTrunk: STROKE_NEAR_GAIN, rootArch: STROKE_NEAR_GAIN, mushrooms: STROKE_NEAR_GAIN,
+  rock: STROKE_NEAR_GAIN, fgBottom: 1, fgTop: 1, fgVine: 1, grass: 1, flower: 1, shroom: 1, floraBig: 1, lantern: 1,
+  bramble: 1, tendril: 1, bridge: 1, solid: STROKE_NEAR_GAIN,
+};
+
+/** The stroke options of an element spec (every kit element is painted; `solid` has no detail to stroke). */
+export function strokeOptionsFor(spec: Pick<ElementSpec, 'category' | 'unitsPerTexel'>): StrokeOptions {
+  return {
+    width: strokeWidthTexels(STROKE_UNITS[spec.category], spec.unitsPerTexel, MIN_INSTANCE_SCALE[spec.category], MIN_PX_PER_UNIT),
+    stretch: STROKE.stretch,
+    amount: STROKE.amount,
+    rim: STROKE.rim,
+    dry: STROKE.dry,
+    gain: STROKE_GAIN[spec.category],
+  };
+}
+
+function painted(specs: readonly ElementSpec[]): readonly ElementSpec[] {
+  return specs.map((s) => ({ ...s, finalize: { ...s.finalize, strokes: strokeOptionsFor(s) } }));
+}
+
+export const ELEMENT_SPECS: readonly ElementSpec[] = painted([
   farArchetype('farBroad', broadTree, 300, 400, 2),
   farArchetype('farWillow', willowTree, 280, 400, 2),
   farArchetype('farSlender', slenderTree, 150, 430, 1),
@@ -184,11 +276,13 @@ export const ELEMENT_SPECS: readonly ElementSpec[] = [
           const h = rng.range(60, 110);
           const hw = rng.range(10, 16);
           r.volume(x - 4, base - h * 0.6, h * 0.5, 0.14);
+          r.frameLine(x, base - h, x, base);
           for (let t = 0; t < 7; t++) {
             const u = t / 7;
             const y = base - h + u * h * 0.9;
             r.ellipse(x + rng.range(-2, 2), y + 6, 3 + hw * u * rng.range(0.7, 1.2), 3 + 3 * u, Mat.Needle, 2);
           }
+          r.releaseFrame();
           r.noVolume();
           r.capsule(x, base - h, x, base, 1.5, 3, Mat.Bark, 1);
           x += hw * rng.range(1.1, 1.8);
@@ -250,8 +344,10 @@ export const ELEMENT_SPECS: readonly ElementSpec[] = [
     draw(r, rng) {
       // An earth bank whose top edge is broken by low clumps, stones and grass blades.
       r.volume(r.w / 2, 30, r.w * 0.5, 0.06, -0.02);
+      r.strokeFrame('xy');
       r.capsule(64, 92, r.w - 64, 92, 36, 36, Mat.Stone, 10);
       r.ellipse(r.w / 2, r.h + 30, r.w * 0.42, 70, Mat.Stone, 10);
+      r.strokeFrame('shape');
       r.noVolume();
       let x = 60;
       while (x < r.w - 60) {
@@ -263,7 +359,9 @@ export const ELEMENT_SPECS: readonly ElementSpec[] = [
         } else if (k < 0.75) {
           const rx = rng.range(12, 20);
           r.volume(x - 4, 52, rx, 0.18);
+          r.strokeFrame('xy');
           r.ellipse(x, 60, rx, rx * 0.6, Mat.Stone, 4);
+          r.strokeFrame('shape');
           r.noVolume();
           x += rx * 1.6;
         } else {
@@ -334,6 +432,7 @@ export const ELEMENT_SPECS: readonly ElementSpec[] = [
     draw(r, rng, v) {
       const g = r.h - M - 4;
       const n = 2 + v;
+      r.strokeFrame('xy');
       for (let i = 0; i < n; i++) {
         const x0 = M + 20 + rng.range(0, 60);
         const x1 = r.w - M - 20 - rng.range(0, 60);
@@ -345,6 +444,7 @@ export const ELEMENT_SPECS: readonly ElementSpec[] = [
         r.curve(x, g - rng.range(20, 60), x + rng.range(-20, 20), g - 10, x + rng.range(-30, 30), g + 2, 3.5, 1.5, Mat.Bark, 2, 5);
       }
       r.ellipse(r.w / 2, g, r.w * 0.4, 8, Mat.Bark, 6);
+      r.strokeFrame('shape');
       mushroom(r, rng, r.w * 0.3, g - 2, 10, 7, 1, 0.9);
       mushroom(r, rng, r.w * 0.34, g - 2, 7, 5, -1, 0.9);
       r.haloAt(r.w * 0.32, g - 12, 30, 0.22);
@@ -371,6 +471,7 @@ export const ELEMENT_SPECS: readonly ElementSpec[] = [
     draw(r, rng) {
       const g = r.h - M - 2;
       const n = rng.int(1, 3);
+      r.strokeFrame('xy');
       for (let i = 0; i < n; i++) {
         const rx = i === 0 ? rng.range(40, 54) : rng.range(18, 30);
         const ry = rx * rng.range(0.55, 0.8);
@@ -379,6 +480,7 @@ export const ELEMENT_SPECS: readonly ElementSpec[] = [
         r.ellipse(x - rx * 0.1, g - ry * 1.35, rx * 0.72, ry * 0.22, Mat.Moss, 2);
       }
       r.ellipse(r.w / 2, g, 56, 6, Mat.Stone, 6);
+      r.strokeFrame('shape');
     },
   },
   {
@@ -585,8 +687,10 @@ export const ELEMENT_SPECS: readonly ElementSpec[] = [
       const x0 = M + 14;
       const x1 = r.w - M - 14;
       // Log body: flat walkable top at `top`, a slight belly below.
+      r.frameLine(x0, top + 9, x1, top + 9);
       r.curve(x0, top + 9, r.w / 2, top + 13, x1, top + 9, 9.5, 8.5, Mat.Wood, 2, 16);
       r.capsule(x0 + 6, top + 4, x1 - 6, top + 4, 4, 4, Mat.Wood, 4);
+      r.releaseFrame();
       for (let i = 0; i < 3; i++) {
         const x = rng.range(x0 + 30, x1 - 30);
         r.curve(x, top + 6, x + rng.range(-8, 8), top - 4, x + rng.range(-14, 14), top - rng.range(8, 14), 2.2, 0.8, Mat.Wood, 1, 4);
@@ -603,4 +707,4 @@ export const ELEMENT_SPECS: readonly ElementSpec[] = [
       r.ellipse(12, 12, 40, 40, Mat.Stone);
     },
   },
-];
+]);

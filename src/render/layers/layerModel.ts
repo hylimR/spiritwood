@@ -4,6 +4,7 @@ import type { LevelData } from '../../contracts/level.ts';
 import type { QualityLevel } from '../../contracts/quality.ts';
 import { hexToRgb, parseHexColor } from '../../core/color.ts';
 import type { KitMeta } from '../gen/kit.ts';
+import { STROKE_GAIN } from '../gen/kitElements.ts';
 import { depthForParallax } from '../util/camera.ts';
 import { buildChunks, type ChunkMeshes } from './kitMesh.ts';
 import { KIT_RIM_COLOR, type KitShadeParams } from './kitShading.ts';
@@ -34,6 +35,23 @@ export interface PreparedKitLayer {
   chunks: ChunkMeshes[];
 }
 
+/**
+ * The stroke gain a recipe's elements were baked for (STROKE_GAIN of every category it places, the
+ * ground fill's `solid` included): one value per layer, or the bake and the shading disagree.
+ */
+export function recipeStrokeGain(recipe: Recipe): number {
+  let gain = recipe.groundFill !== null ? STROKE_GAIN.solid : Number.NaN;
+  for (const s of recipe.streams) {
+    const cats = s.attach ? [...s.items.map((it) => it.category), s.attach.category] : s.items.map((it) => it.category);
+    for (const c of cats) {
+      const g = STROKE_GAIN[c];
+      if (Number.isNaN(gain)) gain = g;
+      else if (g !== gain) throw new Error(`recipe ${recipe.id}: ${c} is baked for stroke gain ${g}, the layer's other elements for ${gain}`);
+    }
+  }
+  return Number.isNaN(gain) ? 1 : gain;
+}
+
 export function kitShadeParams(def: KitLayerDef, recipe: Recipe, placement: LayerPlacement): KitShadeParams {
   const fogColor = hexToRgb(parseHexColor(def.fogColor));
   return {
@@ -48,6 +66,7 @@ export function kitShadeParams(def: KitLayerDef, recipe: Recipe, placement: Laye
     mistY: placement.baselineY - recipe.mistDepth * 0.25,
     mistDepth: recipe.mistDepth,
     mist: recipe.mist,
+    strokeGain: recipeStrokeGain(recipe),
   };
 }
 

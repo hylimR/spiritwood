@@ -3,7 +3,7 @@ import { computeSplitHullHalf, splitRowsAt, subdivideRows, type HullOptions } fr
 import { ELEMENT_MARGIN, ELEMENT_SPECS, KIT_CATEGORIES, type ElementSpec, type KitCategory, type SwayAnchor } from './kitElements.ts';
 import { NoiseTable } from './noiseTable.ts';
 import { packRects, type PackItem } from './pack.ts';
-import { ElementRaster, Scratch } from './raster.ts';
+import { ElementRaster, Scratch, type FinalizeOptions } from './raster.ts';
 
 /** Highest mip level the kit shader samples (it clamps its LOD); gutters and core insets derive from it. */
 export const KIT_MAX_MIP = 1;
@@ -82,11 +82,18 @@ function buildElement(
   const { spec, variant, item } = job;
   const rng = new Rng((hashString(`${spec.key ?? spec.category}:${variant}`) ^ seed) >>> 0);
   const r = new ElementRaster(spec.w, spec.h, noise, i + 1, scratch);
-  r.configure(spec.finalize);
+  // Every element's options in one fixed-shape object: finalize reads them monomorphically (spread
+  // spec objects of assorted keys would deoptimise it at boot).
+  const f = spec.finalize;
+  const fo: FinalizeOptions = {
+    softness: f.softness, dispScale: f.dispScale, fadeBottom: f.fadeBottom ?? null, rimWidth: f.rimWidth, rimStrength: f.rimStrength,
+    detail: f.detail, alphaScale: f.alphaScale, edgeFade: f.edgeFade ?? ELEMENT_MARGIN, cut: f.cut ?? spec.cut, strokes: f.strokes ?? null,
+  };
+  r.configure(fo);
   spec.draw(r, rng, variant);
   const x = item.x as number;
   const y = item.y as number;
-  r.finalize(pixels, width, x, y, { edgeFade: ELEMENT_MARGIN, cut: spec.cut, ...spec.finalize });
+  r.finalize(pixels, width, x, y, fo);
   const alphaBytes = scratch.bytes(spec.w * spec.h);
   copyAlpha(pixels, width, x, y, spec.w, spec.h, alphaBytes);
   const hull = computeSplitHullHalf(alphaBytes, spec.w, spec.h, KIT_HULL);
@@ -126,7 +133,9 @@ function copyAlpha(pixels: Uint8Array, width: number, x: number, y: number, w: n
  * Deterministic kit generation as a step generator: one element per step, so the async variant can
  * yield to the event loop between elements and keep the boot screen responsive.
  */
-function* kitSteps(seed: number, width: number, height: number, specs: readonly ElementSpec[]): Generator<void, KitAtlasData> {
+function* kitSteps(
+  seed: number, width: number, height: number, specs: readonly ElementSpec[], order: KitBuildOrder = 'smallest',
+): Generator<void, KitAtlasData> {
   const jobs: Job[] = [];
   for (const spec of specs) {
     for (let v = 0; v < spec.variants; v++) jobs.push({ spec, variant: v, item: { w: spec.w, h: spec.h } });
@@ -137,19 +146,45 @@ function* kitSteps(seed: number, width: number, height: number, specs: readonly 
   const elements: KitElement[] = [];
   const byCategory = Object.fromEntries(KIT_CATEGORIES.map((c) => [c, [] as KitElement[]])) as Record<KitCategory, KitElement[]>;
   const scratch = new Scratch();
+  // Size the scratch once for the largest element (growing it element by element churns the GC).
+  let maxN = 0;
+  let maxH = 0;
+  for (const j of jobs) {
+    maxN = Math.max(maxN, j.spec.w * j.spec.h);
+    maxH = Math.max(maxH, j.spec.h);
+  }
+  scratch.ensure(maxN, maxH);
   yield;
-  for (let i = 0; i < jobs.length; i++) {
-    const el = buildElement(jobs[i] as Job, i, elements.length, seed, noise, scratch, pixels, width);
+  // Build the smallest elements first (each element is independent: its own rng, noise offset and
+  // atlas rect, so the atlas is byte-identical in any order): the rasteriser's loops reach optimised
+  // code on cheap elements instead of interpreting the first big one, which matters for the single
+  // cold run at boot. Elements are listed in job order.
+  const orderList: number[] = [];
+  for (let i = 0; i < jobs.length; i++) orderList.push(i);
+  const area = (i: number): number => (jobs[i] as Job).spec.w * (jobs[i] as Job).spec.h;
+  if (order === 'smallest') orderList.sort((a, b) => area(a) - area(b) || a - b);
+  const built: KitElement[] = [];
+  for (let n = 0; n < orderList.length; n++) {
+    const i = orderList[n] as number;
+    built[i] = buildElement(jobs[i] as Job, i, i, seed, noise, scratch, pixels, width);
+    yield;
+  }
+  for (let i = 0; i < built.length; i++) {
+    const el = built[i] as KitElement;
     elements.push(el);
     byCategory[el.category].push(el);
-    yield;
   }
   return { width, height, pixels, elements, byCategory, ms: 0 };
 }
 
+/** Element build order: smallest first (the default, fastest cold), or as listed (tests: the atlas is the same). */
+export type KitBuildOrder = 'smallest' | 'listed';
+
 /** Generate the procedural forest kit synchronously (tests, tools). */
-export function generateKit(seed: number, width = KIT_WIDTH, height = KIT_HEIGHT, specs: readonly ElementSpec[] = ELEMENT_SPECS): KitAtlasData {
-  const it = kitSteps(seed, width, height, specs);
+export function generateKit(
+  seed: number, width = KIT_WIDTH, height = KIT_HEIGHT, specs: readonly ElementSpec[] = ELEMENT_SPECS, order: KitBuildOrder = 'smallest',
+): KitAtlasData {
+  const it = kitSteps(seed, width, height, specs, order);
   for (;;) {
     const s = it.next();
     if (s.done) return s.value;

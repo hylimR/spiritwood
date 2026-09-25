@@ -197,14 +197,25 @@ describe('sky model', () => {
     expect(MOON_GLOW.broad).toBeGreaterThan(0);
   });
 
-  test('hash21 matches the GLSL definition', () => {
-    const fract = (x: number): number => x - Math.floor(x);
-    let px = fract(3 * 123.34);
-    let py = fract(4 * 456.21);
-    const d = px * (px + 45.32) + py * (py + 45.32);
-    px += d;
-    py += d;
-    expect(hash21(3, 4)).toBeCloseTo(fract(px * py), 10);
+  test('hash21 matches the GLSL definition (in float32, as highp evaluates it)', () => {
+    const f = Math.fround;
+    const fract = (x: number): number => f(x - Math.floor(x));
+    for (const [x, y] of [[3, 4], [417.7, 12.9], [1843, 377]] as const) {
+      let px = fract(f(f(x) * f(123.34)));
+      let py = fract(f(f(y) * f(456.21)));
+      const d = f(f(px * f(px + f(45.32))) + f(py * f(py + f(45.32))));
+      px = f(px + d);
+      py = f(py + d);
+      expect(hash21(x, y)).toBe(fract(f(px * py)));
+    }
+    // Large lattice coordinates: float64 would give another number entirely.
+    const fr = (v: number): number => v - Math.floor(v);
+    let qx = fr(1843 * 123.34);
+    let qy = fr(377 * 456.21);
+    const d = qx * (qx + 45.32) + qy * (qy + 45.32);
+    qx += d;
+    qy += d;
+    expect(Math.abs(hash21(1843, 377) - fr(qx * qy))).toBeGreaterThan(1e-3);
   });
 });
 

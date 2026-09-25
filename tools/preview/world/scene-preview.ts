@@ -1,11 +1,21 @@
 /**
  * Compose the forest (sky, kit layers, shafts, terrain, decor, particles, fog, foreground) for a set
  * of cameras, then bloom the glow twins and apply the blended area grade (the CPU reference of the
- * post chain), and write PNGs.
+ * post chain), and write PNGs. Kit layers sample the atlas like the kit shader (trilinear, LOD clamped
+ * to KIT_MAX_MIP).
  *
  *   node tools/preview/world/scene-preview.ts [outDir] [--w 1280] [--time 12.5] [--raw] [camera names…]
  *   node tools/preview/world/scene-preview.ts [outDir] --level forest [--ldtk file] [--at name=fx,fy …] [camera names…]
- *   … [--plates baked|paint] [--plate-format ktx2|webp|png] [--upto L3]
+ *   node tools/preview/world/scene-preview.ts [outDir] --shots [camera names…]
+ *   … [--plates baked|paint] [--plate-format ktx2|webp|png] [--upto L3] [--before | --before-kit | --before-terrain]
+ *   … [--crop x,y,w,h [--zoom 2]]
+ *
+ * `--shots` frames the main session's GPU screenshot cameras (shots/m2-base/cameras.txt: the real
+ * level, teleport, 1.8 s of play) by running the sim the same way, so the PNGs line up with them.
+ * `--before` renders the pre-M2 look for comparison: the kit atlas without the painterly strokes and
+ * the terrain without its stroke term (`--before-kit` / `--before-terrain`: only one of the two, to
+ * measure each part's share). `--crop` cuts a region (at --w) and `--zoom` enlarges it
+ * (nearest neighbour).
  *
  * The default is the synthetic preview level and its five area cameras. `--level forest` loads the
  * real public/levels/forest.ldtk and frames gameplay cameras the way the sim camera does (feet in
@@ -25,7 +35,10 @@ import type { AreaGradeId, LevelData } from '../../../src/contracts/level.ts';
 import { hexToRgb, type RGB } from '../../../src/core/color.ts';
 import { parseManifest } from '../../../src/assets/manifest.ts';
 import { parseLdtk } from '../../../src/level/loader.ts';
-import { generateKit, kitSeed } from '../../../src/render/gen/kit.ts';
+import { generateKit, KIT_HEIGHT, KIT_WIDTH, kitSeed } from '../../../src/render/gen/kit.ts';
+import { ELEMENT_SPECS } from '../../../src/render/gen/kitElements.ts';
+import { createInputFrame } from '../../../src/contracts/input.ts';
+import { GameWorld } from '../../../src/sim/world.ts';
 import { polygonArea } from '../../../src/render/gen/polygon.ts';
 import { blendGrades, createGradeParams } from '../../../src/render/post/grade.ts';
 import { gradePixel } from '../../../src/render/post/gradeMath.ts';
@@ -49,13 +62,18 @@ const opt = (name: string, def: number): number => {
   return v;
 };
 const W = opt('w', 1280);
+const cropZoom = opt('zoom', 1);
 const ci = args.indexOf('--crop');
 const crop = ci >= 0 ? (args[ci + 1] as string).split(',').map(Number) : null;
 if (ci >= 0) args.splice(ci, 2);
 const TIME = opt('time', 12.5);
 const raw = args.includes('--raw');
+const shots = args.includes('--shots');
+const before = args.includes('--before');
+const beforeKit = before || args.includes('--before-kit');
+const beforeTerrain = before || args.includes('--before-terrain');
 const li = args.indexOf('--level');
-const forestArg = li >= 0 && args[li + 1] === 'forest';
+const forestArg = shots || (li >= 0 && args[li + 1] === 'forest');
 if (li >= 0) args.splice(li, 2);
 const ldi = args.indexOf('--ldtk');
 const ldtkPath = ldi >= 0 ? (args[ldi + 1] as string) : LDTK_PATH;
@@ -98,15 +116,21 @@ if (upto) {
 }
 const level: LevelData = realLevel ? parseLdtk(JSON.parse(readFileSync(ldtkPath, 'utf8'))) : previewLevel();
 const t0 = performance.now();
-const kit = generateKit(kitSeed('forest-kit'));
+// `--before`: the same elements without the painterly pass (byte-identical to the M1 atlas).
+const kit = generateKit(
+  kitSeed('forest-kit'), KIT_WIDTH, KIT_HEIGHT,
+  beforeKit ? ELEMENT_SPECS.map((sp) => ({ ...sp, finalize: { ...sp.finalize, strokes: null } })) : ELEMENT_SPECS,
+);
 const t1 = performance.now();
 const scene = buildScene(level, manifest, kit);
+// The plain atlas stores its detail undivided: its layers shade at stroke gain 1 (the pre-M2 look).
+if (beforeKit) for (const L of scene.layers.values()) L.params.strokeGain = 1;
 if (painted) scene.plates = painted.plates;
 else if (platesArg === 'baked') scene.plates = await loadBakedPlates(manifest, plateFormat);
 const t2 = performance.now();
 if (!upto) {
   scene.overlays.push(shaftsOverlay(scene));
-  addTerrain(scene);
+  addTerrain(scene, { strokes: !beforeTerrain });
 }
 const t3 = performance.now();
 if (!upto) {
@@ -147,9 +171,42 @@ function feetCamera(name: string, fx: number, fy: number): Camera & { feet: [num
   };
 }
 
-/** The main session's GPU screenshot cameras (centre x, y) of the synthetic level. */
+/**
+ * The main session's GPU screenshot cameras (shots/m2-base/cameras.txt): teleport the player, play
+ * 108 ticks (1.8 s) with neutral input, and read the settled camera, as the shots were taken.
+ */
+const SHOT_TELEPORTS: readonly [string, (lv: LevelData) => [number, number]][] = [
+  ['03-glade-checkpoint', (lv) => checkpointFeet(lv, 0)],
+  ['04-thorn-gully', () => [2976, 1920]],
+  ['05-rootwell', () => [4392, 1440]],
+  ['06-rootwell-summit', (lv) => checkpointFeet(lv, 2)],
+  ['07-canopy-walk', () => [5088, 576]],
+  ['08-canopy-checkpoint', (lv) => checkpointFeet(lv, 3)],
+  ['09-moonwell-ledge', () => [8736, 1056]],
+  ['10-moonwell-descent', () => [8736, 1632]],
+  ['11-moonwell-shrine', (lv) => (lv.goal ? [lv.goal.x - 200, lv.goal.y + lv.goal.h] : [0, 0])],
+];
+
+function checkpointFeet(lv: LevelData, i: number): [number, number] {
+  const c = lv.checkpoints[i];
+  return c ? [c.x + c.w / 2, c.y + c.h] : [0, 0];
+}
+
+function shotCameras(): PreviewCamera[] {
+  const input = createInputFrame();
+  return SHOT_TELEPORTS.map(([name, at]) => {
+    const world = new GameWorld(level);
+    const [x, y] = at(level);
+    world.teleport(x, y);
+    for (let i = 0; i < 108; i++) world.step(input);
+    return { name, cx: world.camera.x, cy: world.camera.y, feet: [world.player.x, world.player.y] as [number, number] };
+  });
+}
+
 type PreviewCamera = Camera & { feet?: [number, number]; grade?: AreaGradeId };
-const cams: PreviewCamera[] = realLevel
+const cams: PreviewCamera[] = shots
+  ? shotCameras()
+  : realLevel
   ? [...FOREST_FEET, ...extraAt].map(([n, fx, fy]) => feetCamera(n, fx, fy))
   : [
     { name: 'glade', cx: 1100, cy: 1700, grade: 'glade' },
@@ -342,16 +399,23 @@ function post(img: Frame, cam: PreviewCamera): Uint8Array {
   return out;
 }
 
+const suffix = before ? '-before' : beforeKit ? '-before-kit' : beforeTerrain ? '-before-terrain' : '';
 for (const cam of cams) {
   if (only.length && !only.includes(cam.name)) continue;
   const f = renderScene(scene, cam, W, Math.round((W * 9) / 16), viewW, VIEW_H, TIME);
   const img = post(f, cam);
   if (crop) {
     const [cx, cy, cw, chh] = crop as [number, number, number, number];
-    const out = new Uint8Array(cw * chh * 4);
-    for (let y = 0; y < chh; y++) out.set(img.subarray(((cy + y) * f.w + cx) * 4, ((cy + y) * f.w + cx + cw) * 4), y * cw * 4);
-    save(dir, `crop-${cam.name}.png`, out, cw, chh);
+    const z = Math.max(1, Math.round(cropZoom));
+    const out = new Uint8Array(cw * z * chh * z * 4);
+    for (let y = 0; y < chh * z; y++) {
+      for (let x = 0; x < cw * z; x++) {
+        const src = ((cy + Math.floor(y / z)) * f.w + cx + Math.floor(x / z)) * 4;
+        out.set(img.subarray(src, src + 4), (y * cw * z + x) * 4);
+      }
+    }
+    save(dir, `crop-${cam.name}${suffix}.png`, out, cw * z, chh * z);
   } else {
-    save(dir, `scene-${cam.name}.png`, img, f.w, f.h);
+    save(dir, `scene-${cam.name}${suffix}.png`, img, f.w, f.h);
   }
 }

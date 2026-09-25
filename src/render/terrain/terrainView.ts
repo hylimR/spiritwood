@@ -14,6 +14,7 @@ export const TERRAIN_CORE_ATTRS: readonly AttributeSpec[] = [
   { name: 'aDist', format: 'float32', offset: 8 },
   { name: 'aLit', format: 'float32', offset: 12 },
   { name: 'aSpill', format: 'unorm8x4', offset: 16 },
+  { name: 'aStroke', format: 'float32x2', offset: 20 },
 ];
 export const TERRAIN_EDGE_ATTRS: readonly AttributeSpec[] = [
   { name: 'aPosition', format: 'float32x2', offset: 0 },

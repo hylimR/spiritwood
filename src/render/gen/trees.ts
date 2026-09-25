@@ -139,7 +139,10 @@ export function clump(r: ElementRaster, rng: Rng, cx: number, cy: number, rx: nu
     const lx = cx + Math.cos(a) * rx * 0.55 * e;
     const ly = cy + Math.sin(a) * ry * 0.55 * e;
     r.lobe(lx - lr * 0.3, ly - lr * 0.35, lr * 1.1, s.lobeShade);
-    r.ellipse(lx, ly, lr, lr * rng.range(0.78, 0.95), s.mat, 2.5);
+    const lry = lr * rng.range(0.78, 0.95);
+    // The lobe, its tufts and rim leaves paint as one form (strokes wrap the lobe).
+    r.framePolar(lx, ly, lr, lry);
+    r.ellipse(lx, ly, lr, lry, s.mat, 2.5);
     const tufts = s.tufts;
     for (let t = 0; t < tufts; t++) {
       const ta = a + rng.range(-1.35, 1.35);
@@ -154,6 +157,7 @@ export function clump(r: ElementRaster, rng: Rng, cx: number, cy: number, rx: nu
         r.leaf(bx, by, ta + rng.range(-0.5, 0.5) + 0.25, len, len * 0.3, s.mat);
       }
     }
+    r.releaseFrame();
   }
   r.noVolume();
   if (m > 9 && rng.chance(s.holes)) {
@@ -171,16 +175,19 @@ export function curtainStrand(
   const ey = Math.min(r.h - 8, y + len);
   const cx = x + drift * 0.2 + rng.range(-2, 2);
   const cy = y + (ey - y) * 0.5;
+  r.frameLine(x, y, ex, ey);
   r.curve(x, y, cx, cy, ex, ey, r0, r0 * 0.45, mat, 0, Math.max(4, Math.round(len / 10)));
-  if (leaf <= 0) return;
-  const n = Math.round((ey - y) / (leaf * 0.75));
-  for (let i = 1; i <= n; i++) {
-    const t = i / (n + 0.5);
-    ElementRaster.bezier(x, y, cx, cy, ex, ey, t, P);
-    const side = i % 2 === 0 ? 1 : -1;
-    const size = leaf * rng.range(0.75, 1.15) * (1 - 0.35 * t);
-    r.leaf(P.x, P.y, Math.PI / 2 + side * rng.range(0.35, 0.8), size, size * 0.34, mat);
+  if (leaf > 0) {
+    const n = Math.round((ey - y) / (leaf * 0.75));
+    for (let i = 1; i <= n; i++) {
+      const t = i / (n + 0.5);
+      ElementRaster.bezier(x, y, cx, cy, ex, ey, t, P);
+      const side = i % 2 === 0 ? 1 : -1;
+      const size = leaf * rng.range(0.75, 1.15) * (1 - 0.35 * t);
+      r.leaf(P.x, P.y, Math.PI / 2 + side * rng.range(0.35, 0.8), size, size * 0.34, mat);
+    }
   }
+  r.releaseFrame();
 }
 
 /** A root flare: roots curving from the trunk base out and down to the ground line. */
@@ -208,6 +215,7 @@ export function trunkPath(
   let px = cx;
   let py = ground + 4;
   let pr = baseR;
+  r.beginStroke();
   for (let i = 1; i <= segs; i++) {
     const t = i / segs;
     const x = cx + lean * t * t + Math.sin(t * 3.4 + phase) * wobble + Math.sin(t * 8.7 + phase * 2) * wobble * 0.3;
@@ -219,6 +227,7 @@ export function trunkPath(
     pr = rr;
     path.push(px, py);
   }
+  r.endStroke();
   return path;
 }
 
@@ -338,6 +347,7 @@ export function willowTree(r: ElementRaster, rng: Rng, cx: number, ground: numbe
 
 /** A drooping fan of small leaves at a twig end (feathery crowns). */
 function leafSpray(r: ElementRaster, rng: Rng, x: number, y: number, ang: number, size: number, s: number): void {
+  r.framePolar(x, y, size * 0.6, size * 0.6);
   const n = Math.round(9 + size / (2 * s));
   for (let i = 0; i < n; i++) {
     const u = rng.next();
@@ -350,6 +360,7 @@ function leafSpray(r: ElementRaster, rng: Rng, x: number, y: number, ang: number
     r.leaf(bx, by, a + rng.range(-0.5, 0.5) + 0.4, len, len * 0.3, Mat.Leaf);
   }
   r.ellipse(x, y, size * 0.32, size * 0.26, Mat.Leaf, 2);
+  r.releaseFrame();
 }
 
 /** Slender pale-barked trees (one to three stems) with a narrow, airy crown of small clumps. */
@@ -407,6 +418,7 @@ export function coniferTree(r: ElementRaster, rng: Rng, cx: number, ground: numb
       const mx = x + side * len * 0.55;
       const my = y - 2 * s;
       r.volume(x + side * len * 0.3, y - 8 * s, len * 0.75 + 8, 0.18, -0.02);
+      r.frameLine(x, y, ex, ey);
       r.curve(x, y, mx, my, ex, ey, 1.8 * s, 0.7 * s, Mat.Needle, 1, 6);
       // A fringed skirt hangs from the rib; its teeth make the sawtooth conifer edge.
       const n = Math.max(4, Math.round(len / (2.6 * s)));
@@ -418,6 +430,7 @@ export function coniferTree(r: ElementRaster, rng: Rng, cx: number, ground: numb
         r.leaf(P.x, P.y - 1.5 * s, a, hang, Math.max(1.5, hang * 0.3), Mat.Needle);
         if (k % 2 === 0) r.leaf(P.x, P.y, -Math.PI / 2 + side * rng.range(0.6, 1.1), 3.5 * s, 1.2 * s, Mat.Needle);
       }
+      r.releaseFrame();
       r.noVolume();
     }
   }
@@ -464,10 +477,12 @@ export function risingColumn(
   mat: Mat = Mat.Bark,
 ): number[] {
   const lean = rng.range(-1, 1) * Math.min(wobble * 1.5, r.w / 2 - topR - wobble * 1.3 - 10);
+  r.beginStroke();
   const path = trunkPath(r, rng, cx, ground, stretchRow, baseR, topR, wobble, lean, mat, 12);
   const tx = path[path.length - 2] as number;
   const ty = path[path.length - 1] as number;
   r.capsule(tx, ty, tx, -16, topR, topR, mat, 2);
+  r.endStroke();
   if (Number.isNaN(r.columnX)) r.columnX = tx;
   return path;
 }
@@ -559,6 +574,7 @@ export function midConiferTrunk(r: ElementRaster, rng: Rng, cx: number, ground: 
       const mx = x + side * len * 0.55;
       const my = y - 3 * s;
       r.volume(x + side * len * 0.3, y - 10 * s, len * 0.75 + 10, 0.18, -0.02);
+      r.frameLine(x, y, ex, ey);
       r.curve(x, y, mx, my, ex, ey, 2.4 * s, 0.9 * s, Mat.Needle, 1, 8);
       const n = Math.max(5, Math.round(len / (2.8 * s)));
       for (let k = 0; k <= n; k++) {
@@ -568,6 +584,7 @@ export function midConiferTrunk(r: ElementRaster, rng: Rng, cx: number, ground: 
         r.leaf(P.x, P.y - 2 * s, Math.PI / 2 - side * rng.range(0.35, 0.85), hang, Math.max(1.8, hang * 0.3), Mat.Needle);
         if (k % 2 === 0) r.leaf(P.x, P.y, -Math.PI / 2 + side * rng.range(0.6, 1.1), 4.5 * s, 1.5 * s, Mat.Needle);
       }
+      r.releaseFrame();
       r.noVolume();
     }
   }

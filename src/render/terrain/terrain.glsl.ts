@@ -6,7 +6,8 @@ import {
   TERRAIN_CREVICE_DARK, TERRAIN_DEEP_COLOR, TERRAIN_DEEP_REACH, TERRAIN_EDGE_COLOR, TERRAIN_GLINT_CELL, TERRAIN_GLINT_DENSITY,
   TERRAIN_GLINT_MINERAL, TERRAIN_GLINT_MOSS, TERRAIN_PEBBLE_GAIN, TERRAIN_RIM_COLOR, TERRAIN_RIM_REACH, TERRAIN_ROOT_GAIN,
   TERRAIN_SEAM_DARK, TERRAIN_SPILL_REACH, TERRAIN_STONE_BEVEL, TERRAIN_STONE_CELL, TERRAIN_STONE_GAIN, TERRAIN_STONE_SHARE,
-  TERRAIN_VEIN_GAIN,
+  TERRAIN_STROKE_CELLS, TERRAIN_STROKE_CLAMP, TERRAIN_STROKE_CONT_MAX, TERRAIN_STROKE_DEPTH, TERRAIN_STROKE_EDGE, TERRAIN_STROKE_FULL,
+  TERRAIN_STROKE_GAIN, TERRAIN_STROKE_KD, TERRAIN_STROKE_KS, TERRAIN_VEIN_GAIN,
 } from './terrainShading.ts';
 
 const v2 = (c: readonly number[]): string => `vec2(${c.map((x) => x.toFixed(4)).join(', ')})`;
@@ -15,15 +16,40 @@ const f = (v: number): string => (Number.isInteger(v) ? `${v}.0` : `${v}`);
 
 /**
  * Shared core colour (terrainShading.ts shadeTerrainCore): rim-zone ramp and deep-interior drift, broad
- * strata bands and seams, fine strata, mottling, pebbles, rootlets, roots, embedded stones, glints, the
- * moonlit rim zone and baked spill. 8 value-noise lookups and 2 hashes per fragment.
+ * strata bands and seams, fine strata (near the surface: painterly strokes along the outline), mottling,
+ * pebbles, rootlets, roots, embedded stones, glints, the moonlit rim zone and baked spill. 9 value-noise
+ * lookups and 2 hashes per fragment.
+ *
+ * `stroke` is the stroke coordinate in lattice cells (s·TERRAIN_STROKE_KS, d·TERRAIN_STROKE_KD) and
+ * `strokeAA` its fade: the fwidth clamp (terrainStrokeAA, evaluated in main: derivatives need uniform
+ * control flow) × the vertices' continuity weight.
  */
 const CORE_COLOR = /* glsl */ `
-vec3 terrainColor(float depth, vec2 world, float lit, vec3 spill) {
+float terrainLattice(float i, float j) {
+  float h = step(${f(TERRAIN_STROKE_CELLS / 2 - 0.5)}, i);
+  float v = sw_hash21(vec2(i - ${f(TERRAIN_STROKE_CELLS / 2)} * h + 61.3, j + 27.9));
+  return mix(v, 1.0 - v, h);
+}
+float terrainStroke(vec2 c) {
+  vec2 i = floor(c);
+  vec2 f = fract(c);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  float i0 = mod(i.x + 0.5, ${f(TERRAIN_STROKE_CELLS)}) - 0.5;
+  float i1 = mod(i.x + 1.5, ${f(TERRAIN_STROKE_CELLS)}) - 0.5;
+  float j1 = i.y + 1.0;
+  float n = mix(mix(terrainLattice(i0, i.y), terrainLattice(i1, i.y), u.x), mix(terrainLattice(i0, j1), terrainLattice(i1, j1), u.x), u.y);
+  return smoothstep(${f(TERRAIN_STROKE_EDGE[0])}, ${f(TERRAIN_STROKE_EDGE[1])}, n);
+}
+float terrainStrokeAA(vec2 c) {
+  return 1.0 - smoothstep(${f(TERRAIN_STROKE_CLAMP)}, ${f(2 * TERRAIN_STROKE_CLAMP)}, max(fwidth(c.x), fwidth(c.y)));
+}
+vec3 terrainColor(float depth, vec2 world, float lit, vec3 spill, vec2 stroke, float strokeAA) {
   float t = pow(clamp(depth / uShadeDepth, 0.0, 1.0), 0.7);
   float k = clamp((depth - uShadeDepth) / ${f(TERRAIN_DEEP_REACH)}, 0.0, 1.0);
   float warp = sw_vnoise(world * 0.0045) * 70.0;
   float strata = sw_vnoise(vec2(world.x * 0.0022, (world.y + warp) * 0.026));
+  float sv = 0.5 + ${f(TERRAIN_STROKE_GAIN)} * (terrainStroke(stroke) - 0.5);
+  strata = mix(strata, sv, (1.0 - smoothstep(${f(TERRAIN_STROKE_FULL)}, ${f(TERRAIN_STROKE_DEPTH)}, depth)) * strokeAA);
   float mottle = sw_vnoise(world * 0.019 + 13.1);
   float band = sw_vnoise(vec2(world.x * 0.0011 + 3.1, (world.y + warp * 1.5) * 0.0072 + 7.3));
   float seam = 1.0 - smoothstep(0.0, 0.016, abs(band - 0.5));
@@ -65,16 +91,23 @@ vec3 terrainColor(float depth, vec2 world, float lit, vec3 spill) {
 }
 `;
 
+/** Stroke coordinate (s, d) → lattice cells. */
+const STROKE_SCALE = `vec2(${TERRAIN_STROKE_KS.toFixed(8)}, ${TERRAIN_STROKE_KD.toFixed(8)})`;
+/** aSpill.w (unorm8) → the stroke continuity weight (0..1). */
+const CONT_SCALE = (255 / TERRAIN_STROKE_CONT_MAX).toFixed(6);
+
 export const TERRAIN_CORE_VERTEX = /* glsl */ `${GLSL_VERSION}
 in vec2 aPosition;
 in float aDist;
 in float aLit;
 in vec4 aSpill;
+in vec2 aStroke;
 ${GLSL_VERTEX_TRANSFORM}
 out vec2 vWorld;
 out float vDist;
 out float vLit;
 out vec3 vSpill;
+out vec3 vStroke;
 
 void main() {
   gl_Position = pixiClipPosition(aPosition, ${DEPTH_TERRAIN.toFixed(4)});
@@ -82,6 +115,7 @@ void main() {
   vDist = aDist;
   vLit = aLit;
   vSpill = aSpill.xyz;
+  vStroke = vec3(aStroke * ${STROKE_SCALE}, min(1.0, aSpill.w * ${CONT_SCALE}));
 }
 `;
 
@@ -91,6 +125,7 @@ in vec2 vWorld;
 in float vDist;
 in float vLit;
 in vec3 vSpill;
+in vec3 vStroke;
 uniform float uShadeDepth;
 out vec4 finalColor;
 ${GLSL_NOISE}
@@ -98,7 +133,8 @@ ${GLSL_DITHER}
 ${CORE_COLOR}
 
 void main() {
-  finalColor = vec4(terrainColor(vDist, vWorld, vLit, vSpill) + sw_dither(gl_FragCoord.xy), 1.0);
+  float strokeAA = terrainStrokeAA(vStroke.xy) * vStroke.z;
+  finalColor = vec4(terrainColor(vDist, vWorld, vLit, vSpill, vStroke.xy, strokeAA) + sw_dither(gl_FragCoord.xy), 1.0);
 }
 `;
 
@@ -115,6 +151,7 @@ out vec2 vWorld;
 out vec3 vEdge;
 out vec3 vSpill;
 out float vLit;
+out vec2 vStrokeS;
 
 void main() {
   float side = aEdge.x;
@@ -123,6 +160,7 @@ void main() {
   gl_Position = pixiClipPosition(p, 0.0);
   vWorld = p;
   vEdge = aEdge.xyz;
+  vStrokeS = vec2(aEdge.w * ${TERRAIN_STROKE_KS.toFixed(8)}, min(1.0, aSpill.w * ${CONT_SCALE}));
   vSpill = aSpill.xyz;
   float l = max(length(aNormal), 1e-6);
   vLit = max(0.0, dot(aNormal / l, vec2(-0.55, -0.83)));
@@ -139,6 +177,7 @@ in vec2 vWorld;
 in vec3 vEdge;
 in vec3 vSpill;
 in float vLit;
+in vec2 vStrokeS;
 uniform float uShadeDepth;
 uniform float uGlowPass;
 uniform float uGlow;
@@ -149,13 +188,15 @@ ${CORE_COLOR}
 
 void main() {
   float side = vEdge.x;
+  vec2 stroke = vec2(vStrokeS.x, 0.0);
+  float strokeAA = terrainStrokeAA(stroke) * vStrokeS.y;
   if (vEdge.y < 0.5) {
     if (uGlowPass > 0.5) {
       finalColor = vec4(0.0);
       return;
     }
     float a = clamp((1.0 - side) * 0.5, 0.0, 1.0);
-    finalColor = vec4((terrainColor(0.0, vWorld, vLit, vSpill) + sw_dither(gl_FragCoord.xy)) * a, a);
+    finalColor = vec4((terrainColor(0.0, vWorld, vLit, vSpill, stroke, strokeAA) + sw_dither(gl_FragCoord.xy)) * a, a);
     return;
   }
   float mossPatch = sw_vnoise(vWorld * 0.07);

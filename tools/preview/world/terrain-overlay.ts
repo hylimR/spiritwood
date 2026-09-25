@@ -1,6 +1,9 @@
-import { buildTerrainMesh, CORE_STRIDE_FLOATS, DEFAULT_TERRAIN, EDGE_KIND_MOSS, EDGE_STRIDE_FLOATS, type TerrainMesh } from '../../../src/render/terrain/terrainMesh.ts';
 import {
-  litFromNormal, MOSS_GLOW_COLOR, mossAlpha, mossGlow, mossSpeck, shadeMoss, shadeTerrainCore,
+  buildTerrainMesh, CORE_STRIDE_FLOATS, CORE_STROKE_OFFSET, DEFAULT_TERRAIN, EDGE_KIND_MOSS, EDGE_STRIDE_FLOATS, type TerrainMesh,
+} from '../../../src/render/terrain/terrainMesh.ts';
+import {
+  litFromNormal, MOSS_GLOW_COLOR, mossAlpha, mossGlow, mossSpeck, shadeMoss, shadeTerrainCore, TERRAIN_STROKE_CONT_MAX, TERRAIN_STROKE_KD,
+  TERRAIN_STROKE_KS, terrainStrokeAA, type TerrainStroke,
 } from '../../../src/render/terrain/terrainShading.ts';
 import type { Frame, Scene } from './compose.ts';
 import { vnoise } from './glslNoise.ts';
@@ -31,25 +34,42 @@ export function rasterTri(img: Frame, x0: number, y0: number, x1: number, y1: nu
   }
 }
 
-/** Unpack an unorm8x4 spill slot (warm, flora, thorn) from an interleaved float array. */
+/** Unpack an unorm8x4 spill slot (warm, flora, thorn, stroke continuity) from an interleaved float array. */
 function spillOf(data: Float32Array, index: number, out: number[]): number[] {
   const u = new Uint32Array(data.buffer, data.byteOffset + index * 4, 1)[0] as number;
   out[0] = (u & 255) / 255;
   out[1] = ((u >> 8) & 255) / 255;
   out[2] = ((u >> 16) & 255) / 255;
+  out[3] = Math.min(1, ((u >>> 24) & 255) / TERRAIN_STROKE_CONT_MAX);
   return out;
 }
 
-export function drawTerrain(img: Frame, mesh: TerrainMesh, aaPx = 1.25): void {
+/**
+ * fwidth of an attribute (values va, vb, vc at pixel positions a, b, c) over a triangle: |∂/∂x| + |∂/∂y|,
+ * constant for linear interpolation (what the GPU's 2×2-quad derivatives give inside a triangle).
+ */
+function triFwidth(ax: number, ay: number, bx: number, by: number, cx: number, cy: number, va: number, vb: number, vc: number): number {
+  const d = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay);
+  if (Math.abs(d) < 1e-12) return 0;
+  const dx = ((vb - va) * (cy - ay) - (vc - va) * (by - ay)) / d;
+  const dy = ((vc - va) * (bx - ax) - (vb - va) * (cx - ax)) / d;
+  return Math.abs(dx) + Math.abs(dy);
+}
+
+/** `strokes` = false renders the pre-M2 shading (no painterly stroke term). */
+export function drawTerrain(img: Frame, mesh: TerrainMesh, aaPx = 1.25, strokes = true): void {
   const col = new Float32Array(4);
+  const st: TerrainStroke = { s: 0, d: 0, aa: 0 };
+  const stroke = strokes ? st : null;
+  const SO = CORE_STROKE_OFFSET;
   const sd = DEFAULT_TERRAIN.shadeDepth;
   const viewL = img.cam.cx - img.viewW / 2 - 60;
   const viewR = img.cam.cx + img.viewW / 2 + 60;
   const viewT = img.cam.cy - img.viewH / 2 - 60;
   const viewB = img.cam.cy + img.viewH / 2 + 60;
-  const sA = [0, 0, 0];
-  const sB = [0, 0, 0];
-  const sC = [0, 0, 0];
+  const sA = [0, 0, 0, 0];
+  const sB = [0, 0, 0, 0];
+  const sC = [0, 0, 0, 0];
   const sp = [0, 0, 0];
   for (const ch of mesh.chunks) {
     if (ch.bounds.x1 < viewL || ch.bounds.x0 > viewR || ch.bounds.y1 < viewT || ch.bounds.y0 > viewB) continue;
@@ -65,13 +85,19 @@ export function drawTerrain(img: Frame, mesh: TerrainMesh, aaPx = 1.25): void {
       spillOf(v, a + 4, sA);
       spillOf(v, b + 4, sB);
       spillOf(v, c + 4, sC);
+      const fwS = triFwidth(ax, ay, bx, by, cx, cy, v[a + SO] as number, v[b + SO] as number, v[c + SO] as number) * TERRAIN_STROKE_KS;
+      const fwD = triFwidth(ax, ay, bx, by, cx, cy, v[a + SO + 1] as number, v[b + SO + 1] as number, v[c + SO + 1] as number) * TERRAIN_STROKE_KD;
+      const aa = terrainStrokeAA(Math.max(fwS, fwD));
       rasterTri(img, ax, ay, bx, by, cx, cy, (i, w0, w1, w2) => {
         const depth = (v[a + 2] as number) * w0 + (v[b + 2] as number) * w1 + (v[c + 2] as number) * w2;
         const lit = (v[a + 3] as number) * w0 + (v[b + 3] as number) * w1 + (v[c + 3] as number) * w2;
         for (let k = 0; k < 3; k++) sp[k] = (sA[k] as number) * w0 + (sB[k] as number) * w1 + (sC[k] as number) * w2;
+        st.s = (v[a + SO] as number) * w0 + (v[b + SO] as number) * w1 + (v[c + SO] as number) * w2;
+        st.d = (v[a + SO + 1] as number) * w0 + (v[b + SO + 1] as number) * w1 + (v[c + SO + 1] as number) * w2;
+        st.aa = aa * ((sA[3] as number) * w0 + (sB[3] as number) * w1 + (sC[3] as number) * w2);
         const wx = img.worldX(i % img.w);
         const wy = img.worldY(Math.floor(i / img.w));
-        shadeTerrainCore(col, depth, sd, wx, wy, lit, sp, vnoise);
+        shadeTerrainCore(col, depth, sd, wx, wy, lit, sp, vnoise, stroke);
         const o = i * 3;
         img.rgb[o] = col[0] as number;
         img.rgb[o + 1] = col[1] as number;
@@ -82,13 +108,13 @@ export function drawTerrain(img: Frame, mesh: TerrainMesh, aaPx = 1.25): void {
     const e = ch.edge;
     const ei = ch.edgeIndices;
     const aaW = aaPx * img.scale;
-    const pos = (k: number): [number, number, number, number, number, number] => {
+    const pos = (k: number): [number, number, number, number, number, number, number] => {
       const o = k * EDGE_STRIDE_FLOATS;
       const side = e[o + 4] as number;
       const kind = e[o + 5] as number;
       const off = kind === EDGE_KIND_MOSS ? (side < 0 ? side * DEFAULT_TERRAIN.mossIn : side * DEFAULT_TERRAIN.mossOut) : side * aaW;
       const [px, py] = img.toPx((e[o] as number) + (e[o + 2] as number) * off, (e[o + 1] as number) + (e[o + 3] as number) * off);
-      return [px, py, side, kind, e[o + 6] as number, litFromNormal(e[o + 2] as number, e[o + 3] as number)];
+      return [px, py, side, kind, e[o + 6] as number, litFromNormal(e[o + 2] as number, e[o + 3] as number), e[o + 7] as number];
     };
     for (let t = 0; t < ei.length; t += 3) {
       const A = pos(ei[t] as number);
@@ -96,6 +122,9 @@ export function drawTerrain(img: Frame, mesh: TerrainMesh, aaPx = 1.25): void {
       const Cc = pos(ei[t + 2] as number);
       const kind = A[3];
       spillOf(e, (ei[t] as number) * EDGE_STRIDE_FLOATS + 8, sA);
+      spillOf(e, (ei[t + 1] as number) * EDGE_STRIDE_FLOATS + 8, sB);
+      spillOf(e, (ei[t + 2] as number) * EDGE_STRIDE_FLOATS + 8, sC);
+      const aa = terrainStrokeAA(triFwidth(A[0], A[1], B[0], B[1], Cc[0], Cc[1], A[6], B[6], Cc[6]) * TERRAIN_STROKE_KS);
       rasterTri(img, A[0], A[1], B[0], B[1], Cc[0], Cc[1], (i, w0, w1, w2) => {
         const side = A[2] * w0 + B[2] * w1 + Cc[2] * w2;
         const up = A[4] * w0 + B[4] * w1 + Cc[4] * w2;
@@ -111,7 +140,10 @@ export function drawTerrain(img: Frame, mesh: TerrainMesh, aaPx = 1.25): void {
           img.addGlow(i, MOSS_GLOW_COLOR[0] * g, MOSS_GLOW_COLOR[1] * g, MOSS_GLOW_COLOR[2] * g);
         } else {
           const al = Math.min(1, Math.max(0, (1 - side) / 2));
-          shadeTerrainCore(col, 0, sd, wx, wy, lit, sA, vnoise);
+          st.s = A[6] * w0 + B[6] * w1 + Cc[6] * w2;
+          st.d = 0;
+          st.aa = aa * ((sA[3] as number) * w0 + (sB[3] as number) * w1 + (sC[3] as number) * w2);
+          shadeTerrainCore(col, 0, sd, wx, wy, lit, sA, vnoise, stroke);
           img.blend(i, (col[0] as number) * al, (col[1] as number) * al, (col[2] as number) * al, al);
         }
       });
@@ -119,9 +151,15 @@ export function drawTerrain(img: Frame, mesh: TerrainMesh, aaPx = 1.25): void {
   }
 }
 
+export interface TerrainPreviewOptions {
+  /** The painterly stroke term (false = the pre-M2 terrain shading). */
+  strokes?: boolean;
+}
+
 /** Adds the terrain pass to a preview scene. */
-export function addTerrain(scene: Scene): TerrainMesh {
+export function addTerrain(scene: Scene, o: TerrainPreviewOptions = {}): TerrainMesh {
   const mesh = buildTerrainMesh(scene.level);
-  scene.overlays.push((img) => drawTerrain(img, mesh));
+  const strokes = o.strokes ?? true;
+  scene.overlays.push((img) => drawTerrain(img, mesh, 1.25, strokes));
   return mesh;
 }

@@ -53,6 +53,7 @@ uniform float uGlow;
 uniform float uMistY;
 uniform float uMistDepth;
 uniform float uMist;
+uniform float uStrokeGain;
 uniform float uMode;
 uniform float uStraight;
 out vec4 finalColor;
@@ -86,7 +87,7 @@ void main() {
     return;
   }
   vec3 ch = t.rgb / max(a, 1e-4);
-  float k = (0.5 + ch.r) * (0.8 + 0.4 * vTint.a);
+  float k = (1.0 + uStrokeGain * (ch.r - 0.5)) * (0.8 + 0.4 * vTint.a);
   vec3 c = uTint * k + uRimColor * (ch.g * uRim * ${f(KIT_RIM_SCALE)});
   c = mix(c, vec3(sw_luma(c)), uDesat);
   float m = mistAmount();

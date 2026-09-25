@@ -924,13 +924,22 @@ gameplay read comes first.
   avoid.
 - **Kit atlas (bake time, zero runtime cost):**
   - `put()` records a stroke coordinate (u, v) per texel in the owning shape's frame, next to
-    `mat`/`shade`. Capsules and curves: along / across the segment. Ellipses and lobes: (r̄·φ, r) around
-    the lobe centre, faded as r → 0. Leaves: along the blade. Ground, rocks and roots: stretched (x, y).
+    `mat`/`shade`. Capsules and curves: along / across the segment. Ellipses and lobes: (r̄·φ, ρ·r̄)
+    around the lobe centre, with at least 4 cells around, fading to the ring mean near the centre. So
+    strokes keep layer-unit widths on big lobes instead of splitting them into a light half and a dark
+    half. Leaves: along the blade. Ground, rocks and roots: stretched (x, y).
   - An elongated brush texture (stretch 4–6 : 1, 2–3 scales) is evaluated in (u, v). Stroke widths are
     given in layer units, converted with `unitsPerTexel`, and are at least 3 texels and 2 px at the
-    minimum render scale.
+    minimum render scale. That minimum is derived from `QUALITY_PRESETS` and `renderScaleCap` at
+    `MAX_ASPECT` (Low: 0.388 px/u), not assumed.
   - **Visibility target:** body strokes change final luma by at least 3–4 8-bit codes on L3–L8 (about
-    ±0.3 in R, or a stroke gain inside the kit shading); ±10–15 % of R is invisible (≤ 2 codes). The
+    ±0.3 in R, or a stroke gain inside the kit shading); ±10–15 % of R is invisible (≤ 2 codes).
+    - As shipped: amplitude 0.4, zero-mean per element, plus a per-layer stroke gain in the kit shading
+      (k = 1 + g·(R − 0.5); g = 1.75 on L4–L8), which doesn't clip R.
+    - Post-grade at 1:1, strokes move L4–L8 pixels by ≈ 4.4 codes on average, with per-layer mean luma
+      within 0.03 codes.
+
+    The
     rim mask G breaks into stroke segments while keeping its mean over every 2×2 texel block, so the
     mip-averaged rim, and with it the value ramp, does not shift.
   - Alpha edges get a light dry-brush breakup along the stroke direction, within the existing
@@ -939,9 +948,20 @@ gameplay read comes first.
   point (from the mesh build), wrapped mod 1024 so the hash keeps its precision. Strokes follow it in
   the rim zone and blend into the existing warped-strata coordinates by 60 u of depth. Stroke frequency
   is clamped with `fwidth` to ≤ 0.25 cycles per pixel at `minRenderScale`. This costs one more
-  value-noise lookup (≤ 10 per fragment) and a vertex stride of 5 → 7 floats.
+  value-noise lookup (≤ 10 per fragment) and a vertex stride of 5 → 7 floats. As shipped:
+  - **Seamless outlines:** a contour whose perimeter P ≥ 512 u has its arc length scaled by
+    round(P/1024)·1024/P, so the outline closes on whole wraps; shorter outlines fade their strokes at
+    the start point.
+  - **Smooth fades:** a per-vertex continuity weight in `aSpill` byte 3 fades strokes smoothly across
+    medial axes and convex corners, where s jumps.
+  - **Mean-preserving texture:** an antithetic lattice, L(i+9, j) = 1 − L(i, j), keeps the stroke
+    texture's period mean at 0.5 at every depth, so rims get no inner outline.
+  - **Portability:** lattice indices use `mod(i + 0.5, 18) − 0.5`, which is safe under GLSL ES division
+    error.
+  - **Gain:** the rim stroke gain is 2.
 - **Budget:** cold atlas bake ≤ +150 ms (a 3-lookup modulation over the ≈ 0.85 M covered texels measures
-  60–80 ms), the same atlas size, no new textures. Previews compare before and after at gameplay scale
+  60–80 ms), the same atlas size, no new textures. Measured as shipped: brush tables plus bake add
+  +136 ms (paired median, Node, against the M1 kit), and Chromium logs the kit at ≈ 595 ms. Previews compare before and after at gameplay scale
   and in 2× crops, and report the measured luma change per layer; the main session reviews on the GPU.
 
 ### 5.6 In-house rig (`src/render/hero/rig.ts`)

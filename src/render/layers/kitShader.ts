@@ -29,6 +29,7 @@ export function createKitLayerUniforms(p: KitShadeParams) {
     uMistY: { value: p.mistY, type: 'f32' },
     uMistDepth: { value: p.mistDepth, type: 'f32' },
     uMist: { value: p.mist, type: 'f32' },
+    uStrokeGain: { value: p.strokeGain ?? 1, type: 'f32' },
   });
 }
 export type KitLayerUniforms = ReturnType<typeof createKitLayerUniforms>;

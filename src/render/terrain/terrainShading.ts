@@ -68,6 +68,105 @@ export const SPILL_THORN: RGB = (() => {
 export const MOSS_BASE_COLOR: RGB = [0.035, 0.13, 0.14];
 export const MOSS_GLOW_COLOR: RGB = hexToRgb(PALETTE.floraGlow);
 
+/**
+ * Painterly strokes (§5.5): near the surface the fine strata follow the outline instead of the world
+ * axes. Each core vertex carries a stroke coordinate (s, d): s is the arc length at the nearest outline
+ * point, wrapped mod TERRAIN_STROKE_WRAP (float precision), d the distance to that point. The stroke
+ * texture is a contrast-shaped value noise in (s, d), periodic in s over the wrap, with cells
+ * TERRAIN_STROKE_WRAP / TERRAIN_STROKE_CELLS u along and TERRAIN_STROKE_ACROSS u across (≈ 5 : 1).
+ * Its lattice is antithetic along s (the value half a period on is one minus this one), so every
+ * depth row averages exactly 0.5 over a period: no light or dark inner outline at any depth.
+ */
+export const TERRAIN_STROKE_WRAP = 1024;
+export const TERRAIN_STROKE_CELLS = 18;
+export const TERRAIN_STROKE_ACROSS = 11;
+/** Depth (u) where the strokes start to give way to the world-space strata, and where they are gone. */
+export const TERRAIN_STROKE_FULL = 14;
+export const TERRAIN_STROKE_DEPTH = 60;
+/**
+ * Frequency clamp: cycles per pixel (a value-noise cycle spans about two lattice cells). The stroke
+ * term fades out from half this to this, measured with fwidth of its lattice coordinates, so it never
+ * aliases: at the minimum render scale, on medial axes (where the nearest outline point jumps) and at
+ * the outline's start point.
+ */
+export const TERRAIN_STROKE_CLAMP = 0.25;
+/** Plateau shaping of the stroke noise (even stroke bodies with soft edges; symmetric about 0.5). */
+export const TERRAIN_STROKE_EDGE: readonly [number, number] = [0.22, 0.78];
+/**
+ * Stroke gain of the rim zone: the stroke value's deviation from 0.5 is multiplied by this where it
+ * replaces the strata (art direction: the terrain rim reads at 1:1, like the mid and near kit planes,
+ * 1.5× the gain-1 visibility). The strokes replace the strata noise rather than adding to it, so the
+ * change they make grows slower than the gain: at 2 the rim's post-grade |Δ luma| is ×1.45.
+ */
+export const TERRAIN_STROKE_GAIN = 2;
+/**
+ * Continuity weight of a vertex's stroke coordinate (1 = s continuous around it, 0 = next to a jump:
+ * a medial axis of a thin mass, a convex corner's mitre, a short outline's start point), packed in the
+ * 4th byte of aSpill as round(weight · TERRAIN_STROKE_CONT_MAX): at most 126, so the packed slot stays a
+ * finite float whatever the other bytes hold.
+ */
+export const TERRAIN_STROKE_CONT_MAX = 126;
+
+const f32 = Math.fround;
+const SX = f32(61.3);
+const SY = f32(27.9);
+
+/** The antithetic lattice: cell i of 0..N−1 on row j; the second half mirrors the first as 1 − value. */
+function strokeLattice(i: number, j: number): number {
+  const half = TERRAIN_STROKE_CELLS / 2;
+  const h = i > half - 0.5 ? 1 : 0;
+  const v = hash21(f32(f32(i - half * h) + SX), f32(j + SY));
+  return h === 1 ? f32(1 - v) : v;
+}
+
+/** Stroke value (0..1, mean 0.5) at stroke coordinate (s, d); mirrors GLSL `terrainStroke`. */
+export function terrainStrokeValue(s: number, d: number): number {
+  const N = TERRAIN_STROKE_CELLS;
+  const x = s * (N / TERRAIN_STROKE_WRAP);
+  const y = d / TERRAIN_STROKE_ACROSS;
+  const ix = Math.floor(x);
+  const iy = Math.floor(y);
+  const fx = x - ix;
+  const fy = y - iy;
+  const ux = fx * fx * (3 - 2 * fx);
+  const uy = fy * fy * (3 - 2 * fy);
+  // GLSL: mod(i.x + 0.5, N) − 0.5, exact on whole numbers under any highp rounding.
+  const i0 = ix + 0.5 - N * Math.floor((ix + 0.5) / N) - 0.5;
+  const i1 = ix + 1.5 - N * Math.floor((ix + 1.5) / N) - 0.5;
+  const j1 = f32(iy + 1);
+  const a = strokeLattice(i0, iy);
+  const b = strokeLattice(i1, iy);
+  const c = strokeLattice(i0, j1);
+  const e = strokeLattice(i1, j1);
+  const top = a + (b - a) * ux;
+  return smooth(TERRAIN_STROKE_EDGE[0], TERRAIN_STROKE_EDGE[1], top + (c + (e - c) * ux - top) * uy);
+}
+
+/** Lattice cells per unit of s and of d (for the fwidth footprint). */
+export const TERRAIN_STROKE_KS = TERRAIN_STROKE_CELLS / TERRAIN_STROKE_WRAP;
+export const TERRAIN_STROKE_KD = 1 / TERRAIN_STROKE_ACROSS;
+
+/**
+ * Anti-alias fade of the stroke term for a footprint of `cellsPerPx` lattice cells per pixel (the
+ * larger fwidth of the two lattice coordinates): 1 up to TERRAIN_STROKE_CLAMP / 2 cycles per pixel, 0 at
+ * TERRAIN_STROKE_CLAMP.
+ */
+export function terrainStrokeAA(cellsPerPx: number): number {
+  return 1 - smooth(TERRAIN_STROKE_CLAMP, 2 * TERRAIN_STROKE_CLAMP, cellsPerPx);
+}
+
+/** Weight of the outline strokes against the world-space strata at `depth`. */
+export function terrainStrokeWeight(depth: number): number {
+  return 1 - smooth(TERRAIN_STROKE_FULL, TERRAIN_STROKE_DEPTH, depth);
+}
+
+/** A fragment's stroke coordinate and its fade: terrainStrokeAA × the interpolated continuity weight. */
+export interface TerrainStroke {
+  s: number;
+  d: number;
+  aa: number;
+}
+
 type Noise = (x: number, y: number) => number;
 
 function fract(x: number): number {
@@ -130,15 +229,22 @@ export function stoneAt(out: StoneSample, rx: number, ry: number, lump: number):
 /**
  * Core colour at `depth` (u inside the surface) and world (wx, wy). `lit` = moon-facing factor of the
  * nearest surface (0..1), `spill` = [warm, flora, thorn]. `noise` mirrors GLSL `sw_vnoise` in [0, 1].
+ * `stroke` = the painterly stroke coordinate (null = the pre-M2 shading).
  */
 export function shadeTerrainCore(
   out: Float32Array | number[], depth: number, shadeDepth: number, wx: number, wy: number, lit: number, spill: readonly number[],
-  noise: Noise,
+  noise: Noise, stroke: TerrainStroke | null = null,
 ): void {
   const t = Math.pow(Math.min(1, Math.max(0, depth / shadeDepth)), 0.7);
   const k = Math.min(1, Math.max(0, (depth - shadeDepth) / TERRAIN_DEEP_REACH));
   const warp = noise(wx * 0.0045, wy * 0.0045) * 70;
-  const strata = noise(wx * 0.0022, (wy + warp) * 0.026);
+  let strata = noise(wx * 0.0022, (wy + warp) * 0.026);
+  // Near the surface the fine strata become strokes along the outline (the same mean and role, with the
+  // rim's stroke gain).
+  if (stroke) {
+    const sv = 0.5 + TERRAIN_STROKE_GAIN * (terrainStrokeValue(stroke.s, stroke.d) - 0.5);
+    strata += (sv - strata) * terrainStrokeWeight(depth) * stroke.aa;
+  }
   const mottle = noise(wx * 0.019 + 13.1, wy * 0.019 + 13.1);
   // Broad strata: a slow noise over warped rows (~140 u apart); its 0.5 iso-line is a bedding seam.
   const band = noise(wx * 0.0011 + 3.1, (wy + warp * 1.5) * 0.0072 + 7.3);
